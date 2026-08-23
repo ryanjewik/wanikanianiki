@@ -1,0 +1,56 @@
+{
+  "idle": {
+    "frames": 24,
+    "size": 200,
+    "fps": 24,
+    "loop": true,
+    "oneShot": false,
+    "sprite": "assets/anim/idle-sprite.png",
+    "gif": "assets/anim/idle.gif"
+  },
+  "wave": {
+    "frames": 24,
+    "size": 200,
+    "fps": 24,
+    "loop": true,
+    "oneShot": false,
+    "sprite": "assets/anim/wave-sprite.png",
+    "gif": "assets/anim/wave.gif"
+  },
+  "walk": {
+    "frames": 24,
+    "size": 200,
+    "fps": 24,
+    "loop": true,
+    "oneShot": false,
+    "sprite": "assets/anim/walk-sprite.png",
+    "gif": "assets/anim/walk.gif"
+  },
+  "blink": {
+    "frames": 24,
+    "size": 200,
+    "fps": 24,
+    "loop": true,
+    "oneShot": false,
+    "sprite": "assets/anim/blink-sprite.png",
+    "gif": "assets/anim/blink.gif"
+  },
+  "correct": {
+    "frames": 30,
+    "size": 200,
+    "fps": 30,
+    "loop": false,
+    "oneShot": true,
+    "sprite": "assets/anim/correct-sprite.png",
+    "gif": "assets/anim/correct.gif"
+  },
+  "wrong": {
+    "frames": 30,
+    "size": 200,
+    "fps": 30,
+    "loop": false,
+    "oneShot": true,
+    "sprite": "assets/anim/wrong-sprite.png",
+    "gif": "assets/anim/wrong.gif"
+  }
+}

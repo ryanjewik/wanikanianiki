@@ -50,12 +50,14 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# local env files — .env holds the WaniKani token, never commit it
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
 
-# generated native folders
-/ios
-/android
+# generated native folders (Expo prebuild output, under mobile/)
+/mobile/ios
+/mobile/android

@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics><meta name="design_doc_mode" content="canvas"><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Shippori+Mincho:wght@500;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"><script src="./image-slot.js"></script><style>body{margin:0;background:#e8e5de;font-family:"Zen Kaku Gothic New",system-ui,sans-serif}a{color:#1a1a1a}a:hover{color:#000}.dv-turn{padding:44px 48px 36px;border-bottom:1px solid rgba(0,0,0,.08);scroll-margin-top:16px}.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 24px}.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}.dv-tname{font:500 13px/1.2 system-ui,sans-serif;color:#1a1a1a}.dv-opts{display:flex;flex-wrap:wrap;gap:34px;align-items:flex-start}.dv-opt{flex:none;display:flex;flex-direction:column;gap:10px;scroll-margin-top:16px}.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.09);color:#1a1a1a;border-radius:5px;text-decoration:none}.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11.5px/1.35 system-ui,sans-serif;color:rgba(0,0,0,.55);max-width:420px}.dv-opt:target .dv-oid{background:#2a78d6;color:#fff}.dv-next{margin:26px 0 0;font:12px/1.6 system-ui,sans-serif;color:rgba(0,0,0,.5)}.dv-note{max-width:760px;font:13px/1.65 system-ui,sans-serif;color:rgba(0,0,0,.62);margin:0 0 26px}.dv-note b{color:#1a1a1a;font-weight:600}</style></helmet>
+
+<section class="dv-turn" id="t6">
+<div class="dv-thd"><a class="dv-tid" href="#t6">6</a><span class="dv-tname">Kanji &amp; vocab app · Android · seven screens</span></div>
+<p class="dv-note">Seven screens in one system: light grey ground, flat white cards with a 1px <b>#e7e7ea</b> edge and 16px radius, per-type color (<b>blue radical</b> / <b>pink kanji</b> / <b>violet vocab</b>), and outlined buttons with a hard 3px shadow for anything that commits. UI copy is English; Japanese appears only as the material being studied. Icons and badges live in <b>Asset Sheet.dc.html</b>.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="6a">
+<div class="dv-olabel"><a class="dv-oid" href="#6a">6a</a>Item detail — everything known about one kanji, with its SRS position</div>
+<x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" hint-size="428px,908px">
+<div style="background:#f2f2f4;min-height:100%;box-sizing:border-box;font-family:'Zen Kaku Gothic New',sans-serif;display:flex;flex-direction:column">
+
+<div style="background:#fff;padding:11px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e7e7ea">
+<div style="display:flex;align-items:center;gap:9px">
+<span style="font-size:17px;font-weight:800;color:#75767d">‹</span>
+<span style="font-size:14.5px;font-weight:800;color:#1f2024">Kanji Detail</span>
+</div>
+<div style="display:flex;align-items:center;gap:9px">
+<span style="font-size:11.5px;font-weight:800;color:#9a9ba2">Level 12</span>
+<div style="width:26px;height:26px;border-radius:8px;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-size:12px;color:#75767d">★</div>
+</div>
+</div>
+
+<div style="padding:12px 14px 0;display:flex;flex-direction:column;gap:9px">
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;overflow:hidden">
+<div style="background:#e8447f;padding:7px 15px;display:flex;justify-content:space-between;align-items:center">
+<span style="font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#fff">kanji</span>
+<span style="font-size:11px;font-weight:700;color:rgba(255,255,255,.85)">3 of 18 this level</span>
+</div>
+<div style="padding:15px 18px 13px;display:flex;align-items:center;gap:18px">
+<div style="font-family:'Shippori Mincho',serif;font-size:88px;line-height:1;color:#1f2024;font-weight:700">明</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:7px">
+<span style="font-size:24px;font-weight:900;color:#1f2024;letter-spacing:-.3px">Bright</span>
+<span style="font-size:12px;color:#75767d;font-weight:600">also: clear, light</span>
+<div style="display:flex;gap:6px;margin-top:2px">
+<div style="font-family:'Shippori Mincho',serif;font-size:17px;color:#fff;background:#2f7ce0;border-radius:7px;padding:2px 9px;font-weight:700">日</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:17px;color:#fff;background:#2f7ce0;border-radius:7px;padding:2px 9px;font-weight:700">月</div>
+<span style="align-self:center;font-size:11px;color:#9a9ba2;font-weight:700">2 radicals</span>
+</div>
+</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#9a9ba2;font-weight:800;margin-bottom:10px">Readings</div>
+<div style="display:flex;gap:9px;align-items:center">
+<div style="background:#e6f0fd;border-radius:11px;padding:8px 14px;display:flex;flex-direction:column;gap:1px">
+<span style="font-family:'Shippori Mincho',serif;font-size:20px;font-weight:700;color:#2f7ce0">めい</span>
+<span style="font-size:9px;color:#4d84cf;font-weight:800;letter-spacing:.07em">ON'YOMI</span>
+</div>
+<div style="background:#f3ecfd;border-radius:11px;padding:8px 14px;display:flex;flex-direction:column;gap:1px">
+<span style="font-family:'Shippori Mincho',serif;font-size:20px;font-weight:700;color:#8b5cd6">あか</span>
+<span style="font-size:9px;color:#7a4fc0;font-weight:800;letter-spacing:.07em">KUN'YOMI</span>
+</div>
+<div style="margin-left:auto;width:36px;height:36px;border-radius:50%;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-size:14px;color:#75767d">♪</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#e8447f;font-weight:800;margin-bottom:6px">Mnemonic</div>
+<div style="font-size:13px;line-height:1.6;color:#4a4b52;text-wrap:pretty">The <b style="color:#1f2024">sun</b> and the <b style="color:#1f2024">moon</b> both turned up for the same shift. Of course it's <b style="color:#e8447f">bright</b> — nobody told them to take turns.</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Your progress</span>
+<span style="font-size:11px;font-weight:700;color:#9a9ba2">next review in 3 days</span>
+</div>
+<div style="display:flex;gap:4px;margin-bottom:9px">
+<div style="flex:1;height:7px;border-radius:4px;background:#f0a02c"></div>
+<div style="flex:1;height:7px;border-radius:4px;background:#4bab6b"></div>
+<div style="flex:1;height:7px;border-radius:4px;background:#2f7ce0"></div>
+<div style="flex:1;height:7px;border-radius:4px;background:#e7e7ea"></div>
+<div style="flex:1;height:7px;border-radius:4px;background:#e7e7ea"></div>
+</div>
+<div style="display:flex;gap:9px">
+<div style="flex:1;background:#e6f0fd;border-radius:11px;padding:9px 11px;display:flex;flex-direction:column;gap:1px"><span style="font-size:14px;font-weight:900;color:#2f7ce0;line-height:1.2">{{ stage3 }}</span><span style="font-size:10px;color:#4d84cf;font-weight:700">current stage</span></div>
+<div style="flex:1;background:#f2f2f4;border-radius:11px;padding:9px 11px;display:flex;flex-direction:column;gap:1px"><span style="font-size:14px;font-weight:900;color:#1f2024;line-height:1.2">6 / 7</span><span style="font-size:10px;color:#75767d;font-weight:700">correct</span></div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 12px">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Shows up in</span>
+<span style="font-size:11.5px;font-weight:800;color:#8b5cd6">4 words ›</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:1px">
+<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f2f2f4">
+<span style="font-family:'Shippori Mincho',serif;font-size:19px;color:#1f2024;font-weight:700;width:52px">明日</span>
+<span style="flex:1;font-size:12.5px;color:#4a4b52;font-weight:600">tomorrow</span>
+<span style="font-size:11px;color:#9a9ba2;font-weight:600">あした</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:8px 0">
+<span style="font-family:'Shippori Mincho',serif;font-size:19px;color:#1f2024;font-weight:700;width:52px">説明</span>
+<span style="flex:1;font-size:12.5px;color:#4a4b52;font-weight:600">explanation</span>
+<span style="font-size:11px;color:#9a9ba2;font-weight:600">せつめい</span>
+</div>
+</div>
+</div>
+
+</div>
+
+<div style="margin-top:auto;padding:12px 14px 12px">
+<div style="background:#fff;border:1.5px solid #1f2024;border-radius:12px;height:48px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 0 #1f2024">
+<span style="font-size:15px;font-weight:900;color:#1f2024">Practice this item ›</span>
+</div>
+</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="6b">
+<div class="dv-olabel"><a class="dv-oid" href="#6b">6b</a>Level browser — what's in level 12 and where each item stands</div>
+<x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" hint-size="428px,908px">
+<div style="background:#f2f2f4;min-height:100%;box-sizing:border-box;font-family:'Zen Kaku Gothic New',sans-serif;display:flex;flex-direction:column">
+
+<div style="background:#fff;padding:11px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e7e7ea">
+<div style="display:flex;align-items:center;gap:9px">
+<span style="font-size:17px;font-weight:800;color:#75767d">‹</span>
+<span style="font-size:14.5px;font-weight:800;color:#1f2024">Level 12</span>
+</div>
+<span style="font-size:11.5px;font-weight:800;color:#9a9ba2">80 items</span>
+</div>
+
+<div style="padding:12px 14px 0;display:flex;flex-direction:column;gap:9px">
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px">
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Level progress</span>
+<span style="font-size:11.5px;font-weight:800;color:#f0a02c">9 days in</span>
+</div>
+<div style="height:8px;border-radius:5px;background:#e7e7ea;overflow:hidden;display:flex;margin-bottom:11px">
+<div style="width:62%;background:#e8447f"></div>
+</div>
+<div style="font-size:12px;color:#75767d;font-weight:500"><b style="color:#1f2024">9 more kanji</b> at stage 3 or higher to reach level 13.</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px">
+<div style="display:flex;align-items:center;gap:8px">
+<div style="width:21px;height:21px;border-radius:7px;background:#2f7ce0;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:12px;color:#fff;font-weight:700">部</div>
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Radicals</span>
+</div>
+<span style="font-size:11.5px;font-weight:800;color:#9a9ba2">18 / 25 passed</span>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px">
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#fff;background:#2f7ce0;border-radius:9px;padding:4px 11px;font-weight:700">日</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#fff;background:#2f7ce0;border-radius:9px;padding:4px 11px;font-weight:700">月</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#fff;background:#2f7ce0;border-radius:9px;padding:4px 11px;font-weight:700">田</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#fff;background:#2f7ce0;border-radius:9px;padding:4px 11px;font-weight:700">土</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#2f7ce0;background:#e6f0fd;border-radius:9px;padding:4px 11px;font-weight:700">寺</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#9a9ba2;background:#f2f2f4;border-radius:9px;padding:4px 11px;font-weight:700">頁</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#9a9ba2;background:#f2f2f4;border-radius:9px;padding:4px 11px;font-weight:700">舌</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px">
+<div style="display:flex;align-items:center;gap:8px">
+<div style="width:21px;height:21px;border-radius:7px;background:#e8447f;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:12px;color:#fff;font-weight:700">字</div>
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Kanji</span>
+</div>
+<span style="font-size:11.5px;font-weight:800;color:#9a9ba2">9 / 18 passed</span>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px">
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#fff;background:#e8447f;border-radius:9px;padding:4px 11px;font-weight:700">明</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#fff;background:#e8447f;border-radius:9px;padding:4px 11px;font-weight:700">時</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#fff;background:#e8447f;border-radius:9px;padding:4px 11px;font-weight:700">音</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#e8447f;background:#fdeaf1;border-radius:9px;padding:4px 11px;font-weight:700">計</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#e8447f;background:#fdeaf1;border-radius:9px;padding:4px 11px;font-weight:700">記</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#9a9ba2;background:#f2f2f4;border-radius:9px;padding:4px 11px;font-weight:700">話</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:20px;color:#9a9ba2;background:#f2f2f4;border-radius:9px;padding:4px 11px;font-weight:700">語</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px">
+<div style="display:flex;align-items:center;gap:8px">
+<div style="width:21px;height:21px;border-radius:7px;background:#8b5cd6;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:12px;color:#fff;font-weight:700">語</div>
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Vocabulary</span>
+</div>
+<span style="font-size:11.5px;font-weight:800;color:#9a9ba2">21 / 37 passed</span>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px">
+<div style="font-family:'Shippori Mincho',serif;font-size:18px;color:#fff;background:#8b5cd6;border-radius:9px;padding:4px 10px;font-weight:700">明日</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:18px;color:#fff;background:#8b5cd6;border-radius:9px;padding:4px 10px;font-weight:700">説明</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:18px;color:#8b5cd6;background:#f3ecfd;border-radius:9px;padding:4px 10px;font-weight:700">時間</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:18px;color:#9a9ba2;background:#f2f2f4;border-radius:9px;padding:4px 10px;font-weight:700">記事</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:11px 14px 12px;display:flex;align-items:center;gap:12px">
+<div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:4px;background:#e8447f"></div><span style="font-size:10.5px;color:#75767d;font-weight:700">passed</span></div>
+<div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:4px;background:#fdeaf1"></div><span style="font-size:10.5px;color:#75767d;font-weight:700">in progress</span></div>
+<div style="display:flex;align-items:center;gap:6px"><div style="width:11px;height:11px;border-radius:4px;background:#f2f2f4"></div><span style="font-size:10.5px;color:#75767d;font-weight:700">locked</span></div>
+</div>
+
+</div>
+
+<div style="margin-top:auto;border-top:1px solid #e7e7ea;background:#fff;display:grid;grid-template-columns:repeat(4,1fr);padding:9px 0 5px">
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:26px;height:26px;border-radius:9px;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#9a9ba2;font-weight:700">家</div><div style="font-size:9.5px;font-weight:700;color:#9a9ba2">Home</div></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:26px;height:26px;border-radius:9px;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#9a9ba2;font-weight:700">習</div><div style="font-size:9.5px;font-weight:700;color:#9a9ba2">Study</div></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:26px;height:26px;border-radius:9px;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#9a9ba2;font-weight:700">写</div><div style="font-size:9.5px;font-weight:700;color:#9a9ba2">Import</div></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:26px;height:26px;border-radius:9px;background:#e8447f;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#fff;font-weight:700">帳</div><div style="font-size:9.5px;font-weight:800;color:#e8447f">Items</div></div>
+</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="6c">
+<div class="dv-olabel"><a class="dv-oid" href="#6c">6c</a>Session summary — what moved, what to fix, one clear next step</div>
+<x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" hint-size="428px,908px">
+<div style="background:#f2f2f4;min-height:100%;box-sizing:border-box;font-family:'Zen Kaku Gothic New',sans-serif;display:flex;flex-direction:column">
+
+<div style="background:#fff;padding:11px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e7e7ea">
+<span style="font-size:14.5px;font-weight:800;color:#1f2024">Session Complete</span>
+<span style="font-size:11.5px;font-weight:800;color:#9a9ba2">14 min</span>
+</div>
+
+<div style="padding:14px 14px 0;display:flex;flex-direction:column;gap:9px">
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:20px 16px 18px;display:flex;align-items:center;gap:18px">
+<div style="width:96px;height:96px;flex:none;border-radius:50%;background:conic-gradient(#4bab6b 0 96%, #f2f2f4 96% 100%);display:flex;align-items:center;justify-content:center">
+<div style="width:76px;height:76px;border-radius:50%;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px">
+<span style="font-size:24px;font-weight:900;color:#1f2024;line-height:1">96%</span>
+<span style="font-size:9px;color:#9a9ba2;font-weight:800;letter-spacing:.06em">CORRECT</span>
+</div>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;flex-direction:column;gap:1px"><span style="font-size:18px;font-weight:900;color:#1f2024;letter-spacing:-.2px">Best run this week</span><span style="font-size:12px;color:#75767d;font-weight:600">87 reviews · 84 right, 3 wrong</span></div>
+<div style="display:flex;gap:7px">
+<div style="background:#fff7e9;border-radius:9px;padding:5px 10px;display:flex;align-items:center;gap:6px"><span style="font-size:13px;font-weight:900;color:#c8801a">42</span><span style="font-size:10px;color:#a5751f;font-weight:700">day streak</span></div>
+</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Items that moved up</span>
+<span style="font-size:11.5px;font-weight:800;color:#4bab6b">+31</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:9px">
+<div style="display:flex;align-items:center;gap:11px">
+<span style="font-size:12px;font-weight:700;color:#4a4b52;flex:1">{{ stage2 }} → {{ stage3 }}</span>
+<div style="flex:1.4;height:7px;border-radius:4px;background:#f2f2f4;overflow:hidden"><div style="width:74%;height:100%;background:#2f7ce0"></div></div>
+<span style="width:22px;text-align:right;font-size:12px;font-weight:900;color:#1f2024">18</span>
+</div>
+<div style="display:flex;align-items:center;gap:11px">
+<span style="font-size:12px;font-weight:700;color:#4a4b52;flex:1">{{ stage3 }} → {{ stage4 }}</span>
+<div style="flex:1.4;height:7px;border-radius:4px;background:#f2f2f4;overflow:hidden"><div style="width:38%;height:100%;background:#8b5cd6"></div></div>
+<span style="width:22px;text-align:right;font-size:12px;font-weight:900;color:#1f2024">9</span>
+</div>
+<div style="display:flex;align-items:center;gap:11px">
+<span style="font-size:12px;font-weight:700;color:#4a4b52;flex:1">{{ stage4 }} → {{ stage5 }}</span>
+<div style="flex:1.4;height:7px;border-radius:4px;background:#f2f2f4;overflow:hidden"><div style="width:17%;height:100%;background:#4bab6b"></div></div>
+<span style="width:22px;text-align:right;font-size:12px;font-weight:900;color:#1f2024">4</span>
+</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 13px">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px">
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Worth another look</span>
+<span style="font-size:11.5px;font-weight:800;color:#d43a73">3 items</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:1px">
+<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f2f2f4">
+<span style="font-family:'Shippori Mincho',serif;font-size:20px;color:#d43a73;background:#fdeaf1;border-radius:8px;padding:2px 9px;font-weight:700">女</span>
+<div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font-size:12.5px;color:#1f2024;font-weight:700">woman</span><span style="font-size:11px;color:#9a9ba2;font-weight:600">you typed おんあ</span></div>
+<span style="font-size:11px;color:#9a9ba2;font-weight:700">おんな</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f2f2f4">
+<span style="font-family:'Shippori Mincho',serif;font-size:20px;color:#d43a73;background:#fdeaf1;border-radius:8px;padding:2px 9px;font-weight:700">田</span>
+<div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font-size:12.5px;color:#1f2024;font-weight:700">rice paddy</span><span style="font-size:11px;color:#9a9ba2;font-weight:600">meaning missed twice</span></div>
+<span style="font-size:11px;color:#9a9ba2;font-weight:700">た</span>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:8px 0">
+<span style="font-family:'Shippori Mincho',serif;font-size:20px;color:#d43a73;background:#fdeaf1;border-radius:8px;padding:2px 9px;font-weight:700">大人</span>
+<div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font-size:12.5px;color:#1f2024;font-weight:700">adult</span><span style="font-size:11px;color:#9a9ba2;font-weight:600">irregular reading</span></div>
+<span style="font-size:11px;color:#9a9ba2;font-weight:700">おとな</span>
+</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px;display:flex;align-items:center;gap:13px">
+<div style="width:44px;height:44px;flex:none;border-radius:12px;background:#e6f0fd;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:20px;color:#2f7ce0;font-weight:700">次</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Next reviews in 4 hours</span>
+<span style="font-size:11.5px;color:#75767d;font-weight:600">23 items · we'll remind you</span>
+</div>
+</div>
+
+</div>
+
+<div style="margin-top:auto;padding:12px 14px 12px;display:flex;flex-direction:column;gap:7px">
+<div style="background:#e8447f;border:1.5px solid #1f2024;border-radius:12px;height:50px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 0 #1f2024">
+<span style="font-size:16px;font-weight:900;color:#fff">Start 24 lessons ›</span>
+</div>
+<div style="height:32px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#75767d">Back to home</div>
+</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="6d">
+<div class="dv-olabel"><a class="dv-oid" href="#6d">6d</a>Photo import — OCR a textbook page into your own deck</div>
+<x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" hint-size="428px,908px">
+<div style="background:#f2f2f4;min-height:100%;box-sizing:border-box;font-family:'Zen Kaku Gothic New',sans-serif;display:flex;flex-direction:column">
+
+<div style="background:#fff;padding:11px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e7e7ea">
+<div style="display:flex;align-items:center;gap:9px">
+<span style="font-size:17px;font-weight:800;color:#75767d">‹</span>
+<span style="font-size:14.5px;font-weight:800;color:#1f2024">Import from Photo</span>
+</div>
+<span style="font-size:11.5px;font-weight:800;color:#8b5cd6">My deck</span>
+</div>
+
+<div style="padding:12px 14px 0;display:flex;flex-direction:column;gap:9px">
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:12px;display:flex;gap:12px;align-items:center">
+<div style="width:96px;height:112px;flex:none;border-radius:10px;background:#e9e9ec;overflow:hidden"><image-slot id="wk-import-page" radius="10" placeholder=""></image-slot></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;align-items:center;gap:7px">
+<div style="width:8px;height:8px;border-radius:50%;background:#4bab6b"></div>
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Page scanned</span>
+</div>
+<span style="font-size:11.5px;color:#75767d;font-weight:600;line-height:1.5">Genki II · page 84 vocabulary list. Found <b style="color:#1f2024">12 items</b>, 2 need a look.</span>
+<div style="display:flex;gap:7px">
+<div style="border:1.5px solid #1f2024;border-radius:9px;padding:6px 11px;box-shadow:0 2px 0 #1f2024"><span style="font-size:11.5px;font-weight:800;color:#1f2024">Retake</span></div>
+<div style="border:1px solid #e7e7ea;border-radius:9px;padding:6px 11px"><span style="font-size:11.5px;font-weight:800;color:#75767d">Crop</span></div>
+</div>
+</div>
+</div>
+
+<div style="background:#fff7e9;border-radius:16px;border:1px solid #f6dfb4;padding:11px 13px;display:flex;align-items:center;gap:11px">
+<div style="width:24px;height:24px;flex:none;border-radius:8px;background:#f0a02c;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#fff">!</div>
+<span style="flex:1;font-size:12px;color:#7d5a12;font-weight:600;line-height:1.5">Two readings looked ambiguous. Tap a row to fix it before importing.</span>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 12px">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px">
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">Detected items</span>
+<span style="font-size:11.5px;font-weight:800;color:#8b5cd6">10 of 12 selected</span>
+</div>
+<div style="display:flex;flex-direction:column;gap:1px">
+
+<div style="display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid #f2f2f4">
+<div style="width:20px;height:20px;flex:none;border-radius:6px;background:#8b5cd6;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#fff">✓</div>
+<span style="font-family:'Shippori Mincho',serif;font-size:19px;color:#1f2024;font-weight:700;width:56px">経験</span>
+<div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font-size:12.5px;color:#1f2024;font-weight:700">experience</span><span style="font-size:11px;color:#9a9ba2;font-weight:600">けいけん</span></div>
+<span style="font-size:9.5px;font-weight:800;color:#8b5cd6;background:#f3ecfd;border-radius:6px;padding:2px 7px">N3</span>
+</div>
+
+<div style="display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid #f2f2f4">
+<div style="width:20px;height:20px;flex:none;border-radius:6px;background:#8b5cd6;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#fff">✓</div>
+<span style="font-family:'Shippori Mincho',serif;font-size:19px;color:#1f2024;font-weight:700;width:56px">習慣</span>
+<div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font-size:12.5px;color:#1f2024;font-weight:700">habit, custom</span><span style="font-size:11px;color:#9a9ba2;font-weight:600">しゅうかん</span></div>
+<span style="font-size:9.5px;font-weight:800;color:#8b5cd6;background:#f3ecfd;border-radius:6px;padding:2px 7px">N3</span>
+</div>
+
+<div style="display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid #f2f2f4;background:#fffdf7">
+<div style="width:20px;height:20px;flex:none;border-radius:6px;border:1.5px solid #f0a02c;box-sizing:border-box;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;color:#f0a02c">?</div>
+<span style="font-family:'Shippori Mincho',serif;font-size:19px;color:#1f2024;font-weight:700;width:56px">辛い</span>
+<div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font-size:12.5px;color:#1f2024;font-weight:700">spicy / tough</span><span style="font-size:11px;color:#c8801a;font-weight:700">からい or つらい?</span></div>
+<span style="font-size:11px;font-weight:800;color:#f0a02c">Fix ›</span>
+</div>
+
+<div style="display:flex;align-items:center;gap:11px;padding:9px 0">
+<div style="width:20px;height:20px;flex:none;border-radius:6px;border:1.5px solid #d3d4d9;box-sizing:border-box"></div>
+<span style="font-family:'Shippori Mincho',serif;font-size:19px;color:#9a9ba2;font-weight:700;width:56px">大人</span>
+<div style="flex:1;display:flex;flex-direction:column;gap:1px"><span style="font-size:12.5px;color:#9a9ba2;font-weight:700">adult</span><span style="font-size:11px;color:#9a9ba2;font-weight:600">already in your deck</span></div>
+<span style="font-size:11px;color:#9a9ba2;font-weight:700">Skipped</span>
+</div>
+
+</div>
+<div style="margin-top:11px;font-size:11.5px;color:#75767d;font-weight:700">Show all 12 ›</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;border:1px solid #e7e7ea;padding:13px 14px 14px">
+<div style="font-size:13.5px;font-weight:800;color:#1f2024;margin-bottom:11px">Study these as</div>
+<div style="display:flex;gap:7px">
+<div style="flex:1;border:1.5px solid #8b5cd6;border-radius:11px;padding:9px 10px;background:#f3ecfd;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:12px;font-weight:800;color:#6b3fb8">Notecards</span>
+<span style="font-size:10px;color:#7a4fc0;font-weight:600">front / back flip</span>
+</div>
+<div style="flex:1;border:1px solid #e7e7ea;border-radius:11px;padding:9px 10px;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:12px;font-weight:800;color:#1f2024">Quiz me</span>
+<span style="font-size:10px;color:#75767d;font-weight:600">AI-generated</span>
+</div>
+<div style="flex:1;border:1px solid #e7e7ea;border-radius:11px;padding:9px 10px;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:12px;font-weight:800;color:#1f2024">SRS</span>
+<span style="font-size:10px;color:#75767d;font-weight:600">add to reviews</span>
+</div>
+</div>
+</div>
+
+</div>
+
+<div style="margin-top:auto;padding:12px 14px 12px">
+<div style="background:#8b5cd6;border:1.5px solid #1f2024;border-radius:12px;height:50px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 0 #1f2024">
+<span style="font-size:16px;font-weight:900;color:#fff">Import 10 items ›</span>
+</div>
+</div>
+</div>
+</x-import>
+</div>
+
+</div>
+<p class="dv-next">Try next: "desktop versions of these four" · "the notecard flip screen from <a class="dv-oid" href="#6d">6d</a>" · "wrong-answer state for <a class="dv-oid" href="#4d">4d</a>" · "handoff package for the bright direction"</p>
+</section>
+
+<section class="dv-turn" id="t4">
+<div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname">Lesson &amp; review</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="4c">
+<div class="dv-olabel"><a class="dv-oid" href="#4c">4c</a>Playful lesson — art slot, colored radical chips, chunky CTA</div>
+<x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" hint-size="428px,908px">
+<div style="background:#f2f2f4;min-height:100%;box-sizing:border-box;font-family:'Zen Kaku Gothic New',sans-serif;display:flex;flex-direction:column">
+
+<div style="background:#fff;padding:11px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e7e7ea">
+<div style="display:flex;align-items:center;gap:8px">
+<div style="width:24px;height:24px;border-radius:7px;background:#e8447f;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;font-weight:700;color:#fff">字</div>
+<span style="font-size:14.5px;font-weight:800;color:#1f2024">New Kanji</span>
+</div>
+<div style="display:flex;align-items:center;gap:9px">
+<div style="display:flex;gap:4px">
+<div style="width:16px;height:5px;border-radius:3px;background:#e8447f"></div><div style="width:16px;height:5px;border-radius:3px;background:#e8447f"></div><div style="width:16px;height:5px;border-radius:3px;background:#e8447f"></div><div style="width:16px;height:5px;border-radius:3px;background:#e7e7ea"></div><div style="width:16px;height:5px;border-radius:3px;background:#e7e7ea"></div>
+</div>
+<span style="font-size:11.5px;font-weight:800;color:#9a9ba2">3/5</span>
+</div>
+</div>
+
+<div style="padding:12px 14px 0;display:flex;flex-direction:column;gap:9px">
+
+<div style="background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="background:#e8447f;padding:8px 15px;display:flex;justify-content:space-between;align-items:center">
+<span style="font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#fff">kanji · level 12</span>
+<span style="font-size:11px;font-weight:700;color:rgba(255,255,255,.85)">meaning first</span>
+</div>
+<div style="padding:22px 18px 18px;display:flex;flex-direction:column;align-items:center;gap:14px">
+<div style="font-family:'Shippori Mincho',serif;font-size:100px;line-height:1;color:#1f2024;font-weight:700">明</div>
+<div style="display:flex;align-items:center;gap:7px">
+<div style="font-family:'Shippori Mincho',serif;font-size:21px;color:#fff;background:#2f7ce0;border-radius:9px;padding:4px 12px;font-weight:700">日</div>
+<span style="font-size:14px;color:#c9cad1;font-weight:800">+</span>
+<div style="font-family:'Shippori Mincho',serif;font-size:21px;color:#fff;background:#2f7ce0;border-radius:9px;padding:4px 12px;font-weight:700">月</div>
+<span style="font-size:14px;color:#c9cad1;font-weight:800">=</span>
+<div style="font-family:'Shippori Mincho',serif;font-size:21px;color:#fff;background:#e8447f;border-radius:9px;padding:4px 12px;font-weight:700">明</div>
+</div>
+<div style="font-size:27px;font-weight:900;color:#1f2024;letter-spacing:-.4px">Bright</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;padding:9px 13px;display:flex;gap:12px;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="width:84px;height:84px;flex:none;border-radius:12px;background:#fdeaf1"><image-slot id="wk-art-mnemonic" radius="12" placeholder=""></image-slot></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:5px">
+<span style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#e8447f;font-weight:800">Mnemonic</span>
+<span style="font-size:13.5px;line-height:1.6;color:#4a4b52;text-wrap:pretty">The <b style="color:#1f2024">sun</b> and the <b style="color:#1f2024">moon</b> both turned up for the same shift. Of course it's <b style="color:#e8447f">bright</b>.</span>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;padding:13px 14px 14px;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#9a9ba2;font-weight:800;margin-bottom:10px">Readings</div>
+<div style="display:flex;gap:9px;align-items:center">
+<div style="background:#e6f0fd;border-radius:11px;padding:8px 14px;display:flex;flex-direction:column;gap:1px">
+<span style="font-family:'Shippori Mincho',serif;font-size:20px;font-weight:700;color:#2f7ce0">めい</span>
+<span style="font-size:9px;color:#4d84cf;font-weight:800;letter-spacing:.07em">ON'YOMI</span>
+</div>
+<div style="background:#f3ecfd;border-radius:11px;padding:8px 14px;display:flex;flex-direction:column;gap:1px">
+<span style="font-family:'Shippori Mincho',serif;font-size:20px;font-weight:700;color:#8b5cd6">あか</span>
+<span style="font-size:9px;color:#7a4fc0;font-weight:800;letter-spacing:.07em">KUN'YOMI</span>
+</div>
+<div style="margin-left:auto;width:36px;height:36px;border-radius:50%;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-size:14px;color:#75767d">♪</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;padding:13px 14px 14px;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:#9a9ba2;font-weight:800;margin-bottom:10px">Shows up in</div>
+<div style="display:flex;gap:9px">
+<div style="flex:1;border:1px solid #e7e7ea;border-radius:11px;padding:9px 11px;display:flex;flex-direction:column;gap:2px">
+<span style="font-family:'Shippori Mincho',serif;font-size:17px;color:#1f2024;font-weight:700">明日</span>
+<span style="font-size:10.5px;color:#75767d;font-weight:600">あした · tomorrow</span>
+</div>
+<div style="flex:1;border:1px solid #e7e7ea;border-radius:11px;padding:9px 11px;display:flex;flex-direction:column;gap:2px">
+<span style="font-family:'Shippori Mincho',serif;font-size:17px;color:#1f2024;font-weight:700">説明</span>
+<span style="font-size:10.5px;color:#75767d;font-weight:600">せつめい · explanation</span>
+</div>
+</div>
+</div>
+
+</div>
+
+<div style="margin-top:auto;padding:12px 14px 12px;display:flex;flex-direction:column;gap:7px">
+<div style="background:#e8447f;border:1.5px solid #1f2024;border-radius:12px;height:50px;display:flex;align-items:center;justify-content:center;box-shadow:0 3px 0 #1f2024">
+<span style="font-size:16px;font-weight:900;color:#fff">Got it — next ›</span>
+</div>
+<div style="height:32px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:#75767d">Show me this one again later</div>
+</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="4d">
+<div class="dv-olabel"><a class="dv-oid" href="#4d">4d</a>Playful review — bright progress, colored answer state, missed chips</div>
+<x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" hint-size="428px,908px">
+<div style="background:#f2f2f4;min-height:100%;box-sizing:border-box;font-family:'Zen Kaku Gothic New',sans-serif;display:flex;flex-direction:column">
+
+<div style="background:#fff;padding:11px 18px 12px;border-bottom:1px solid #e7e7ea">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+<div style="display:flex;align-items:center;gap:8px">
+<div style="width:22px;height:22px;border-radius:7px;background:#e8447f;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:12px;font-weight:700;color:#fff">字</div>
+<span style="font-size:14px;font-weight:800;color:#1f2024">Kanji Reading</span>
+</div>
+<span style="font-size:12.5px;font-weight:800;color:#9a9ba2">34 / 87</span>
+</div>
+<div style="height:6px;border-radius:3px;background:#e7e7ea;overflow:hidden;display:flex">
+<div style="width:37%;background:#4bab6b"></div><div style="width:2%;background:#e8447f"></div>
+</div>
+</div>
+
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 14px">
+<div style="width:100%;box-sizing:border-box;background:#fff;border-radius:20px;padding:34px 18px 28px;display:flex;flex-direction:column;align-items:center;gap:18px;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:#9a9ba2;font-weight:800">What's the reading?</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:128px;line-height:1;color:#1f2024;font-weight:500">山</div>
+<div style="display:flex;align-items:center;gap:8px">
+<span style="font-size:10.5px;font-weight:800;color:#2f7ce0;background:#e6f0fd;border-radius:20px;padding:4px 11px">{{ stage3 }}</span>
+<span style="font-size:10.5px;font-weight:700;color:#9a9ba2">seen 6× · level 4</span>
+</div>
+</div>
+</div>
+
+<div style="padding:0 14px">
+<div style="display:flex;align-items:center;gap:10px">
+<div style="flex:1;background:#fff;border:1.5px solid #1f2024;border-radius:12px;height:56px;display:flex;align-items:center;padding:0 15px;gap:3px;box-shadow:0 3px 0 #1f2024">
+<span style="font-family:'Shippori Mincho',serif;font-size:26px;color:#1f2024">やま</span>
+<div style="width:2px;height:25px;background:#e8447f"></div>
+</div>
+<div style="width:56px;height:56px;border-radius:12px;background:#4bab6b;border:1.5px solid #1f2024;box-shadow:0 3px 0 #1f2024;flex:none;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:900;color:#fff">✓</div>
+</div>
+<div style="margin-top:10px;font-size:10.5px;color:#9a9ba2;font-weight:700">Kana input · romaji converts as you type</div>
+</div>
+
+<div style="margin:18px 14px 0;background:#fff;border-radius:16px;padding:13px 14px 14px;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+<span style="font-size:13.5px;font-weight:800;color:#1f2024">This session</span>
+<span style="font-size:11px;font-weight:700;color:#f0a02c">2 pending sync</span>
+</div>
+<div style="display:flex;gap:9px;margin-bottom:12px">
+<div style="flex:1;background:#eaf7ee;border-radius:11px;padding:9px 11px;display:flex;flex-direction:column;gap:1px"><span style="font-size:19px;font-weight:900;color:#3d9159;line-height:1.15">96%</span><span style="font-size:10px;color:#57795f;font-weight:700">correct</span></div>
+<div style="flex:1;background:#fdeaf1;border-radius:11px;padding:9px 11px;display:flex;flex-direction:column;gap:1px"><span style="font-size:19px;font-weight:900;color:#d43a73;line-height:1.15">3</span><span style="font-size:10px;color:#a5476b;font-weight:700">missed</span></div>
+<div style="flex:1;background:#f2f2f4;border-radius:11px;padding:9px 11px;display:flex;flex-direction:column;gap:1px"><span style="font-size:19px;font-weight:900;color:#1f2024;line-height:1.15">53</span><span style="font-size:10px;color:#75767d;font-weight:700">left</span></div>
+</div>
+<div style="display:flex;gap:7px;padding-top:12px;border-top:1px solid #eeeef1;align-items:center">
+<div style="font-family:'Shippori Mincho',serif;font-size:18px;color:#d43a73;background:#fdeaf1;border-radius:9px;padding:3px 11px;font-weight:700">女</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:18px;color:#d43a73;background:#fdeaf1;border-radius:9px;padding:3px 11px;font-weight:700">田</div>
+<div style="font-family:'Shippori Mincho',serif;font-size:18px;color:#d43a73;background:#fdeaf1;border-radius:9px;padding:3px 11px;font-weight:700">大人</div>
+<span style="margin-left:auto;font-size:10.5px;color:#9a9ba2;font-weight:700">retry at the end</span>
+</div>
+</div>
+
+<div style="margin-top:auto;padding:14px 18px 12px;display:flex;gap:8px">
+<div style="width:32px;height:32px;border-radius:9px;background:#fff;border:1px solid #e7e7ea;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#75767d">音</div>
+<div style="width:32px;height:32px;border-radius:9px;background:#fff;border:1px solid #e7e7ea;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#75767d">解</div>
+<div style="width:32px;height:32px;border-radius:9px;background:#fff;border:1px solid #e7e7ea;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#75767d">終</div>
+<div style="margin-left:auto;align-self:center;font-size:11px;font-weight:800;color:#9a9ba2">Wrap up ›</div>
+</div>
+</div>
+</x-import>
+</div>
+
+</div>
+</section>
+
+<section class="dv-turn" id="t3">
+<div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">Dashboard</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="3b">
+<div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Bright &amp; playful — white cards, saturated type colors, chunky buttons, art slots</div>
+<x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" hint-size="428px,908px">
+<div style="background:#f2f2f4;min-height:100%;box-sizing:border-box;font-family:'Zen Kaku Gothic New',sans-serif;display:flex;flex-direction:column">
+
+<div style="background:#fff;padding:11px 18px 12px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e7e7ea">
+<div style="display:flex;align-items:center;gap:7px">
+<div style="width:26px;height:26px;border-radius:8px;background:#e8447f;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:14px;font-weight:700;color:#fff">漢</div>
+<span style="font-size:15px;font-weight:900;color:#1f2024;letter-spacing:-.2px">KANJI WORKSHOP</span>
+</div>
+<div style="width:30px;height:30px;border-radius:50%;background:#f2f2f4;border:1px solid #e7e7ea;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;font-weight:700;color:#9a9ba2">私</div>
+</div>
+
+<div style="padding:10px 14px 0;display:flex;flex-direction:column;gap:4px">
+
+<div style="background:#fff;border-radius:16px;padding:12px;display:flex;gap:12px;align-items:center;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="width:80px;height:80px;flex:none;border-radius:12px;background:#fdeaf1"><image-slot id="wk-art-lessons" radius="12" placeholder=""></image-slot></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:7px">
+<div style="display:flex;align-items:center;gap:8px">
+<span style="font-size:16.5px;font-weight:800;color:#1f2024">Today's Lessons</span>
+<span style="min-width:26px;text-align:center;font-size:12px;font-weight:800;color:#fff;background:#e8447f;border-radius:20px;padding:2px 8px">24</span>
+</div>
+<div style="font-size:12px;color:#75767d;font-weight:500">Learn something new.</div>
+<div style="border:1.5px solid #1f2024;border-radius:9px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 0 #1f2024">
+<span style="font-size:13px;font-weight:800;color:#1f2024">Start Lessons</span>
+<span style="font-size:14px;font-weight:800;color:#1f2024">›</span>
+</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;padding:12px;display:flex;gap:12px;align-items:center;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="width:80px;height:80px;flex:none;border-radius:12px;background:#e6f0fd"><image-slot id="wk-art-reviews" radius="12" placeholder=""></image-slot></div>
+<div style="flex:1;display:flex;flex-direction:column;gap:7px">
+<div style="display:flex;align-items:center;gap:8px">
+<span style="font-size:16.5px;font-weight:800;color:#1f2024">Reviews</span>
+<span style="min-width:26px;text-align:center;font-size:12px;font-weight:800;color:#fff;background:#2f7ce0;border-radius:20px;padding:2px 8px">87</span>
+</div>
+<div style="font-size:12px;color:#75767d;font-weight:500">Do your Reviews to unlock new Lessons.</div>
+<div style="border:1.5px solid #1f2024;border-radius:9px;padding:8px 12px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 0 #1f2024">
+<span style="font-size:13px;font-weight:800;color:#1f2024">Start Reviews</span>
+<span style="font-size:14px;font-weight:800;color:#1f2024">›</span>
+</div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;padding:13px 14px 13px;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px">
+<div style="display:flex;align-items:baseline;gap:9px">
+<span style="font-size:14px;font-weight:800;color:#1f2024">Study Streak</span>
+<span style="font-size:19px;font-weight:900;color:#f0a02c">41日</span>
+</div>
+<span style="font-size:11px;color:#9a9ba2;font-weight:600">best 52</span>
+</div>
+<div style="display:flex;justify-content:space-between;gap:5px">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:9.5px;color:#9a9ba2;font-weight:700">Sat</span><div style="width:100%;height:26px;border-radius:7px;background:#f0a02c"></div></div>
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:9.5px;color:#9a9ba2;font-weight:700">Sun</span><div style="width:100%;height:26px;border-radius:7px;background:#f0a02c"></div></div>
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:9.5px;color:#9a9ba2;font-weight:700">Mon</span><div style="width:100%;height:26px;border-radius:7px;background:#f0a02c"></div></div>
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:9.5px;color:#9a9ba2;font-weight:700">Tue</span><div style="width:100%;height:26px;border-radius:7px;background:#f0a02c"></div></div>
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:9.5px;color:#9a9ba2;font-weight:700">Wed</span><div style="width:100%;height:26px;border-radius:7px;background:#f7cd8c"></div></div>
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:9.5px;color:#9a9ba2;font-weight:700">Thu</span><div style="width:100%;height:26px;border-radius:7px;background:#e7e7ea"></div></div>
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px"><span style="font-size:9.5px;color:#1f2024;font-weight:800">Today</span><div style="width:100%;height:26px;border-radius:7px;background:#fff;border:1.5px dashed #c9cad1;box-sizing:border-box"></div></div>
+</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;padding:13px 14px 14px;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">
+<span style="font-size:14px;font-weight:800;color:#1f2024">Level Progress</span>
+<span style="font-size:12px;font-weight:700;color:#2f7ce0">Level 12 ›</span>
+</div>
+<div style="display:flex;gap:8px">
+<div style="flex:1;border:1px solid #e7e7ea;border-radius:11px;padding:9px 10px">
+<div style="display:flex;flex-direction:column;gap:6px;width:100%">
+<div style="display:flex;align-items:center;gap:6px"><div style="width:19px;height:19px;border-radius:6px;background:#2f7ce0;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:11px;color:#fff;font-weight:700">部</div><span style="font-size:11px;font-weight:700;color:#1f2024">Radicals</span></div>
+<span style="font-size:15px;font-weight:900;color:#1f2024">18/25</span>
+</div>
+</div>
+<div style="flex:1;border:1px solid #e7e7ea;border-radius:11px;padding:9px 10px">
+<div style="display:flex;flex-direction:column;gap:6px;width:100%">
+<div style="display:flex;align-items:center;gap:6px"><div style="width:19px;height:19px;border-radius:6px;background:#e8447f;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:11px;color:#fff;font-weight:700">字</div><span style="font-size:11px;font-weight:700;color:#1f2024">Kanji</span></div>
+<span style="font-size:15px;font-weight:900;color:#1f2024">9/18</span>
+</div>
+</div>
+<div style="flex:1;border:1px solid #e7e7ea;border-radius:11px;padding:9px 10px">
+<div style="display:flex;flex-direction:column;gap:6px;width:100%">
+<div style="display:flex;align-items:center;gap:6px"><div style="width:19px;height:19px;border-radius:6px;background:#8b5cd6;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:11px;color:#fff;font-weight:700">語</div><span style="font-size:11px;font-weight:700;color:#1f2024">Vocab</span></div>
+<span style="font-size:15px;font-weight:900;color:#1f2024">21/37</span>
+</div>
+</div>
+</div>
+<div style="margin-top:10px;font-size:12px;color:#75767d;font-weight:500"><b style="color:#1f2024">9 more kanji</b> to level up.</div>
+</div>
+
+<div style="background:#fff;border-radius:16px;padding:13px 14px 13px;box-shadow:0 1px 2px rgba(31,32,36,.07)">
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:11px">
+<span style="font-size:14px;font-weight:800;color:#1f2024">Active Item Spread</span>
+<span style="font-size:12px;font-weight:700;color:#2f7ce0">Details ›</span>
+</div>
+<div style="display:flex;align-items:flex-end;gap:7px;height:38px">
+<div style="flex:1;height:20%;background:#f0a02c;border-radius:5px 5px 0 0"></div>
+<div style="flex:1;height:56%;background:#4bab6b;border-radius:5px 5px 0 0"></div>
+<div style="flex:1;height:30%;background:#2f7ce0;border-radius:5px 5px 0 0"></div>
+<div style="flex:1;height:100%;background:#8b5cd6;border-radius:5px 5px 0 0"></div>
+<div style="flex:1;height:42%;background:#c9cad1;border-radius:5px 5px 0 0"></div>
+</div>
+<div style="display:flex;gap:7px;margin-top:7px">
+<div style="flex:1;text-align:center;font-size:9px;color:#9a9ba2;font-weight:700">{{ stage1 }}</div>
+<div style="flex:1;text-align:center;font-size:9px;color:#9a9ba2;font-weight:700">{{ stage2 }}</div>
+<div style="flex:1;text-align:center;font-size:9px;color:#9a9ba2;font-weight:700">{{ stage3 }}</div>
+<div style="flex:1;text-align:center;font-size:9px;color:#9a9ba2;font-weight:700">{{ stage4 }}</div>
+<div style="flex:1;text-align:center;font-size:9px;color:#9a9ba2;font-weight:700">{{ stage5 }}</div>
+</div>
+</div>
+
+</div>
+
+<div style="display:flex;align-items:center;gap:7px;padding:9px 20px 8px;font-size:10.5px;color:#9a9ba2;font-weight:600">
+<div style="width:6px;height:6px;border-radius:50%;background:#4bab6b"></div><span>Synced 4 minutes ago</span>
+</div>
+
+<div style="margin-top:auto;border-top:1px solid #e7e7ea;background:#fff;display:grid;grid-template-columns:repeat(4,1fr);padding:9px 0 5px">
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:26px;height:26px;border-radius:9px;background:#e8447f;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#fff;font-weight:700">家</div><div style="font-size:9.5px;font-weight:800;color:#e8447f">Home</div></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:26px;height:26px;border-radius:9px;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#9a9ba2;font-weight:700">習</div><div style="font-size:9.5px;font-weight:700;color:#9a9ba2">Study</div></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:26px;height:26px;border-radius:9px;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#9a9ba2;font-weight:700">写</div><div style="font-size:9.5px;font-weight:700;color:#9a9ba2">Import</div></div>
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:26px;height:26px;border-radius:9px;background:#f2f2f4;display:flex;align-items:center;justify-content:center;font-family:'Shippori Mincho',serif;font-size:13px;color:#9a9ba2;font-weight:700">帳</div><div style="font-size:9.5px;font-weight:700;color:#9a9ba2">Items</div></div>
+</div>
+</div>
+</x-import>
+</div>
+
+</div>
+<p class="dv-next">Try next: "the notecard flip screen from <a class="dv-oid" href="#6d">6d</a>" · "wrong-answer state for <a class="dv-oid" href="#4d">4d</a>" · "a level-up screen"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;stageVocabulary&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Botanical&quot;,&quot;Forge&quot;,&quot;Plain&quot;],&quot;default&quot;:&quot;Botanical&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Naming&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const sets = {
+      Botanical: ['Seed', 'Sprout', 'Sapling', 'Grove', 'Rooted'],
+      Forge: ['Ore', 'Molten', 'Tempered', 'Honed', 'Sealed'],
+      Plain: ['Stage 1', 'Stage 2', 'Stage 3', 'Stage 4', 'Retired'],
+    };
+    const s = sets[this.props.stageVocabulary] || sets.Botanical;
+    return {
+      stage1: s[0], stage2: s[1], stage3: s[2], stage4: s[3], stage5: s[4],
+    };
+  }
+}
+</script>
+</body>
+</html>
