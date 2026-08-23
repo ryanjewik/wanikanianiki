@@ -1,0 +1,9 @@
+# Virtualenv
+.venv/
+
+# Build / tooling artifacts
+*.egg-info/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.py[cod]
