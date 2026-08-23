@@ -1,0 +1,49 @@
+{
+  "name": "wanikanianiki",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "dependencies": {
+    "@expo/vector-icons": "^15.0.2",
+    "@react-native-community/netinfo": "12.0.1",
+    "expo": "~57.0.9",
+    "expo-constants": "~57.0.13",
+    "expo-font": "~57.0.1",
+    "expo-haptics": "~57.0.1",
+    "expo-image": "~57.0.3",
+    "expo-image-picker": "~57.0.12",
+    "expo-linking": "~57.0.7",
+    "expo-router": "~57.0.15",
+    "expo-splash-screen": "~57.0.7",
+    "expo-sqlite": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.2",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-svg": "15.15.4",
+    "react-native-web": "^0.21.2",
+    "react-native-worklets": "0.10.1"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
+    "fonts:subset": "python scripts/subset-fonts.py",
+    "fonts:check": "python scripts/subset-fonts.py --check"
+  },
+  "private": true,
+  "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@expo-google-fonts/shippori-mincho": "^0.4.1",
+    "@expo-google-fonts/zen-kaku-gothic-new": "^0.4.1",
+    "@types/react": "~19.2.4",
+    "babel-preset-expo": "~57.0.0",
+    "typescript": "~6.0.3"
+  }
+}

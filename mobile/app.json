@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "Kanji Workshop",
+    "slug": "wanikanianiki",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "kanjiworkshop",
+    "icon": "./assets/mascot/icon/icon-1024.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F2F2F4",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.wanikanianiki"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FDEAF1",
+        "foregroundImage": "./assets/mascot/icon/adaptive-foreground-1024.png",
+        "backgroundImage": "./assets/mascot/icon/adaptive-background-1024.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.anonymous.wanikanianiki",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/mascot/icon/favicon-196.png"
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-image",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/mascot/views/avatar-512.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#FDEAF1"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Kanji Workshop needs your photo library to import vocabulary from textbook pages.",
+          "cameraPermission": "Kanji Workshop needs the camera to scan textbook vocabulary pages."
+        }
+      ]
+    ]
+  }
+}
