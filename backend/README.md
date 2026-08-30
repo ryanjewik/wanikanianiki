@@ -127,6 +127,42 @@ the intended deployment, so a distributed limiter would solve a problem the
 architecture already prevents. Two overlapping sync runs cannot go faster than
 one — they just collide on the same 60/min budget.
 
+## First run against a real database
+
+Everything below assumes `backend/.env` exists — copy `.env.example` and fill in
+`wanikani_apikey` and `DATABASE_URL`. It is gitignored, so it does not travel
+with a clone; a fresh checkout has to make its own.
+
+```bash
+# 1. Create the schema. Reads the URL from .env; nothing to export.
+.venv/Scripts/python -m alembic upgrade head
+
+# 2. Start the API.
+.venv/Scripts/python -m uvicorn app.main:app --reload
+
+# 3. Confirm the wiring before pulling anything.
+curl localhost:8000/health
+#    database: "configured", counts: all zero
+
+# 4. One-time content pull for every level the account can see.
+#    Minutes, not seconds — it is rate limited to 55 requests/minute.
+curl -X POST localhost:8000/api/sync/backfill
+
+# 5. Assignments and user state.
+curl -X POST localhost:8000/api/sync
+
+# 6. Counts are now non-zero, and the cache path is live.
+curl localhost:8000/health
+curl localhost:8000/api/dashboard
+```
+
+A `502` from step 5 or 6 means WaniKani rejected the token — check
+`wanikani_apikey`. A `503` means `DATABASE_URL` is unset, so the app fell back
+to serving reads straight from WaniKani.
+
+Then point the app at it: set `EXPO_PUBLIC_API_URL` in `mobile/.env` to this
+server's URL, and every screen switches off fixtures onto real data.
+
 ## Migrations
 
 Alembic, on the async template. The URL is **not** in `alembic.ini` — 
