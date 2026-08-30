@@ -177,6 +177,10 @@ class DetectedItem(CamelModel):
     kanji_furigana: str
     furigana_only: str
     english: str
+    # The particle or object a word is printed with — "〜が" for [〜が]苦手な.
+    # Kept apart from the word, which it would otherwise corrupt, and apart
+    # from the meaning, which it is not.
+    usage_context: str | None = None
     jlpt_level: int | None = None
     status: DetectionStatus = "ok"
     selected: bool = True
@@ -194,6 +198,7 @@ class VocabItem(CamelModel):
     kanji_furigana: str
     furigana_only: str
     english: str
+    usage_context: str | None = None
     source_image_id: int | None = None
     is_user_edited: bool = False
     jlpt_level: int | None = None

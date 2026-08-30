@@ -199,6 +199,111 @@ async def test_vendor_errors_become_messages_a_user_can_read(error, expected):
         await extract_page(PNG, "image/png", settings=settings(), client=client)
 
 
+# -- the real page shapes --------------------------------------------------
+# Rows below are transcribed from the sample pages: a Quartet 会話・文法編
+# vocabulary page, a 単語リスト table, and a 覚える単語と例文 list.
+
+
+async def test_a_bracketed_particle_does_not_end_up_in_the_word():
+    """[〜が]苦手な is the word 苦手な plus the particle it takes.
+
+    Folded together it is not a word, and the deck entry is wrong. Split apart
+    the flashcard can show the particle where it belongs.
+    """
+    client = fake_client([
+        ExtractedRow(
+            kanji_furigana="苦手な", furigana_only="にがてな", english="poor at",
+            usage_context="〜が", ambiguous=False,
+        ),
+        ExtractedRow(
+            kanji_furigana="治す", furigana_only="なおす",
+            english="to cure; to heal [vt.]", usage_context="病気を", ambiguous=False,
+        ),
+    ])
+
+    items = await extract_page(PNG, "image/png", settings=settings(), client=client)
+
+    assert [i.kanji_furigana for i in items] == ["苦手な", "治す"]
+    assert [i.usage_context for i in items] == ["〜が", "病気を"]
+
+
+async def test_a_word_with_no_printed_meaning_arrives_deselected():
+    """The 覚える単語と例文 list prints the word alone.
+
+    The entry is still wanted — it is usually the same word the list pages
+    gloss — but importing it silently would put a card in the deck with a blank
+    back.
+    """
+    client = fake_client([
+        ExtractedRow(
+            kanji_furigana="言葉", furigana_only="", english="", ambiguous=False,
+        )
+    ])
+
+    (item,) = await extract_page(PNG, "image/png", settings=settings(), client=client)
+
+    assert item.kanji_furigana == "言葉"
+    assert item.selected is False
+    assert "No meaning printed" in item.note
+    # Not an ambiguous reading — a different problem, and the UI shows it
+    # differently.
+    assert item.status == "ok"
+    assert item.reading_choices is None
+
+
+async def test_printed_suffixes_are_kept_as_the_page_prints_them():
+    """決心（する）and しんぱい（な）against 心配 are printed that way.
+
+    Making the columns agree would be tidying the source rather than reading
+    it, and the reviewer can normalise if they want to.
+    """
+    client = fake_client([
+        ExtractedRow(
+            kanji_furigana="決心（する）", furigana_only="けっしん（する）",
+            english="to make up one's mind; to determine", ambiguous=False,
+        ),
+        ExtractedRow(
+            kanji_furigana="心配", furigana_only="しんぱい（な）",
+            english="worried about (〜が)", ambiguous=False,
+        ),
+    ])
+
+    items = await extract_page(PNG, "image/png", settings=settings(), client=client)
+
+    assert items[0].kanji_furigana == "決心（する）"
+    assert items[1].furigana_only == "しんぱい（な）"
+    # Qualifiers printed inside the meaning stay in the meaning.
+    assert items[1].english == "worried about (〜が)"
+
+
+async def test_a_katakana_word_reads_as_itself():
+    """ボール and ヨーロッパ print the same thing in both columns."""
+    client = fake_client([
+        ExtractedRow(
+            kanji_furigana="ヨーロッパ", furigana_only="ヨーロッパ",
+            english="Europe", ambiguous=False,
+        )
+    ])
+
+    (item,) = await extract_page(PNG, "image/png", settings=settings(), client=client)
+
+    assert item.kanji_furigana == item.furigana_only == "ヨーロッパ"
+    assert item.selected is True
+
+
+def test_the_prompt_names_what_the_sample_pages_actually_contain():
+    """Guards the instructions the sample photos showed were needed.
+
+    Each of these is a real hazard on those pages: show-through on thin paper,
+    a facing page caught in the margin, audio markers and line-number columns,
+    and photos taken sideways.
+    """
+    from app.services.ocr import EXTRACTION_SYSTEM
+
+    for expected in ("覚える単語と例文", "through", "margins", "行", "rotated"):
+        assert expected in EXTRACTION_SYSTEM
+
+
 async def test_a_timeout_says_what_to_do_about_it():
     """Distinct from a connection failure: the call reached the API and ran."""
     client = fake_client(

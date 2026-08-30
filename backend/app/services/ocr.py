@@ -50,15 +50,39 @@ class ExtractionFailed(RuntimeError):
 
 class ExtractedRow(BaseModel):
     kanji_furigana: str = Field(
-        description="The word as written, kanji included, e.g. 食べる. Never empty."
+        description=(
+            "The word itself, as printed, e.g. 食べる or お嬢さん or ボール. "
+            "Never empty. Exclude any leading bracketed particle — those go in "
+            "`usage_context` — but keep a trailing （する） or （な） if the page "
+            "prints one."
+        )
     )
     furigana_only: str = Field(
         description=(
             "The reading in kana only, e.g. たべる. Empty string if the page "
-            "does not give one."
+            "does not give one. For a katakana word this is usually the word "
+            "itself repeated, which is fine."
         )
     )
-    english: str = Field(description="The English meaning as printed on the page.")
+    english: str = Field(
+        description=(
+            "The English meaning exactly as printed, semicolons and all: "
+            "'to save; to help [vt.]'. Keep parenthesised qualifiers such as "
+            "'(polite)' or '(=すみません)'. Empty string where the page prints "
+            "no meaning, as in an example-sentence list — never your own "
+            "translation."
+        )
+    )
+    usage_context: str = Field(
+        default="",
+        description=(
+            "The bracketed particle or object a word is printed with, without "
+            "the brackets: '〜が' for [〜が]苦手な, '病気を' for [病気を]治す, "
+            "'人に' for [人に]あやまる. Empty when the page prints none. This is "
+            "grammatical information the entry loses if it is folded into the "
+            "word."
+        )
+    )
     ambiguous: bool = Field(
         description=(
             "True when the kanji has more than one plausible reading and the page "
@@ -76,26 +100,74 @@ class ExtractedPage(BaseModel):
 
 
 EXTRACTION_SYSTEM = """\
-You read photographs of Japanese textbook vocabulary pages and return the \
+You read photographs of Japanese textbook vocabulary lists and return the \
 entries as structured rows.
 
-These pages are tables. Keep the columns apart: the word as written (with \
-kanji), the reading in kana, and the English meaning. Do not merge them, and \
-do not invent a column the page does not have — an entry with no printed \
-reading gets an empty `furigana_only`, not a guessed one.
+# What to extract
 
-Transcribe what is printed. Do not translate, expand, or improve the English; \
-if the page says "to eat", that is the meaning, not "to consume (food)".
+Every vocabulary entry on the page. They appear in three layouts:
 
-Where a word's reading is genuinely ambiguous from the page alone — 辛い is \
-からい or つらい, 入る is はいる or いる — set `ambiguous` and list every \
-plausible reading in `reading_choices`. A confident wrong reading is worse \
-than an admitted unknown here: these rows go into a spaced-repetition system \
-and get rehearsed until they stick.
+1. Grouped under part-of-speech headings (Nouns, い-adjectives, な-adjectives), \
+   three columns: reading in kana, then the word, then the English meaning.
+2. A ruled table with a word column, a reading column, and a meaning column, \
+   often alongside reference columns you should ignore.
+3. A numbered list, often headed 覚える単語と例文, where each line is a word \
+   followed by a full Japanese example sentence.
 
-Skip page furniture: headers, lesson numbers, page numbers, exercise \
-instructions. Return only vocabulary entries. If the photo contains no \
-vocabulary table at all, return an empty list of rows."""
+**In layout 3, take the word and discard the sentence.** The word is the entry; \
+the sentence is an illustration of it and is not wanted. These entries usually \
+print no reading and no English — leave both empty rather than supplying your \
+own. A blank field is honest and the reviewer can fill it; an invented meaning \
+looks identical to a printed one and gets rehearsed as fact.
+
+One photo often catches more than one of these layouts at once. Return the \
+entries from all of them.
+
+Transcribe what is printed. Do not translate, expand, or improve the English: \
+if the page says "to eat", the meaning is "to eat", not "to consume (food)". \
+Keep semicolons, and keep parenthesised qualifiers like "(polite)", "[vt.]" \
+and "(=すみません)" as part of the meaning.
+
+# What to skip
+
+**Example sentences themselves.** Never return one as an entry, and never fold \
+one into a meaning.
+
+Also skip, wherever they appear:
+
+- page numbers, running heads, lesson titles, and section tabs
+- audio-track markers such as "K22-07 [J-E]" or "5.Tango_L1-2"
+- the 行 (line number) column, and the ◆ / ◇ new-kanji markers
+- asterisks and their footnotes
+- faint mirrored text showing through from the reverse of the page — these are \
+  thin pages and the back side is often legible. It is never an entry.
+- anything in the margins belonging to the facing page. One photo often catches \
+  the edge of a different list; entries not part of the main table are not yours \
+  to return.
+
+# Details that matter
+
+**Bracketed particles.** A word printed as [〜が]苦手な, [病気を]治す or \
+[人に]あやまる carries its particle in brackets. Put the word in \
+`kanji_furigana` and the bracket's contents in `usage_context`, without the \
+brackets. Folding the bracket into the word makes the entry wrong.
+
+**Trailing （する） and （な）** are printed as part of the entry — 決心（する）, \
+簡単な. Keep them on the word exactly as printed. Where the reading column \
+carries the suffix and the word column does not (しんぱい（な） against 心配), \
+transcribe each column as it is printed rather than making them agree.
+
+**Ambiguous readings.** Where a word's reading is genuinely ambiguous from the \
+page alone — 辛い is からい or つらい, 入る is はいる or いる — set `ambiguous` \
+and list every plausible reading in `reading_choices`. A confident wrong \
+reading is worse than an admitted unknown here: these rows go into a \
+spaced-repetition system and get rehearsed until they stick.
+
+**Rotation.** Photographs of books are often rotated ninety degrees. Read the \
+page whichever way up it is.
+
+If the photo contains no vocabulary list at all, return an empty list of rows.\
+"""
 
 
 def _client(settings: Settings) -> anthropic.AsyncAnthropic:
@@ -186,6 +258,19 @@ async def extract_page(
 
 def _to_detected(row: ExtractedRow, jlpt_level: int | None) -> DetectedItem:
     ambiguous = row.ambiguous and len(row.reading_choices) > 1
+
+    # Example-sentence lists print the word alone. The entry is still wanted —
+    # it is usually the same word the list pages gloss — but it must not import
+    # with a blank back, so it arrives deselected and says why.
+    needs_meaning = not row.english.strip()
+
+    if ambiguous:
+        note = "Pick the reading this page means."
+    elif needs_meaning:
+        note = "No meaning printed here. Add one, or import it from the word list."
+    else:
+        note = None
+
     return DetectedItem(
         # Stable within a page, so the review screen can key a list on it and
         # survive re-renders without the row losing its edits.
@@ -193,14 +278,15 @@ def _to_detected(row: ExtractedRow, jlpt_level: int | None) -> DetectedItem:
         kanji_furigana=row.kanji_furigana,
         furigana_only=row.furigana_only,
         english=row.english,
+        usage_context=row.usage_context or None,
         # The tier the user picked at upload time cascades onto every row.
         jlpt_level=jlpt_level,
         status="ambiguous" if ambiguous else "ok",
-        # An ambiguous row starts deselected: it needs a decision before it is
-        # worth importing, and defaulting it on invites blind confirmation.
-        selected=not ambiguous,
+        # Anything needing a decision starts deselected: defaulting it on
+        # invites blind confirmation of a guess.
+        selected=not (ambiguous or needs_meaning),
         reading_choices=row.reading_choices if ambiguous else None,
-        note="Pick the reading this page means." if ambiguous else None,
+        note=note,
     )
 
 

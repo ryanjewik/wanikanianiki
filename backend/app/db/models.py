@@ -288,6 +288,12 @@ class VocabItem(Base):
     )
     english: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
 
+    # The particle or object the textbook prints a word with: "〜が" for
+    # [〜が]苦手な, "病気を" for [病気を]治す. Grammatical information the entry
+    # loses if it is folded into the word, and which does not belong in the
+    # meaning either — so it gets its own column and its own place on the card.
+    usage_context: Mapped[str | None] = mapped_column(String(64))
+
     source_image_id: Mapped[int | None] = mapped_column(ForeignKey("vocab_sources.id"))
 
     # Set when the user corrects a bad extraction. A local edit never syncs

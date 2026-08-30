@@ -199,6 +199,8 @@ export interface DetectedItem {
   kanjiFurigana: string;
   furiganaOnly: string;
   english: string;
+  /** The particle the textbook prints the word with — "〜が" for [〜が]苦手な. */
+  usageContext: string | null;
   jlptLevel: number | null;
   /**
    * `ok` imports as-is, `ambiguous` needs the user to disambiguate a reading,
