@@ -225,6 +225,90 @@ class ConfirmImportRequest(BaseModel):
     items: list[DetectedItem]
 
 
+# -- sets, flashcards, SRS -------------------------------------------------
+
+
+SkillType = Literal["recognition", "production"]
+AnswerKind = Literal["written", "reading", "meaning"]
+
+
+class VocabSet(CamelModel):
+    """A named group the user organises their own deck with."""
+
+    id: int
+    name: str
+    description: str | None = None
+    created_at: datetime
+    # Counts rather than the rows themselves: a set list is a list, and the
+    # words are a separate fetch.
+    item_count: int = 0
+    # Pages photographed into it, and how far through reading them we are.
+    page_count: int = 0
+    pages_pending: int = 0
+    pages_failed: int = 0
+
+
+class VocabSetCreate(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class Flashcard(CamelModel):
+    """One side of one word, ready to study.
+
+    `accepted_answers` travels with the card so the phone can grade offline —
+    the whole deck is mirrored on the device precisely so a session works with
+    no signal. It is not a secret: the user reveals the answer either way.
+    """
+
+    srs_state_id: int
+    vocab_item_id: int
+    skill_type: SkillType
+
+    # What the card shows. Derived server-side so the client does not have to
+    # know which field belongs on the front for which skill.
+    prompt: str
+    # Every string that counts as right. For a production card this is the
+    # written form *and* the reading; for recognition, every printed gloss.
+    accepted_answers: list[str]
+
+    # The whole word, for the reveal.
+    kanji_furigana: str
+    furigana_only: str
+    english: str
+    usage_context: str | None = None
+
+    due_at: datetime
+    interval_days: int
+    repetitions: int
+    lapses: int
+    ease_factor: float
+
+
+class FlashcardAnswer(CamelModel):
+    """What the client sends back after a card is answered.
+
+    Either the typed answer, graded server-side, or an explicit correct/incorrect
+    for a self-graded card. Sending both is fine; `answer_given` wins.
+    """
+
+    answer_given: str | None = None
+    correct: bool | None = None
+    # SM-2 quality if the UI offers again/hard/good/easy. Otherwise derived.
+    grade: int | None = None
+
+
+class FlashcardOutcome(CamelModel):
+    correct: bool
+    grade: int
+    accepted_answers: list[str]
+    due_at: datetime
+    interval_days: int
+    repetitions: int
+    lapses: int
+    ease_factor: float
+
+
 # -- writes ----------------------------------------------------------------
 
 

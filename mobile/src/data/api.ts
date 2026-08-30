@@ -13,10 +13,13 @@ import type {
   Assignment,
   DashboardSummary,
   DetectedItem,
+  Flashcard,
+  FlashcardOutcome,
   LessonBundle,
   ReviewAnswer,
   Subject,
   VocabItem,
+  VocabSet,
 } from './types';
 
 /**
@@ -185,6 +188,7 @@ export interface VocabSourceResult {
 export async function uploadVocabPhoto(
   imageUri: string,
   jlptLevel: number | null,
+  options: { setId?: number; position?: number } = {},
 ): Promise<VocabSourceResult> {
   if (!isBackendConfigured) {
     throw new ApiError('No API server configured (set EXPO_PUBLIC_API_URL)', 0);
@@ -198,6 +202,8 @@ export async function uploadVocabPhoto(
     type: 'image/jpeg',
   } as unknown as Blob);
   if (jlptLevel !== null) form.append('jlpt_level', String(jlptLevel));
+  if (options.setId !== undefined) form.append('set_id', String(options.setId));
+  if (options.position !== undefined) form.append('position', String(options.position));
 
   const response = await fetch(`${API_BASE_URL}/api/vocab-sources`, {
     method: 'POST',
@@ -256,6 +262,77 @@ export function confirmVocabImport(
   return request<VocabItem[]>(`/api/vocab-sources/${sourceId}/confirm`, {
     method: 'POST',
     body: { items },
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sets                                                                        */
+/* -------------------------------------------------------------------------- */
+
+export function fetchVocabSets(signal?: AbortSignal): Promise<VocabSet[]> {
+  return request<VocabSet[]>('/api/vocab-sets', { signal });
+}
+
+export function createVocabSet(name: string, description?: string): Promise<VocabSet> {
+  return request<VocabSet>('/api/vocab-sets', {
+    method: 'POST',
+    body: { name, description: description ?? null },
+  });
+}
+
+/**
+ * Uploads several pages into one set, one after another.
+ *
+ * Sequential rather than parallel on purpose: each page is a vision call, and
+ * firing five at once neither finishes sooner nor fails more clearly. Waiting
+ * for each also means `onProgress` can say "page 2 of 5" truthfully.
+ */
+export async function importPagesIntoSet(
+  setId: number,
+  imageUris: string[],
+  jlptLevel: number | null,
+  onProgress?: (done: number, total: number) => void,
+): Promise<VocabSourceResult[]> {
+  const results: VocabSourceResult[] = [];
+
+  for (const [index, uri] of imageUris.entries()) {
+    const accepted = await uploadVocabPhoto(uri, jlptLevel, {
+      setId,
+      position: index,
+    });
+    results.push(await pollVocabSource(accepted.sourceId));
+    onProgress?.(index + 1, imageUris.length);
+  }
+
+  return results;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Studying imported vocabulary                                                */
+/* -------------------------------------------------------------------------- */
+
+/** Imported vocabulary due now. Never WaniKani items — those are a separate queue. */
+export function fetchDueFlashcards(
+  limit = 100,
+  signal?: AbortSignal,
+): Promise<Flashcard[]> {
+  return request<Flashcard[]>(`/api/flashcards/due?limit=${limit}`, { signal });
+}
+
+/**
+ * Submits one answered card.
+ *
+ * Send `answerGiven` and the server grades it; send `correct` for a card the
+ * user graded themselves. The card already carries `acceptedAnswers` so the UI
+ * can show a result instantly, but the server's grading is what gets written.
+ */
+export function answerFlashcard(
+  srsStateId: number,
+  answer: { answerGiven?: string; correct?: boolean; grade?: number },
+): Promise<FlashcardOutcome> {
+  return request<FlashcardOutcome>(`/api/flashcards/${srsStateId}/answer`, {
+    method: 'POST',
+    body: answer,
   });
 }
 
