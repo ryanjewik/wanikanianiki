@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kanji Workshop System Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400..600&display=swap">
+<style>
+  :root {
+    --ground:      #EBEDF0;
+    --surface:     #FCFCFD;
+    --surface-2:   #F3F5F8;
+    --ink:         #171A1F;
+    --muted:       #5D6472;
+    --line:        #CDD3DB;
+    --line-soft:   #DFE3E9;
+    --ember:       #A9500F;
+    --ember-soft:  #F5E6D8;
+    --frost:       #256373;
+    --frost-soft:  #DCE9ED;
+
+    --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    --body:    "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #14171C; --surface: #1B1F26; --surface-2: #222730;
+      --ink: #E7EAEF; --muted: #98A1B0; --line: #2E343E; --line-soft: #262B34;
+      --ember: #E28A48; --ember-soft: #3A2415; --frost: #64AABA; --frost-soft: #14303A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #14171C; --surface: #1B1F26; --surface-2: #222730;
+    --ink: #E7EAEF; --muted: #98A1B0; --line: #2E343E; --line-soft: #262B34;
+    --ember: #E28A48; --ember-soft: #3A2415; --frost: #64AABA; --frost-soft: #14303A;
+  }
+
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: var(--body); font-size: 17px; line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1180px; margin: 0 auto; padding: 56px 32px 96px; }
+  .prose { max-width: 67ch; }
+
+  .masthead { border-bottom: 2px solid var(--ink); padding-bottom: 28px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11.5px; font-weight: 500;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
+  }
+  .masthead h1 {
+    font-family: var(--display); font-weight: 750;
+    font-size: clamp(38px, 6vw, 62px); line-height: 1.02;
+    letter-spacing: -0.022em; text-wrap: balance; margin: 14px 0 0;
+  }
+  .deck { max-width: 62ch; margin: 18px 0 0; font-size: 19px; color: var(--muted); }
+
+  .section { margin-top: 68px; }
+  .section > h2 {
+    font-family: var(--display); font-weight: 700; font-size: 27px;
+    letter-spacing: -0.012em; line-height: 1.2; text-wrap: balance; margin: 8px 0 18px;
+  }
+  .section p { margin: 0 0 16px; }
+  .section p:last-child { margin-bottom: 0; }
+
+  code {
+    font-family: var(--mono); font-size: 0.855em; background: var(--surface-2);
+    border: 1px solid var(--line-soft); border-radius: 4px; padding: 0.1em 0.34em;
+  }
+  strong { font-weight: 600; }
+
+  figure { margin: 34px 0; }
+  .figframe {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 22px 20px 14px; overflow-x: auto;
+  }
+  figure svg { display: block; width: 100%; min-width: 760px; height: auto; }
+  figcaption {
+    font-family: var(--mono); font-size: 12px; line-height: 1.55;
+    color: var(--muted); margin-top: 14px; max-width: 80ch;
+  }
+  figcaption b { color: var(--ink); font-weight: 600; }
+
+  .box       { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.25; }
+  .box-live  { fill: var(--ember-soft); stroke: var(--ember); stroke-width: 1.4; }
+  .box-cool  { fill: var(--frost-soft); stroke: var(--frost); stroke-width: 1.25; }
+  .box-plan  { fill: none; stroke: var(--muted); stroke-width: 1.25; stroke-dasharray: 5 4; }
+  .box-group { fill: none; stroke: var(--muted); stroke-width: 1.15; stroke-dasharray: 3 5; }
+  .box-note  { fill: none; stroke: var(--line); stroke-width: 1; }
+
+  .flow      { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+  .flow-warm { stroke: var(--ember); stroke-width: 1.7; fill: none; }
+  .flow-cool { stroke: var(--frost); stroke-width: 1.5; fill: none; }
+  .flow-dash { stroke: var(--muted); stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; }
+  .hair      { stroke: var(--line); stroke-width: 1; fill: none; }
+
+  .head-ink  { fill: var(--ink); }
+  .head-warm { fill: var(--ember); }
+  .head-cool { fill: var(--frost); }
+  .head-mute { fill: var(--muted); }
+
+  .t-name  { font-family: var(--mono); font-size: 13px; font-weight: 600; fill: var(--ink); }
+  .t-sub   { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); }
+  .t-lab   { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); }
+  .t-warm  { font-family: var(--mono); font-size: 10.5px; font-weight: 500; fill: var(--ember); }
+  .t-cap   { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; fill: var(--muted); }
+
+  .tablewrap { overflow-x: auto; margin: 28px 0 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 700px; }
+  th, td { text-align: left; padding: 12px 16px 12px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.11em; text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  td { font-size: 14.5px; line-height: 1.5; }
+  td.mono { font-family: var(--mono); font-size: 12.5px; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  .callout {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--frost); border-radius: 6px;
+    padding: 20px 24px; margin: 28px 0; max-width: 74ch;
+  }
+  .callout .eyebrow { color: var(--frost); }
+  .callout p { margin: 8px 0 0; font-size: 16px; }
+
+  ul { margin: 0 0 16px; padding-left: 1.15em; }
+  li { margin-bottom: 8px; }
+  li::marker { color: var(--muted); }
+
+  .footnote {
+    margin-top: 72px; padding-top: 22px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12px; line-height: 1.7;
+    color: var(--muted); max-width: 76ch;
+  }
+  .footnote a { color: var(--ember); }
+
+  @media (max-width: 720px) {
+    .page { padding: 40px 20px 72px; }
+    body { font-size: 16px; }
+  }
+</style>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Kanji Workshop &middot; system design</div>
+    <h1>Phone to Postgres and back</h1>
+    <p class="deck">
+      Every component, who talks to whom, and what one request actually turns into
+      on its way through AWS.
+    </p>
+  </header>
+
+  <!-- ========== 1. SYSTEM MAP ========== -->
+  <section class="section">
+    <div class="eyebrow">01 &middot; the whole system</div>
+    <h2>Three zones and the lines between them</h2>
+    <div class="prose">
+      <p>
+        The phone holds a full local copy of what you are studying. AWS holds your backend, which
+        wakes only when something calls it. WaniKani holds the truth about your SRS. Postgres sits
+        underneath as the one thing that is always running.
+      </p>
+      <p>
+        The rule that shapes all of it: <strong>the phone never talks to WaniKani.</strong> If it did,
+        the API token would have to live on the device.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1200 700" role="img" aria-label="Three zones. The phone holds screens, a data layer and a local SQLite database. AWS holds four Lambda functions, each with its own trigger, with the API function containing Mangum, the router and the repository. Outside sit WaniKani and the vision APIs, with managed Postgres beneath.">
+          <defs>
+            <marker id="m1-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/>
+            </marker>
+            <marker id="m1-warm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-warm"/>
+            </marker>
+            <marker id="m1-cool" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-cool"/>
+            </marker>
+            <marker id="m1-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-mute"/>
+            </marker>
+          </defs>
+
+          <text x="20"  y="22" class="t-cap">THE PHONE &mdash; mobile/</text>
+          <text x="400" y="22" class="t-cap">AWS &mdash; backend/ runs here</text>
+          <text x="920" y="22" class="t-cap">OUTSIDE</text>
+
+          <rect x="20"  y="36" width="300" height="530" rx="12" class="box-group"/>
+          <rect x="400" y="36" width="480" height="530" rx="12" class="box-group"/>
+          <rect x="920" y="36" width="260" height="340" rx="12" class="box-group"/>
+
+          <!-- ---- phone ---- -->
+          <rect x="36" y="64" width="268" height="104" rx="8" class="box"/>
+          <text x="52" y="92"  class="t-name">Screens</text>
+          <text x="52" y="112" class="t-sub">mobile/app/ &mdash; file path is the route</text>
+          <text x="52" y="130" class="t-sub">index &middot; study &middot; items &middot; import</text>
+          <text x="52" y="148" class="t-sub">lesson &middot; review &middot; item/[id]</text>
+
+          <line x1="170" y1="168" x2="170" y2="192" class="flow" marker-end="url(#m1-ink)"/>
+
+          <rect x="36" y="196" width="268" height="104" rx="8" class="box"/>
+          <text x="52" y="224" class="t-name">Data layer</text>
+          <text x="52" y="244" class="t-sub">src/data/api.ts &middot; sync.ts</text>
+          <text x="52" y="262" class="t-sub">plain fetch() &mdash; no AWS SDK,</text>
+          <text x="52" y="280" class="t-sub">no WaniKani token, ever</text>
+
+          <line x1="170" y1="300" x2="170" y2="324" class="flow" marker-end="url(#m1-ink)"/>
+
+          <rect x="36" y="328" width="268" height="112" rx="8" class="box"/>
+          <text x="52" y="356" class="t-name">SQLite on device</text>
+          <text x="52" y="376" class="t-sub">src/data/db.ts</text>
+          <text x="52" y="394" class="t-sub">subjects &middot; assignments</text>
+          <text x="52" y="412" class="t-sub">pending_writes &mdash; the offline outbox</text>
+          <text x="52" y="430" class="t-sub">a whole session runs with no signal</text>
+
+          <rect x="36" y="468" width="268" height="76" rx="8" class="box-note"/>
+          <text x="52" y="494" class="t-sub">src/data/fixtures.ts</text>
+          <text x="52" y="512" class="t-sub">every screen still renders with</text>
+          <text x="52" y="530" class="t-sub">no backend configured at all</text>
+
+          <!-- ---- phone to aws ---- -->
+          <line x1="306" y1="222" x2="410" y2="124" class="flow" marker-end="url(#m1-ink)"/>
+          <text x="358" y="164" class="t-lab" text-anchor="middle">request</text>
+          <line x1="410" y1="150" x2="310" y2="248" class="flow-warm" marker-end="url(#m1-warm)"/>
+          <text x="360" y="220" class="t-warm" text-anchor="middle">JSON</text>
+
+          <!-- ---- aws triggers ---- -->
+          <rect x="416" y="100" width="152" height="56" rx="7" class="box-cool"/>
+          <text x="430" y="124" class="t-name">Function URL</text>
+          <text x="430" y="142" class="t-sub">every path lands here</text>
+          <line x1="568" y1="128" x2="596" y2="128" class="flow" marker-end="url(#m1-ink)"/>
+
+          <rect x="416" y="286" width="152" height="56" rx="7" class="box-cool"/>
+          <text x="430" y="310" class="t-name">EventBridge</text>
+          <text x="430" y="328" class="t-sub">rate(30 minutes)</text>
+          <line x1="568" y1="314" x2="596" y2="314" class="flow" marker-end="url(#m1-ink)"/>
+
+          <rect x="416" y="383" width="152" height="56" rx="7" class="box-plan"/>
+          <text x="430" y="407" class="t-name">SQS vocab-jobs</text>
+          <text x="430" y="425" class="t-sub">queued by api-fn</text>
+          <line x1="568" y1="411" x2="596" y2="411" class="flow-dash" marker-end="url(#m1-mute)"/>
+
+          <rect x="416" y="477" width="152" height="56" rx="7" class="box-plan"/>
+          <text x="430" y="501" class="t-name">SQS gen-jobs</text>
+          <text x="430" y="519" class="t-sub">queued by api-fn</text>
+          <line x1="568" y1="505" x2="596" y2="505" class="flow-dash" marker-end="url(#m1-mute)"/>
+
+          <!-- ---- aws functions ---- -->
+          <rect x="600" y="64" width="262" height="186" rx="8" class="box-live"/>
+          <text x="614" y="90" class="t-name">api-fn</text>
+          <rect x="614" y="102" width="234" height="34" rx="5" class="box"/>
+          <text x="626" y="123" class="t-sub">Mangum &mdash; dict to ASGI</text>
+          <rect x="614" y="142" width="234" height="34" rx="5" class="box"/>
+          <text x="626" y="163" class="t-sub">routes.py &mdash; picks the endpoint</text>
+          <rect x="614" y="182" width="234" height="34" rx="5" class="box"/>
+          <text x="626" y="203" class="t-sub">repository.py &mdash; the queries</text>
+          <text x="614" y="238" class="t-sub">all 8 endpoints live in this one function</text>
+
+          <rect x="600" y="276" width="262" height="76" rx="8" class="box-live"/>
+          <text x="614" y="302" class="t-name">sync-fn</text>
+          <text x="614" y="322" class="t-sub">services/sync.py &mdash; no HTTP at all</text>
+          <text x="614" y="340" class="t-sub">concurrency 1, for the 60/min cap</text>
+
+          <rect x="600" y="376" width="262" height="70" rx="8" class="box-plan"/>
+          <text x="614" y="402" class="t-name">ocr-fn</text>
+          <text x="614" y="422" class="t-sub">reads a photo, writes vocab_items</text>
+          <text x="614" y="438" class="t-sub">planned</text>
+
+          <rect x="600" y="470" width="262" height="70" rx="8" class="box-plan"/>
+          <text x="614" y="496" class="t-name">generate-fn</text>
+          <text x="614" y="516" class="t-sub">drafts questions, verifier approves</text>
+          <text x="614" y="532" class="t-sub">planned</text>
+
+          <!-- ---- outside ---- -->
+          <rect x="936" y="70" width="228" height="84" rx="8" class="box-cool"/>
+          <text x="952" y="98"  class="t-name">api.wanikani.com</text>
+          <text x="952" y="118" class="t-sub">60 requests / min, per token</text>
+          <text x="952" y="136" class="t-sub">token held only by the backend</text>
+          <line x1="866" y1="140" x2="932" y2="106" class="flow-cool" marker-end="url(#m1-cool)"/>
+          <line x1="866" y1="314" x2="932" y2="138" class="flow-cool" marker-end="url(#m1-cool)"/>
+
+          <rect x="936" y="186" width="228" height="84" rx="8" class="box-plan"/>
+          <text x="952" y="214" class="t-name">Vision + LLM API</text>
+          <text x="952" y="234" class="t-sub">page extraction</text>
+          <text x="952" y="252" class="t-sub">question drafting</text>
+          <line x1="866" y1="411" x2="932" y2="234" class="flow-dash" marker-end="url(#m1-mute)"/>
+          <line x1="866" y1="505" x2="932" y2="258" class="flow-dash" marker-end="url(#m1-mute)"/>
+
+          <!-- ---- postgres ---- -->
+          <line x1="640" y1="566" x2="640" y2="600" class="flow" marker-end="url(#m1-ink)"/>
+          <rect x="440" y="604" width="400" height="64" rx="8" class="box"/>
+          <text x="458" y="632" class="t-name">Postgres &mdash; Supabase or Neon</text>
+          <text x="458" y="652" class="t-sub">the only piece that is always running</text>
+          <text x="860" y="628" class="t-lab">reached over the public internet,</text>
+          <text x="860" y="644" class="t-lab">not from inside a VPC &mdash; which is</text>
+          <text x="860" y="660" class="t-lab">what avoids a NAT gateway bill</text>
+
+          <!-- legend -->
+          <rect x="36" y="608" width="20" height="13" rx="3" class="box-live"/>
+          <text x="64" y="619" class="t-lab">your code, running</text>
+          <rect x="36" y="632" width="20" height="13" rx="3" class="box-cool"/>
+          <text x="64" y="643" class="t-lab">not yours &mdash; AWS or a vendor</text>
+          <rect x="36" y="656" width="20" height="13" rx="3" class="box-plan"/>
+          <text x="64" y="667" class="t-lab">planned, not written</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Only the phone column exists continuously.</b> Nothing in the AWS column is running between
+        the arrows that reach it &mdash; each function is a program that starts, answers, and stops. The
+        four inner strips of <code>api-fn</code> are layers inside one process, not separate services.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ========== 2. ROUND TRIP ========== -->
+  <section class="section">
+    <div class="eyebrow">02 &middot; one request, end to end</div>
+    <h2>What the data actually is at each hop</h2>
+    <div class="prose">
+      <p>
+        The routing happens twice, at two different layers, and keeping them apart is the thing that
+        makes the whole design make sense.
+      </p>
+      <p>
+        <strong>AWS picks the function</strong> &mdash; based purely on which trigger fired. Every path
+        that hits the Function URL goes to <code>api-fn</code>; AWS does no path matching at all.
+        <strong>FastAPI picks the endpoint</strong> &mdash; from the path, using the decorators in
+        <code>routes.py</code>. AWS never learns your routes exist.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1200 470" role="img" aria-label="A request travels from the phone's fetch call through AWS, becomes a Python dictionary at the handler, an ASGI scope through Mangum, then Python objects in the route. The response returns as a Pydantic model, a dictionary, an HTTP response, and finally rendered pixels.">
+          <defs>
+            <marker id="m2-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/>
+            </marker>
+            <marker id="m2-warm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-warm"/>
+            </marker>
+          </defs>
+
+          <text x="26" y="24" class="t-cap">OUTBOUND</text>
+
+          <!-- row 1 -->
+          <rect x="26"  y="42" width="206" height="92" rx="8" class="box"/>
+          <text x="42" y="70"  class="t-name">1 &middot; fetch()</text>
+          <text x="42" y="90"  class="t-sub">an ordinary HTTPS GET</text>
+          <text x="42" y="112" class="t-sub">src/data/api.ts</text>
+          <line x1="232" y1="88" x2="254" y2="88" class="flow" marker-end="url(#m2-ink)"/>
+
+          <rect x="258" y="42" width="206" height="92" rx="8" class="box-cool"/>
+          <text x="274" y="70"  class="t-name">2 &middot; AWS answers</text>
+          <text x="274" y="90"  class="t-sub">which function owns this URL?</text>
+          <text x="274" y="112" class="t-sub">warm container, or cold start</text>
+          <line x1="464" y1="88" x2="486" y2="88" class="flow" marker-end="url(#m2-ink)"/>
+
+          <rect x="490" y="42" width="206" height="92" rx="8" class="box-live"/>
+          <text x="506" y="70"  class="t-name">3 &middot; handler(event)</text>
+          <text x="506" y="90"  class="t-sub">AWS calls your function</text>
+          <text x="506" y="112" class="t-sub">app/lambda_handler.py</text>
+          <line x1="696" y1="88" x2="718" y2="88" class="flow" marker-end="url(#m2-ink)"/>
+
+          <rect x="722" y="42" width="206" height="92" rx="8" class="box-live"/>
+          <text x="738" y="70"  class="t-name">4 &middot; Mangum</text>
+          <text x="738" y="90"  class="t-sub">translates into ASGI</text>
+          <text x="738" y="112" class="t-sub">Mangum(app, lifespan="auto")</text>
+          <line x1="928" y1="88" x2="950" y2="88" class="flow" marker-end="url(#m2-ink)"/>
+
+          <rect x="954" y="42" width="206" height="92" rx="8" class="box-live"/>
+          <text x="970" y="70"  class="t-name">5 &middot; route matches</text>
+          <text x="970" y="90"  class="t-sub">get_dashboard() runs</text>
+          <text x="970" y="112" class="t-sub">app/api/routes.py</text>
+
+          <!-- format strip 1 -->
+          <text x="129"  y="158" class="t-lab" text-anchor="middle">an HTTPS request</text>
+          <text x="361"  y="158" class="t-lab" text-anchor="middle">still HTTP</text>
+          <text x="593"  y="158" class="t-lab" text-anchor="middle">a Python dict</text>
+          <text x="825"  y="158" class="t-lab" text-anchor="middle">an ASGI scope</text>
+          <text x="1057" y="158" class="t-lab" text-anchor="middle">Python objects</text>
+
+          <!-- U-turn -->
+          <path d="M 1160 88 L 1184 88 L 1184 244 L 1164 244" class="flow-warm" marker-end="url(#m2-warm)"/>
+
+          <text x="26" y="216" class="t-cap">RETURN</text>
+
+          <!-- row 2 -->
+          <rect x="954" y="228" width="206" height="92" rx="8" class="box-live"/>
+          <text x="970" y="256" class="t-name">6 &middot; build response</text>
+          <text x="970" y="276" class="t-sub">DashboardSummary, camelCase</text>
+          <text x="970" y="298" class="t-sub">app/schemas.py</text>
+          <line x1="950" y1="274" x2="932" y2="274" class="flow-warm" marker-end="url(#m2-warm)"/>
+
+          <rect x="722" y="228" width="206" height="92" rx="8" class="box-live"/>
+          <text x="738" y="256" class="t-name">7 &middot; back to a dict</text>
+          <text x="738" y="276" class="t-sub">ASGI response, then Mangum</text>
+          <text x="738" y="298" class="t-sub">statusCode, headers, body</text>
+          <line x1="718" y1="274" x2="700" y2="274" class="flow-warm" marker-end="url(#m2-warm)"/>
+
+          <rect x="490" y="228" width="206" height="92" rx="8" class="box-cool"/>
+          <text x="506" y="256" class="t-name">8 &middot; AWS wraps it</text>
+          <text x="506" y="276" class="t-sub">dict becomes a real response</text>
+          <text x="506" y="298" class="t-sub">then the container freezes</text>
+          <line x1="486" y1="274" x2="468" y2="274" class="flow-warm" marker-end="url(#m2-warm)"/>
+
+          <rect x="258" y="228" width="206" height="92" rx="8" class="box"/>
+          <text x="274" y="256" class="t-name">9 &middot; phone parses</text>
+          <text x="274" y="276" class="t-sub">response.text() then JSON</text>
+          <text x="274" y="298" class="t-sub">src/data/api.ts</text>
+          <line x1="254" y1="274" x2="236" y2="274" class="flow-warm" marker-end="url(#m2-warm)"/>
+
+          <rect x="26" y="228" width="206" height="92" rx="8" class="box"/>
+          <text x="42" y="256" class="t-name">10 &middot; screen renders</text>
+          <text x="42" y="276" class="t-sub">useStudyData &rarr; index.tsx</text>
+          <text x="42" y="298" class="t-sub">mobile/app/(tabs)/</text>
+
+          <!-- format strip 2 -->
+          <text x="1057" y="344" class="t-lab" text-anchor="middle">a Pydantic model</text>
+          <text x="825"  y="344" class="t-lab" text-anchor="middle">{ statusCode, body }</text>
+          <text x="593"  y="344" class="t-lab" text-anchor="middle">HTTP 200</text>
+          <text x="361"  y="344" class="t-lab" text-anchor="middle">a JS object</text>
+          <text x="129"  y="344" class="t-lab" text-anchor="middle">pixels</text>
+
+          <!-- legend -->
+          <line x1="26" y1="382" x2="1160" y2="382" class="hair"/>
+          <rect x="26" y="400" width="20" height="13" rx="3" class="box"/>
+          <text x="54" y="411" class="t-lab">on the phone</text>
+          <rect x="220" y="400" width="20" height="13" rx="3" class="box-cool"/>
+          <text x="248" y="411" class="t-lab">AWS &mdash; no code of yours runs here</text>
+          <rect x="560" y="400" width="20" height="13" rx="3" class="box-live"/>
+          <text x="588" y="411" class="t-lab">your backend, awake for these five steps only</text>
+          <text x="26" y="442" class="t-warm">Steps 3 to 7 are the entire lifetime of the process. Before step 3 and after step 8, it does not exist.</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Two translations do all the work.</b> Lambda only knows how to call
+        <code>(event, context) -&gt; dict</code>, and FastAPI only speaks ASGI &mdash; step 4 is the adapter
+        between them, and it is one line of your code. Everything in steps 5 to 6 is ordinary FastAPI
+        that would run identically under <code>uvicorn</code>.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ========== 3. DATA ========== -->
+  <section class="section">
+    <div class="eyebrow">03 &middot; the three stores</div>
+    <h2>Who owns which truth</h2>
+    <div class="prose">
+      <p>
+        There are three databases in this system and they are not peers. Only one of them holds
+        anything you cannot get back.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1200 300" role="img" aria-label="Three data stores. WaniKani owns SRS stages and is mirrored one way into Postgres. Postgres owns review history, imported vocabulary and SM-2 state, and is the only irreplaceable store. The phone's SQLite is a mirror plus an outbox and can be rebuilt.">
+          <defs>
+            <marker id="m3-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/>
+            </marker>
+          </defs>
+
+          <rect x="30" y="40" width="356" height="200" rx="9" class="box-cool"/>
+          <text x="50" y="70"  class="t-name">wanikani.com</text>
+          <text x="50" y="96"  class="t-sub">OWNS: your SRS stage, what is due,</text>
+          <text x="50" y="114" class="t-sub">what unlocks, your level</text>
+          <text x="50" y="140" class="t-sub">Never computed here &mdash; only mirrored.</text>
+          <text x="50" y="158" class="t-sub">Sending a stage back would be wrong.</text>
+          <line x1="50" y1="182" x2="366" y2="182" class="hair"/>
+          <text x="50" y="208" class="t-lab">if your database vanished:</text>
+          <text x="50" y="226" class="t-lab">nothing here is lost</text>
+
+          <line x1="390" y1="140" x2="414" y2="140" class="flow" marker-end="url(#m3-ink)"/>
+          <text x="402" y="126" class="t-lab" text-anchor="middle">one way</text>
+
+          <rect x="422" y="40" width="356" height="200" rx="9" class="box-live"/>
+          <text x="442" y="70"  class="t-name">Postgres</text>
+          <text x="442" y="96"  class="t-sub">OWNS: review history, so the streak</text>
+          <text x="442" y="114" class="t-sub">imported vocab &middot; SM-2 state</text>
+          <text x="442" y="132" class="t-sub">generated questions and bundles</text>
+          <text x="442" y="158" class="t-sub">plus a cache of WaniKani content</text>
+          <line x1="442" y1="182" x2="758" y2="182" class="hair"/>
+          <text x="442" y="208" class="t-warm">the only irreplaceable store &mdash;</text>
+          <text x="442" y="226" class="t-warm">lose it and the streak is gone for good</text>
+
+          <line x1="782" y1="140" x2="806" y2="140" class="flow" marker-start="url(#m3-ink)" marker-end="url(#m3-ink)"/>
+          <text x="794" y="126" class="t-lab" text-anchor="middle">both ways</text>
+
+          <rect x="814" y="40" width="356" height="200" rx="9" class="box"/>
+          <text x="834" y="70"  class="t-name">SQLite on the phone</text>
+          <text x="834" y="96"  class="t-sub">OWNS: nothing, by design</text>
+          <text x="834" y="114" class="t-sub">a mirror of what you might touch</text>
+          <text x="834" y="140" class="t-sub">plus pending_writes &mdash; answers given</text>
+          <text x="834" y="158" class="t-sub">offline, waiting to be flushed</text>
+          <line x1="834" y1="182" x2="1150" y2="182" class="hair"/>
+          <text x="834" y="208" class="t-lab">if it vanished: it rebuilds itself,</text>
+          <text x="834" y="226" class="t-lab">unless the outbox had unsent writes</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The arrows are not symmetrical, and that is the design.</b> WaniKani's stage flows one way
+        into Postgres and never back &mdash; the app reflects WaniKani's SRS rather than reimplementing it.
+        Your own SM-2 state, for imported vocab, is the opposite: Postgres is its only home.
+      </figcaption>
+    </figure>
+
+    <div class="callout">
+      <div class="eyebrow">why there are two SRS systems</div>
+      <p>
+        WaniKani items keep WaniKani's stage. Everything else &mdash; photographed vocab, generated
+        questions &mdash; runs your own SM-2 in <code>srs_state</code>. Keeping them separate means the two
+        can never disagree about the same word: a WaniKani item's due date always comes from WaniKani,
+        and yours always comes from you.
+      </p>
+    </div>
+  </section>
+
+  <!-- ========== 4. STATUS ========== -->
+  <section class="section">
+    <div class="eyebrow">04 &middot; against the real tree</div>
+    <h2>What of this exists</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Piece</th><th>Where it lives</th><th>State</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Every screen</td><td class="mono">mobile/app/</td><td>built, on fixtures</td></tr>
+          <tr><td>Local SQLite + outbox</td><td class="mono">mobile/src/data/db.ts</td><td>built</td></tr>
+          <tr><td>The 8 endpoints</td><td class="mono">backend/app/api/routes.py</td><td>built</td></tr>
+          <tr><td>WaniKani client, rate limiter</td><td class="mono">backend/app/wanikani/</td><td>built, 23 tests</td></tr>
+          <tr><td>Sync worker</td><td class="mono">backend/app/services/sync.py</td><td>built</td></tr>
+          <tr><td>Lambda handlers</td><td class="mono">backend/app/lambda_handler.py</td><td>2 of 4 written</td></tr>
+          <tr><td>Postgres tables</td><td class="mono">backend/app/db/models.py</td><td>described, never created</td></tr>
+          <tr><td>Migrations</td><td class="mono">&mdash;</td><td>no Alembic setup</td></tr>
+          <tr><td>AWS resources</td><td class="mono">&mdash;</td><td>no template, nothing deployed</td></tr>
+          <tr><td>OCR, questions, grammar</td><td class="mono">&mdash;</td><td>designed only</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <p style="margin-top:24px">
+        The two blank rows are the same shape of gap: code that is written and ready, against
+        infrastructure that was never created. Everything above them runs today.
+      </p>
+    </div>
+  </section>
+
+  <p class="footnote">
+    Companion to <a href="https://claude.ai/code/artifact/bedc0683-c283-4e6a-b3bd-51a5388e3424">Kanji Workshop Runtime</a>,
+    which covers cold starts and what wakes each function.
+    Reflects the tree at <code>fcab47d</code> on <code>claude/project-roadmap-planning-6uw67z</code>.
+    Dashed boxes are designed but unwritten. The SQS queues, <code>ocr-fn</code> and
+    <code>generate-fn</code> are the shape the Part 2 notes imply, not code that exists.
+  </p>
+
+</div>
+</body>
+</html>
