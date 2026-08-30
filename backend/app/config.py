@@ -59,11 +59,12 @@ class Settings(BaseSettings):
     # prompt is tuned against a model, and a silent upgrade re-tunes it.
     vision_model: str = "claude-opus-5"
 
-    # Where uploaded page photos are kept. A local directory in development; in
-    # Lambda this is the only writable path, and S3 takes over via
-    # `VOCAB_IMAGE_BUCKET` once that is wired.
-    vocab_image_dir: str = "/tmp/kanji-workshop/vocab-sources"
-    vocab_image_bucket: str = ""
+    # Must stay comfortably *below* the client's polling window, or the app
+    # gives up on work the server is still doing and the user sees a failure
+    # for an import that then quietly succeeds. It also bounds the damage of a
+    # hung call: without it the SDK waits ten minutes, which on Lambda is ten
+    # minutes of billed idle.
+    vision_timeout_seconds: float = 120.0
 
     # --- Database -----------------------------------------------------------
     # Neon/Supabase style URL. Empty means "no database configured": the app

@@ -199,6 +199,30 @@ async def test_vendor_errors_become_messages_a_user_can_read(error, expected):
         await extract_page(PNG, "image/png", settings=settings(), client=client)
 
 
+async def test_a_timeout_says_what_to_do_about_it():
+    """Distinct from a connection failure: the call reached the API and ran."""
+    client = fake_client(
+        error=anthropic.APITimeoutError(
+            request=httpx.Request("POST", "https://api.anthropic.com")
+        )
+    )
+
+    with pytest.raises(ExtractionFailed, match="took too long"):
+        await extract_page(PNG, "image/png", settings=settings(), client=client)
+
+
+def test_the_vision_client_is_bounded():
+    """The SDK default is ten minutes, which on Lambda is billed waiting.
+
+    It also has to stay under the app's polling window, or the client gives up
+    on work the server is still doing.
+    """
+    from app.services.ocr import _client
+
+    built = _client(settings(vision_timeout_seconds=120.0))
+    assert built.timeout == 120.0
+
+
 async def test_an_empty_page_is_not_an_error():
     """A photo with no vocabulary table returns nothing, and that is fine."""
     client = fake_client([])

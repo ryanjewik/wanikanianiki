@@ -46,7 +46,7 @@ class FakeMessages:
 
 
 @pytest.fixture
-async def client(monkeypatch, tmp_path):
+async def client(monkeypatch):
     """The app over an in-process ASGI transport.
 
     Not starlette's `TestClient`: that drives the app from a worker thread on
@@ -57,7 +57,6 @@ async def client(monkeypatch, tmp_path):
     monkeypatch.setenv("wanikani_apikey", "test-token")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setenv("DATABASE_URL", RAW_URL)
-    monkeypatch.setenv("VOCAB_IMAGE_DIR", str(tmp_path / "images"))
     get_settings.cache_clear()
 
     engine = create_async_engine(_async_url())
@@ -239,6 +238,30 @@ async def test_an_empty_upload_is_rejected(client):
 
 async def test_polling_an_unknown_source_is_a_404(client):
     assert (await client.get("/api/vocab-sources/9999")).status_code == 404
+
+
+async def test_a_lost_buffer_fails_rather_than_hanging_on_pending(client, monkeypatch):
+    """The image buffer is process-local.
+
+    If the extraction runs somewhere the bytes are not — which is exactly what
+    happens the day `ocr-fn` becomes its own function — the row must fail
+    visibly, not sit on `pending` while the app polls forever.
+    """
+    _stub_extraction(monkeypatch, ROWS)
+    from app.services import storage
+
+    # Drop the bytes between upload and extraction. monkeypatch restores it.
+    monkeypatch.setattr(storage, "hold", lambda *a, **k: None)
+
+    source_id = (
+        await client.post(
+            "/api/vocab-sources", files={"image": ("p.png", PNG, "image/png")}
+        )
+    ).json()["sourceId"]
+
+    result = (await client.get(f"/api/vocab-sources/{source_id}")).json()
+    assert result["status"] == "failed"
+    assert "Upload it again" in result["detail"]
 
 
 async def test_extraction_failure_is_reported_not_raised(client, monkeypatch):

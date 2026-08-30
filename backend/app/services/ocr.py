@@ -104,7 +104,11 @@ def _client(settings: Settings) -> anthropic.AsyncAnthropic:
             "ANTHROPIC_API_KEY is not configured, so photo import is disabled."
         )
     return anthropic.AsyncAnthropic(
-        api_key=settings.anthropic_api_key.get_secret_value()
+        api_key=settings.anthropic_api_key.get_secret_value(),
+        # Bounded on purpose — see `vision_timeout_seconds`. The SDK's default
+        # is ten minutes, which on Lambda is ten minutes of billed waiting and
+        # long past the point the client has stopped watching.
+        timeout=settings.vision_timeout_seconds,
     )
 
 
@@ -158,6 +162,11 @@ async def extract_page(
     except anthropic.BadRequestError as exc:
         # Usually an image too large, or a media type the API will not take.
         raise ExtractionFailed(f"The image was rejected: {exc.message}") from exc
+    except anthropic.APITimeoutError as exc:
+        raise ExtractionFailed(
+            "Reading the page took too long. Try a tighter crop of just the "
+            "vocabulary table."
+        ) from exc
     except anthropic.APIConnectionError as exc:
         raise ExtractionFailed("Could not reach the extraction service.") from exc
     except anthropic.APIStatusError as exc:
@@ -231,11 +240,24 @@ async def process_source(session, source_id: int, *, settings=None, client=None)
         logger.warning("Vision extraction asked for unknown source %s", source_id)
         return
 
+    held = storage.take(source_id)
+    if held is None:
+        # The buffer is process-local, so this means the upload was handled by
+        # a different process than this one — which is exactly the case that
+        # needs durable storage. Fail visibly rather than silently doing nothing.
+        source.status = "failed"
+        _FAILURES[source_id] = (
+            "The uploaded page is no longer available. Upload it again."
+        )
+        logger.warning("No buffered image for source %s", source_id)
+        return
+
+    image, media_type = held
+
     try:
-        image = storage.load_image(source.image_uri)
         items = await extract_page(
             image,
-            storage.media_type_for(source.image_uri),
+            media_type,
             jlpt_level=source.jlpt_level,
             settings=settings,
             client=client,
@@ -244,7 +266,7 @@ async def process_source(session, source_id: int, *, settings=None, client=None)
         _CACHE[source_id] = mark_duplicates(items, known)
         source.status = "processed"
         logger.info("Extracted %d rows from source %s", len(items), source_id)
-    except (ExtractionFailed, VisionUnavailable, OSError) as exc:
+    except (ExtractionFailed, VisionUnavailable) as exc:
         source.status = "failed"
         _FAILURES[source_id] = str(exc)
         logger.warning("Extraction failed for source %s: %s", source_id, exc)

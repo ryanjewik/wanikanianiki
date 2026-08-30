@@ -344,10 +344,15 @@ async def upload_vocab_source(
 ) -> VocabSourceResult:
     """Accept a page photo and start reading it.
 
-    Returns `202` with a `sourceId` and `pending` immediately — the extraction
-    runs after the response is sent. Holding the request open for the length of
-    a vision call would exceed an API Gateway timeout outright and is a poor
-    thing to ask a phone on mobile data to wait through.
+    Returns `202` with a `sourceId` and `pending` immediately; the extraction
+    runs after the response is sent.
+
+    Not a platform limit — a Lambda Function URL will hold a request for up to
+    fifteen minutes. It is that a phone should not be asked to. A minute-long
+    connection on mobile data dies to a network switch, and both iOS and
+    Android suspend a backgrounded app mid-request. Waiting synchronously would
+    also bill a Lambda for a minute of doing nothing, which is the opposite of
+    why any of this is serverless.
     """
     if not settings.has_vision:
         raise HTTPException(
@@ -365,7 +370,7 @@ async def upload_vocab_source(
         )
 
     try:
-        uri = storage.save_image(data, image.content_type or "", settings=settings)
+        media_type = storage.check_media_type(image.content_type or "")
     except storage.UnsupportedImageType as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
@@ -382,9 +387,15 @@ async def upload_vocab_source(
         )
 
     source = await repo.create_vocab_source(
-        session, user_id=user.id, image_uri=uri, jlpt_level=jlpt_level, label=label
+        session, user_id=user.id, jlpt_level=jlpt_level, label=label
     )
     source_id = source.id
+
+    # The bytes are wanted once, by the extraction, and nothing reads them
+    # afterwards — the review screen shows the device's own copy of the photo.
+    # So they are buffered in memory rather than written anywhere. See
+    # `services/storage.py` for what changes when `ocr-fn` becomes separate.
+    storage.hold(source_id, data, media_type)
 
     # Commit before scheduling, not after. The extraction runs in its own
     # session — it has to, since the request's is closed by then — and that
@@ -457,6 +468,7 @@ async def confirm_vocab_source(
 
     # The draft has served its purpose; holding it would leak for every import.
     ocr_service.discard_result(source_id)
+    storage.discard(source_id)
     return created
 
 

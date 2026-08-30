@@ -79,8 +79,15 @@ def ocr_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """SQS target. Extracts each queued page photo.
 
     The same `process_source` the HTTP background task calls — this handler is
-    only a different way of being woken. Locally the upload route schedules it
-    in-process; in Lambda a queue message does.
+    only a different way of being woken.
+
+    **Blocked on durable image storage.** The photo is currently buffered in
+    the process that received the upload, so a message picked up by a *different*
+    function cannot reach the bytes; `process_source` will mark the row failed
+    rather than pretend. Wiring this up means giving `services/storage.py` a
+    real backend first — Supabase Storage or a `bytea` column, not S3 — and
+    populating `vocab_sources.image_uri`. Until then the in-process background
+    task is the only working path, which is fine: one function serves both.
 
     Failures are recorded on the row, not raised. Letting the exception escape
     would return the message to the queue and re-run a vision call that already

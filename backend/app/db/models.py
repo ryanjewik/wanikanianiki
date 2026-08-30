@@ -225,9 +225,12 @@ class VocabSource(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
 
-    # Where the original photo is kept. Named to match `imageUri` on the
-    # client's `VocabSourceImage`, which is what the review screen renders.
-    image_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    # Where the original photo is kept, once anywhere durable keeps it.
+    # Null today: the bytes are buffered in memory for the length of the
+    # extraction and then dropped, because nothing reads them afterwards — the
+    # review screen renders the device's own copy. This gets populated when
+    # `ocr-fn` separates and the photo has to cross a process boundary.
+    image_uri: Mapped[str | None] = mapped_column(Text)
 
     # pending | processed | failed. Left as free text rather than an enum for
     # the same reason `subjects.type` is: adding a state should not need a

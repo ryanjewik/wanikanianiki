@@ -27,7 +27,7 @@ from app.db.models import (
 from app.db.models import (
     Subject as SubjectRow,
 )
-from app.schemas import Assignment, DetectedItem, Subject, VocabSourceImage
+from app.schemas import Assignment, DetectedItem, Subject
 from app.schemas import VocabItem as VocabItemOut
 
 # -- users -----------------------------------------------------------------
@@ -350,7 +350,7 @@ async def create_vocab_source(
     session: AsyncSession,
     *,
     user_id: int,
-    image_uri: str,
+    image_uri: str | None = None,
     jlpt_level: int | None = None,
     label: str | None = None,
 ) -> VocabSource:
@@ -453,17 +453,6 @@ def _to_vocab_item(row: VocabItem) -> VocabItemOut:
         is_user_edited=row.is_user_edited,
         jlpt_level=row.jlpt_level,
         updated_at=row.updated_at,
-    )
-
-
-def to_vocab_source_image(row: VocabSource) -> VocabSourceImage:
-    return VocabSourceImage(
-        id=row.id,
-        image_uri=row.image_uri,
-        uploaded_at=row.uploaded_at,
-        status=row.status,
-        jlpt_level=row.jlpt_level,
-        label=row.label,
     )
 
 

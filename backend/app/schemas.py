@@ -200,17 +200,6 @@ class VocabItem(CamelModel):
     updated_at: datetime
 
 
-class VocabSourceImage(CamelModel):
-    """An imported page, and how far along its extraction is."""
-
-    id: int
-    image_uri: str
-    uploaded_at: datetime
-    status: ImportStatus
-    jlpt_level: int | None = None
-    label: str | None = None
-
-
 class VocabSourceResult(CamelModel):
     """What the upload returns, and what polling returns afterwards.
 

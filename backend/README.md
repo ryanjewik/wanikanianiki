@@ -108,12 +108,18 @@ GET  /api/vocab-sources/{id}   -> poll until "processed" or "failed"
 POST /api/vocab-sources/{id}/confirm  -> the rows the user kept
 ```
 
-Reading a page is a vision-model call that takes tens of seconds — longer than
-an API Gateway integration will wait, and far longer than a phone on mobile data
-should hold a request open. So `vocab_sources.status` carries the state, the
-upload returns as soon as the bytes land, and the client polls. Locally the
-extraction runs as a FastAPI background task; in Lambda the same
-`process_source` runs in `ocr_handler`, woken by a queue message.
+Reading a page is a vision-model call taking tens of seconds. That is well
+inside what a Lambda Function URL allows — fifteen minutes — so this is not a
+platform limit. It is that a phone should not be asked to hold a connection
+that long: mobile data drops it on a network switch, both mobile OSes suspend a
+backgrounded app mid-request, and a synchronous wait bills a Lambda for a minute
+of doing nothing. So `vocab_sources.status` carries the state, the upload
+returns as soon as the bytes land, and the client polls.
+
+**Two timeouts, and their order matters.** `VISION_TIMEOUT_SECONDS` (120s)
+bounds the extraction; the app polls for 300s. The server must give up first —
+reversed, a slow extraction shows the user a failure and *then* quietly
+succeeds, leaving a `processed` row nobody is watching.
 
 **It is not OCR.** A vocab page is a table, and the useful part is keeping its
 three columns apart — kanji+furigana, kana, English. Raw text extraction throws
@@ -144,7 +150,7 @@ Two functions off one artifact:
 |---|---|---|
 | `app.lambda_handler.handler` | Function URL / API Gateway HTTP API | The HTTP API. |
 | `app.lambda_handler.sync_handler` | EventBridge, every 15–60 min | **Reserved concurrency 1.** |
-| `app.lambda_handler.ocr_handler` | SQS | Minutes, not seconds — size the timeout for a vision call. |
+| `app.lambda_handler.ocr_handler` | SQS | Minutes, not seconds. Blocked on durable image storage — see below. |
 
 ### Keep Lambda out of a VPC
 
@@ -263,7 +269,13 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/kanji_test \
   that is not worth building before there is a second account.
 - **Conditional requests.** The client supports `If-None-Match` and returns 304
   through, but nothing stores ETags yet, so no caller benefits.
-- **Image storage.** `services/storage.py` writes to a local directory. The S3
-  branch raises rather than silently writing to a `/tmp` a cold start discards.
+- **Durable image storage.** The photo is buffered in the process that received
+  the upload and dropped once extracted, because nothing reads it afterwards —
+  the review screen renders the device's own copy. That is enough while one
+  function serves both the upload and the extraction. Separating `ocr-fn` needs
+  the bytes to cross a process boundary, and SQS cannot carry them (256 KB cap),
+  so `services/storage.py` grows a backend then. Supabase Storage or a `bytea`
+  column both fit better than S3: one comes with the Postgres already being
+  stood up, the other adds no service at all.
 - **Part 2** — generated lessons and JLPT tracking. Photo import is built;
   question generation and the Obsidian connector are not.

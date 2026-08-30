@@ -176,10 +176,11 @@ export interface VocabSourceResult {
 /**
  * Hands a textbook photo to the ingestion service.
  *
- * Returns as soon as the upload lands, with nothing extracted yet — reading a
- * page is a vision-model call that takes tens of seconds, which is far too long
- * to hold a request open on mobile data (and longer than an API Gateway
- * integration will wait). The rows arrive via `pollVocabSource` below.
+ * Returns as soon as the upload lands, with nothing extracted yet. Reading a
+ * page is a vision-model call taking tens of seconds, and a phone should not
+ * hold a connection open that long: mobile data drops it on a network switch,
+ * and both iOS and Android suspend a backgrounded app mid-request. The rows
+ * arrive via `pollVocabSource` below.
  */
 export async function uploadVocabPhoto(
   imageUri: string,
@@ -223,10 +224,16 @@ export function fetchVocabSource(
  * Fixed interval rather than backoff: extraction takes a fairly predictable
  * tens of seconds, and the user is watching a spinner the whole time, so a
  * widening gap would only add latency to the moment that actually matters.
+ *
+ * The default window is deliberately longer than the server's own
+ * `VISION_TIMEOUT_SECONDS` (120s). If it were shorter, a slow extraction would
+ * show the user a failure and *then* quietly succeed — the row would reach
+ * `processed` with nobody watching. Giving up after the server already has
+ * means the only thing this can time out on is a server that never answered.
  */
 export async function pollVocabSource(
   sourceId: number,
-  { intervalMs = 2000, timeoutMs = 180_000 }: { intervalMs?: number; timeoutMs?: number } = {},
+  { intervalMs = 2000, timeoutMs = 300_000 }: { intervalMs?: number; timeoutMs?: number } = {},
 ): Promise<VocabSourceResult> {
   const deadline = Date.now() + timeoutMs;
 

@@ -1,81 +1,60 @@
-"""Where uploaded page photos live.
+"""Holding an uploaded page between the request and the extraction.
 
-Deliberately the thinnest possible seam. Today it is a directory; in Lambda it
-will be S3, and the only thing that has to change is which branch of `save`
-and `load` runs — nothing above this module knows the difference, because the
-rest of the app only ever passes around the opaque URI this returns.
+Deliberately in-process and deliberately not durable.
 
-The local branch writes under `/tmp` by default, which is the one writable
-path in a Lambda container. That makes the fallback *work* there rather than
-crash, but it is not durable: a frozen container's `/tmp` is gone by the next
-cold start. Set `VOCAB_IMAGE_BUCKET` before that matters.
+The photo is needed for exactly one thing — handing the bytes to the vision
+call — and for exactly as long as the extraction takes. Nothing else reads it:
+the review screen renders the *device's* copy of the picture, not the server's.
+So this is a buffer, not storage, and it has the same lifetime as the extracted
+rows it produces (`ocr._CACHE`). Both die with the process, and losing either
+means re-uploading a photo rather than losing anything from the deck.
+
+**This is what has to change when `ocr-fn` becomes a separate function.** A
+queue message cannot carry a several-megabyte photo — SQS caps at 256 KB — so
+the bytes would need somewhere both functions can reach. That is the point at
+which `vocab_sources.image_uri` gets populated and this module grows a real
+backend. Two options fit better than S3 does: Supabase Storage, which comes
+with the Postgres already being stood up and needs no IAM, or a `bytea` column,
+which keeps the image in the row it belongs to and adds no service at all.
 """
 
 from __future__ import annotations
 
 import logging
-import uuid
-from pathlib import Path
-
-from app.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-# The formats a phone camera actually produces, mapped to the extensions we
-# store them under. Anything else is rejected at the route rather than here.
-SUPPORTED_MEDIA_TYPES = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-}
+# What a phone camera actually produces, and what the vision API accepts.
+SUPPORTED_MEDIA_TYPES = frozenset(
+    {"image/jpeg", "image/png", "image/webp", "image/gif"}
+)
 
 
 class UnsupportedImageType(ValueError):
-    """The upload was not an image Claude's vision API accepts."""
+    """The upload was not an image the vision API accepts."""
 
 
-def save_image(data: bytes, media_type: str, *, settings: Settings | None = None) -> str:
-    """Store the bytes and return the URI to put on `vocab_sources.image_uri`."""
-    settings = settings or get_settings()
-
-    suffix = SUPPORTED_MEDIA_TYPES.get(media_type)
-    if suffix is None:
+def check_media_type(media_type: str) -> str:
+    """Reject at the door, before anything is stored or a row is written."""
+    if media_type not in SUPPORTED_MEDIA_TYPES:
         raise UnsupportedImageType(
             f"{media_type!r} is not a supported image type "
             f"({', '.join(sorted(SUPPORTED_MEDIA_TYPES))})"
         )
-
-    name = f"{uuid.uuid4().hex}{suffix}"
-
-    if settings.vocab_image_bucket:
-        # Not wired yet. Raising here beats silently writing to a /tmp that a
-        # cold start will discard, which would look like data loss later.
-        raise NotImplementedError(
-            "VOCAB_IMAGE_BUCKET is set but S3 storage is not implemented yet; "
-            "unset it to use local storage."
-        )
-
-    directory = Path(settings.vocab_image_dir)
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / name
-    path.write_bytes(data)
-    return path.as_uri()
+    return media_type
 
 
-def load_image(uri: str) -> bytes:
-    """Read back what `save_image` wrote."""
-    if uri.startswith("file://"):
-        from urllib.parse import unquote, urlparse
-
-        return Path(unquote(urlparse(uri).path)).read_bytes()
-    raise NotImplementedError(f"Cannot load image from {uri!r}")
+_PENDING: dict[int, tuple[bytes, str]] = {}
 
 
-def media_type_for(uri: str) -> str:
-    """Recover the media type from a stored URI's extension."""
-    suffix = Path(uri).suffix.lower()
-    for media_type, ext in SUPPORTED_MEDIA_TYPES.items():
-        if ext == suffix:
-            return media_type
-    return "image/jpeg"
+def hold(source_id: int, image: bytes, media_type: str) -> None:
+    _PENDING[source_id] = (image, media_type)
+
+
+def take(source_id: int) -> tuple[bytes, str] | None:
+    """Read and remove. The bytes are wanted once, by the extractor."""
+    return _PENDING.pop(source_id, None)
+
+
+def discard(source_id: int) -> None:
+    _PENDING.pop(source_id, None)

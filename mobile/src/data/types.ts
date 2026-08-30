@@ -179,7 +179,12 @@ export type ImportStatus = 'pending' | 'processed' | 'failed';
 
 export interface VocabSourceImage {
   id: number;
-  imageUri: string;
+  /**
+   * Null until the photo is kept somewhere durable. The server buffers the
+   * bytes only for the length of the extraction, since the review screen
+   * renders the device's own copy of the picture rather than the server's.
+   */
+  imageUri: string | null;
   uploadedAt: string;
   status: ImportStatus;
   /** Tier the user picked at upload time; cascades to extracted items. */
