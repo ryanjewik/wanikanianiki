@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kanji Workshop Roadmap</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400..600&display=swap">
+<style>
+  :root {
+    --ground:#EBEDF0; --surface:#FCFCFD; --surface-2:#F3F5F8;
+    --ink:#171A1F; --muted:#5D6472; --line:#CDD3DB; --line-soft:#DFE3E9;
+    --ember:#A9500F; --ember-soft:#F5E6D8; --frost:#256373; --frost-soft:#DCE9ED;
+    --display:"Bricolage Grotesque","Helvetica Neue",Arial,sans-serif;
+    --body:"Source Serif 4",Georgia,"Times New Roman",serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#14171C; --surface:#1B1F26; --surface-2:#222730;
+      --ink:#E7EAEF; --muted:#98A1B0; --line:#2E343E; --line-soft:#262B34;
+      --ember:#E28A48; --ember-soft:#3A2415; --frost:#64AABA; --frost-soft:#14303A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#14171C; --surface:#1B1F26; --surface-2:#222730;
+    --ink:#E7EAEF; --muted:#98A1B0; --line:#2E343E; --line-soft:#262B34;
+    --ember:#E28A48; --ember-soft:#3A2415; --frost:#64AABA; --frost-soft:#14303A;
+  }
+
+  body{background:var(--ground);color:var(--ink);font-family:var(--body);
+       font-size:17px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .page{max-width:1180px;margin:0 auto;padding:56px 32px 96px}
+  .prose{max-width:67ch}
+
+  .masthead{border-bottom:2px solid var(--ink);padding-bottom:28px}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;font-weight:500;
+           letter-spacing:0.14em;text-transform:uppercase;color:var(--muted)}
+  .masthead h1{font-family:var(--display);font-weight:750;
+               font-size:clamp(38px,6vw,62px);line-height:1.02;
+               letter-spacing:-0.022em;text-wrap:balance;margin:14px 0 0}
+  .deck{max-width:62ch;margin:18px 0 0;font-size:19px;color:var(--muted)}
+
+  .section{margin-top:68px}
+  .section > h2{font-family:var(--display);font-weight:700;font-size:27px;
+                letter-spacing:-0.012em;line-height:1.2;text-wrap:balance;margin:8px 0 18px}
+  .section p{margin:0 0 16px}
+  .section p:last-child{margin-bottom:0}
+  h3{font-family:var(--display);font-weight:650;font-size:18px;margin:28px 0 10px}
+
+  code{font-family:var(--mono);font-size:0.855em;background:var(--surface-2);
+       border:1px solid var(--line-soft);border-radius:4px;padding:0.1em 0.34em}
+  pre{font-family:var(--mono);font-size:13.5px;line-height:1.62;background:var(--surface);
+      border:1px solid var(--line);border-left:3px solid var(--ember);border-radius:6px;
+      padding:18px 20px;overflow-x:auto;margin:20px 0}
+  pre code{background:none;border:0;padding:0;font-size:inherit}
+  strong{font-weight:600}
+
+  figure{margin:34px 0}
+  .figframe{background:var(--surface);border:1px solid var(--line);
+            border-radius:10px;padding:22px 20px 14px;overflow-x:auto}
+  figure svg{display:block;width:100%;min-width:760px;height:auto}
+  figcaption{font-family:var(--mono);font-size:12px;line-height:1.55;
+             color:var(--muted);margin-top:14px;max-width:80ch}
+  figcaption b{color:var(--ink);font-weight:600}
+
+  .box{fill:var(--surface-2);stroke:var(--line);stroke-width:1.25}
+  .box-now{fill:var(--ember-soft);stroke:var(--ember);stroke-width:1.5}
+  .box-next{fill:var(--frost-soft);stroke:var(--frost);stroke-width:1.25}
+  .box-later{fill:none;stroke:var(--muted);stroke-width:1.25;stroke-dasharray:5 4}
+  .flow{stroke:var(--ink);stroke-width:1.5;fill:none}
+  .flow-warm{stroke:var(--ember);stroke-width:2;fill:none}
+  .flow-dash{stroke:var(--muted);stroke-width:1.3;fill:none;stroke-dasharray:5 4}
+  .hair{stroke:var(--line);stroke-width:1;fill:none}
+  .head-ink{fill:var(--ink)} .head-warm{fill:var(--ember)} .head-mute{fill:var(--muted)}
+  .t-name{font-family:var(--mono);font-size:12.5px;font-weight:600;fill:var(--ink)}
+  .t-sub{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+  .t-lab{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+  .t-warm{font-family:var(--mono);font-size:10.5px;font-weight:500;fill:var(--ember)}
+  .t-cap{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:0.1em;fill:var(--muted)}
+
+  .tablewrap{overflow-x:auto;margin:24px 0 0}
+  table{border-collapse:collapse;width:100%;min-width:700px}
+  th,td{text-align:left;padding:12px 16px 12px 0;
+        border-bottom:1px solid var(--line-soft);vertical-align:top}
+  th{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:0.11em;
+     text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);white-space:nowrap}
+  td{font-size:14.5px;line-height:1.5}
+  td.mono{font-family:var(--mono);font-size:12.5px}
+  tbody tr:last-child td{border-bottom:0}
+
+  .phase{border:1px solid var(--line);border-radius:10px;background:var(--surface);
+         padding:26px 30px;margin:24px 0}
+  .phase.now{border-left:4px solid var(--ember)}
+  .phase.next{border-left:4px solid var(--frost)}
+  .phase.later{border-left:4px dashed var(--muted)}
+  .phase h3{margin-top:0}
+  .phase .why{font-size:15px;color:var(--muted);margin:0 0 18px}
+  .phase ol{margin:0;padding-left:1.3em}
+  .phase ol li{margin-bottom:12px;font-size:15.5px}
+  .phase ol li::marker{font-family:var(--mono);font-size:12px;color:var(--ember)}
+  .lands{margin:20px 0 0;padding-top:16px;border-top:1px solid var(--line-soft);
+         font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--muted)}
+  .lands b{color:var(--ink);font-weight:600}
+
+  .chip{display:inline-block;font-family:var(--mono);font-size:10.5px;font-weight:500;
+        padding:3px 9px;border-radius:999px;margin-left:10px;vertical-align:middle}
+  .chip-s{background:var(--ember-soft);color:var(--ember);border:1px solid var(--ember)}
+  .chip-m{background:var(--frost-soft);color:var(--frost);border:1px solid var(--frost)}
+  .chip-l{background:none;color:var(--muted);border:1px dashed var(--muted)}
+
+  .callout{background:var(--surface);border:1px solid var(--line);
+           border-left:3px solid var(--frost);border-radius:6px;
+           padding:20px 24px;margin:26px 0;max-width:74ch}
+  .callout .eyebrow{color:var(--frost)}
+  .callout p{margin:8px 0 0;font-size:16px}
+  .callout-warn{border-left-color:var(--ember)}
+  .callout-warn .eyebrow{color:var(--ember)}
+
+  ul{margin:0 0 16px;padding-left:1.15em}
+  li{margin-bottom:8px}
+  li::marker{color:var(--muted)}
+
+  .footnote{margin-top:72px;padding-top:22px;border-top:1px solid var(--line);
+            font-family:var(--mono);font-size:12px;line-height:1.7;
+            color:var(--muted);max-width:76ch}
+  .footnote a{color:var(--ember)}
+
+  @media (max-width:720px){.page{padding:40px 20px 72px}body{font-size:16px}
+    .phase{padding:20px 20px}}
+</style>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Kanji Workshop &middot; what to build next</div>
+    <h1>From working code to a working app</h1>
+    <p class="deck">
+      Almost everything is written. What is missing is the setup that turns it into something
+      you can open on your phone &mdash; and that gap is smaller than the feature list suggests.
+    </p>
+  </header>
+
+  <!-- ===== standing ===== -->
+  <section class="section">
+    <div class="eyebrow">00 &middot; where things stand</div>
+    <h2>Two gaps, both of them plumbing</h2>
+    <div class="prose">
+      <p>
+        The app has every screen. The backend has all eight endpoints, the WaniKani client with its
+        rate limiter, the sync worker, and 23 passing tests. None of it has ever touched a database or
+        run on AWS, because two setup steps were never done:
+      </p>
+      <ul>
+        <li><strong>No migrations.</strong> <code>models.py</code> describes five tables. Nothing has
+          ever created them &mdash; there is no Alembic setup and no <code>create_all</code> call anywhere.</li>
+        <li><strong>No deployment.</strong> <code>lambda_handler.py</code> is written against AWS
+          resources that do not exist. No template, no Dockerfile, no CI.</li>
+      </ul>
+      <p>
+        Neither is a feature. Both are an afternoon. Clearing them converts everything already built
+        into a real app, which is why they come first and why nothing else is worth starting until
+        they are done.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1200 560" role="img" aria-label="A dependency graph. Alembic and the first migration unblock a live database, which with the deployment template produces a working app end to end. The same migration also creates the vocabulary tables, which unblock photo import, then the SM-2 engine, then question generation, and finally grammar intake.">
+          <defs>
+            <marker id="r-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/></marker>
+            <marker id="r-warm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-warm"/></marker>
+            <marker id="r-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-mute"/></marker>
+          </defs>
+
+          <text x="26" y="24" class="t-cap">WHAT BLOCKS WHAT</text>
+
+          <!-- top track: infra -->
+          <rect x="256" y="46" width="190" height="76" rx="8" class="box-now"/>
+          <text x="272" y="72"  class="t-name">Mangum fix</text>
+          <text x="272" y="92"  class="t-sub">module-level client</text>
+          <text x="272" y="108" class="t-sub">so the limiter is real</text>
+
+          <!-- middle: critical path -->
+          <rect x="26" y="182" width="190" height="88" rx="8" class="box-now"/>
+          <text x="42" y="210" class="t-name">Alembic</text>
+          <text x="42" y="230" class="t-sub">+ first migration,</text>
+          <text x="42" y="246" class="t-sub">including the vocab</text>
+          <text x="42" y="262" class="t-sub">tables</text>
+
+          <rect x="256" y="182" width="190" height="88" rx="8" class="box-now"/>
+          <text x="272" y="210" class="t-name">Database live</text>
+          <text x="272" y="230" class="t-sub">Supabase or Neon,</text>
+          <text x="272" y="246" class="t-sub">migrated, backfilled</text>
+
+          <rect x="486" y="130" width="190" height="88" rx="8" class="box-now"/>
+          <text x="502" y="158" class="t-name">Deployed</text>
+          <text x="502" y="178" class="t-sub">SAM template,</text>
+          <text x="502" y="194" class="t-sub">api-fn + sync-fn</text>
+
+          <rect x="716" y="130" width="190" height="88" rx="8" class="box-now"/>
+          <text x="732" y="158" class="t-name">A real app</text>
+          <text x="732" y="178" class="t-warm">lessons and reviews</text>
+          <text x="732" y="194" class="t-warm">on your phone</text>
+
+          <!-- bottom track: features -->
+          <rect x="486" y="330" width="190" height="88" rx="8" class="box-next"/>
+          <text x="502" y="358" class="t-name">Photo import</text>
+          <text x="502" y="378" class="t-sub">the endpoints the</text>
+          <text x="502" y="394" class="t-sub">app already calls</text>
+
+          <rect x="716" y="330" width="190" height="88" rx="8" class="box-next"/>
+          <text x="732" y="358" class="t-name">SM-2 engine</text>
+          <text x="732" y="378" class="t-sub">your own SRS, for</text>
+          <text x="732" y="394" class="t-sub">non-WaniKani items</text>
+
+          <rect x="946" y="330" width="190" height="88" rx="8" class="box-later"/>
+          <text x="962" y="358" class="t-name">Generation</text>
+          <text x="962" y="378" class="t-sub">questions, bundles,</text>
+          <text x="962" y="394" class="t-sub">the verifier gate</text>
+
+          <rect x="946" y="452" width="190" height="76" rx="8" class="box-later"/>
+          <text x="962" y="478" class="t-name">Grammar intake</text>
+          <text x="962" y="498" class="t-sub">optional context for</text>
+          <text x="962" y="514" class="t-sub">the generator</text>
+
+          <!-- edges -->
+          <line x1="216" y1="226" x2="252" y2="226" class="flow-warm" marker-end="url(#r-warm)"/>
+          <text x="234" y="214" class="t-lab" text-anchor="middle">applies</text>
+
+          <line x1="446" y1="214" x2="482" y2="186" class="flow-warm" marker-end="url(#r-warm)"/>
+          <line x1="446" y1="98"  x2="482" y2="150" class="flow-warm" marker-end="url(#r-warm)"/>
+          <line x1="676" y1="174" x2="712" y2="174" class="flow-warm" marker-end="url(#r-warm)"/>
+
+          <line x1="380" y1="274" x2="470" y2="360" class="flow" marker-end="url(#r-ink)"/>
+          <text x="398" y="322" class="t-lab">vocab_items exists</text>
+
+          <line x1="676" y1="374" x2="712" y2="374" class="flow" marker-end="url(#r-ink)"/>
+          <text x="694" y="362" class="t-lab" text-anchor="middle">vocab</text>
+
+          <line x1="906" y1="374" x2="942" y2="374" class="flow-dash" marker-end="url(#r-mute)"/>
+          <text x="924" y="362" class="t-lab" text-anchor="middle">state</text>
+
+          <line x1="1041" y1="418" x2="1041" y2="448" class="flow-dash" marker-end="url(#r-mute)"/>
+          <text x="1054" y="440" class="t-lab">a consumer</text>
+
+          <!-- legend -->
+          <line x1="26" y1="470" x2="900" y2="470" class="hair"/>
+          <rect x="26" y="490" width="20" height="13" rx="3" class="box-now"/>
+          <text x="54" y="501" class="t-lab">phase 1 &mdash; nothing else starts until this is done</text>
+          <rect x="26" y="514" width="20" height="13" rx="3" class="box-next"/>
+          <text x="54" y="525" class="t-lab">phases 2&ndash;3 &mdash; the features the app is already written against</text>
+          <rect x="480" y="514" width="20" height="13" rx="3" class="box-later"/>
+          <text x="508" y="525" class="t-lab">phases 4&ndash;5 &mdash; designed, not written</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>One migration sits under both tracks.</b> Adding <code>vocab_items</code> and
+        <code>vocab_sources</code> to the very first revision costs nothing now, and saves migrating
+        live rows later &mdash; which is why the top and bottom paths share a single starting point.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== PHASE 1 ===== -->
+  <section class="section">
+    <div class="eyebrow">phase 1</div>
+    <h2>Make it real</h2>
+
+    <div class="phase now">
+      <h3>Get the existing code running against real data<span class="chip chip-s">the whole point</span></h3>
+      <p class="why">
+        No new features. This phase only removes the two things standing between what you have
+        already built and an app you can actually use.
+      </p>
+      <ol>
+        <li>
+          <strong>Set up Alembic</strong> with the async template &mdash; <code>alembic init -t async</code>.
+          Point <code>env.py</code> at <code>Base.metadata</code> and read the URL from
+          <code>get_settings()</code>. The dependency is already declared; nothing else exists.
+        </li>
+        <li>
+          <strong>Write the first revision</strong> covering the five existing models
+          <em>plus</em> <code>vocab_items</code> and <code>vocab_sources</code>. Autogenerate, then read
+          it before applying &mdash; autogenerate reliably misses server defaults and constraint changes.
+        </li>
+        <li>
+          <strong>Stand up Postgres</strong> and migrate. Use the provider's <em>direct</em> connection
+          string for migrations and the <em>pooler</em> for the app; transaction-mode poolers and DDL
+          do not mix. <code>config.py</code> already rewrites either URL for asyncpg.
+        </li>
+        <li>
+          <strong>Backfill and verify.</strong> <code>POST /api/sync/backfill</code>, then
+          <code>POST /api/sync</code>, then check <code>GET /api/dashboard</code> against what
+          wanikani.com shows you. This is the first time the cache path has ever run.
+        </li>
+        <li>
+          <strong>Fix the Mangum lifespan issue</strong> &mdash; a module-level
+          <code>@lru_cache get_client()</code>, and skip <code>aclose()</code> /
+          <code>dispose_engine()</code> when <code>settings.is_lambda</code>. Small, and it has to
+          land before real traffic or the rate limiter is decorative.
+        </li>
+        <li>
+          <strong>Write a SAM template</strong> for <code>api-fn</code> and <code>sync-fn</code> off one
+          <code>CodeUri</code>, with the EventBridge schedule and
+          <code>ReservedConcurrentExecutions: 1</code> on the sync function &mdash; which turns a docstring
+          warning into an enforced property. Deploy.
+        </li>
+        <li>
+          <strong>Point the app at it.</strong> Set <code>EXPO_PUBLIC_API_URL</code> in
+          <code>mobile/.env</code> and run a real lesson and a real review end to end.
+        </li>
+      </ol>
+      <p class="lands">
+        <b>What you get:</b> the app on your phone, showing your actual WaniKani data, with a streak
+        that starts accumulating from the first review you answer through it.
+      </p>
+    </div>
+
+    <div class="callout callout-warn">
+      <div class="eyebrow">do not skip step 1 with create_all</div>
+      <p>
+        <code>Base.metadata.create_all()</code> would get you through today in one line. It creates
+        missing tables and silently ignores existing ones &mdash; so the second schema change does
+        nothing at all, with no error, until a query fails in production. Six more tables are coming.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== PHASE 2 ===== -->
+  <section class="section">
+    <div class="eyebrow">phase 2</div>
+    <h2>Photo import</h2>
+
+    <div class="phase next">
+      <h3>Build the endpoints the app already calls<span class="chip chip-m">medium</span></h3>
+      <p class="why">
+        <code>import.tsx</code> is finished and calls <code>POST /api/vocab-sources</code>, which returns
+        404 because it does not exist. Closing that gap is what fills <code>vocab_items</code> &mdash; and
+        without vocab there is nothing for phase 3 to schedule.
+      </p>
+      <ol>
+        <li>
+          <strong>Decide the shape first</strong> &mdash; see the conflict below. It changes what you build.
+        </li>
+        <li>
+          <strong><code>POST /api/vocab-sources</code></strong> &mdash; accept the multipart image, store it,
+          write a <code>vocab_sources</code> row.
+        </li>
+        <li>
+          <strong>The vision call</strong> &mdash; prompt for structured JSON with the three textbook columns
+          kept separate, not one blob of text. Layout-aware extraction is the whole reason this beats
+          classic OCR.
+        </li>
+        <li>
+          <strong><code>POST /api/vocab-sources/{id}/confirm</code></strong> &mdash; commit the rows the user
+          kept after correcting them, skipping anything already in the deck rather than duplicating it.
+        </li>
+        <li>
+          <strong>An <code>ocr_handler</code></strong> in <code>lambda_handler.py</code> plus its queue, if
+          you take the asynchronous route.
+        </li>
+      </ol>
+      <p class="lands">
+        <b>What you get:</b> photograph a textbook page, correct the readings, and the words land in
+        your own deck.
+      </p>
+    </div>
+
+    <div class="callout callout-warn">
+      <div class="eyebrow">a conflict to resolve before writing code</div>
+      <p>
+        <code>uploadVocabPhoto()</code> in <code>api.ts</code> is typed to return
+        <code>{ sourceId, items }</code> &mdash; the detected rows come back <em>in the upload response</em>.
+        That means a synchronous vision call with the phone holding the connection for 30 to 60 seconds.
+        Behind API Gateway that exceeds the integration timeout outright; behind a Function URL it fits,
+        but it is a poor thing to ask a phone on mobile data to do.
+      </p>
+      <p>
+        <strong>I would change the client.</strong> Return <code>{ sourceId, status: "pending" }</code>
+        immediately, do the vision call in <code>ocr-fn</code>, and let <code>import.tsx</code> poll until
+        the rows appear. Your schema already assumes this &mdash; <code>vocab_sources.status</code> is
+        <code>pending | processed | failed</code>, which is a job table. It is a small change to
+        <code>api.ts</code> and the loading state in <code>import.tsx</code>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== PHASE 3 ===== -->
+  <section class="section">
+    <div class="eyebrow">phase 3</div>
+    <h2>Your own SRS</h2>
+
+    <div class="phase next">
+      <h3>SM-2 for everything WaniKani does not own<span class="chip chip-m">medium</span></h3>
+      <p class="why">
+        WaniKani items keep WaniKani's stage &mdash; mirrored, never recomputed. Imported vocab needs
+        scheduling of its own, and it needs to exist first, which is why this follows phase 2 rather
+        than leading it.
+      </p>
+      <ol>
+        <li><strong>The <code>srs_state</code> table</strong>, with <code>skill_type</code> splitting
+          recognition from production so the two schedule independently.</li>
+        <li><strong>The SM-2 implementation</strong> &mdash; ease factor, interval, repetitions. Pure
+          functions over a state record, so it tests without a database, the way
+          <code>mapping.py</code> does.</li>
+        <li><strong>A due-queue endpoint</strong> for non-WaniKani items, kept as a separate track from
+          the WaniKani queue &mdash; the user is never shown a blended list.</li>
+        <li><strong>Flashcard review</strong> for imported vocab, reading and writing the same
+          <code>srs_state</code> row that generated questions will later use.</li>
+      </ol>
+      <p class="lands">
+        <b>What you get:</b> the words you photographed come back on a schedule, without touching
+        WaniKani.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== PHASE 4 ===== -->
+  <section class="section">
+    <div class="eyebrow">phase 4</div>
+    <h2>Generated practice</h2>
+
+    <div class="phase later">
+      <h3>Questions, bundles, and the verifier<span class="chip chip-l">large</span></h3>
+      <p class="why">
+        The other endpoint the app already calls &mdash; <code>/api/lesson-bundles/next</code> &mdash; and the
+        first piece that needs a second Lambda with a genuinely different runtime shape.
+      </p>
+      <ol>
+        <li><strong><code>questions</code> and <code>lesson_bundles</code></strong>, with
+          <code>verified</code> defaulting to false.</li>
+        <li><strong>The generation agent</strong> in a <code>generate_handler</code>, drafting 3&ndash;5
+          bundles at a time. Context is recently passed WaniKani items plus your imported vocab &mdash;
+          not the full history.</li>
+        <li><strong>The verifier gate.</strong> Never serve a question with
+          <code>verified = false</code>. This is the rule that makes generated content safe to study
+          against.</li>
+        <li><strong>The stock-check trigger</strong> &mdash; EventBridge runs one cheap query
+          ("fewer than three unconsumed bundles, and new material since last time?") and enqueues
+          generation only when both hold. The clock triggers the decision, not the spend.</li>
+        <li><strong><code>GET /api/lesson-bundles/next</code></strong>, which also enqueues a top-up
+          when stock is low, so heavy study days do not wait for the next tick.</li>
+      </ol>
+      <p class="lands">
+        <b>What you get:</b> practice questions that target what you are actually learning, generated
+        ahead of you so they are there offline.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== PHASE 5 ===== -->
+  <section class="section">
+    <div class="eyebrow">phase 5</div>
+    <h2>Grammar intake</h2>
+
+    <div class="phase later">
+      <h3>The Obsidian connector<span class="chip chip-l">last, deliberately</span></h3>
+      <p class="why">
+        Your own notes are firm that this is optional: the connector is opt-out entirely,
+        <code>grammar_topics</code> can simply be empty, and the generation prompt treats it as an
+        optional context block. Its only consumer is the phase 4 agent &mdash; building it earlier means
+        building an input for something that cannot read it yet.
+      </p>
+      <ol>
+        <li><strong>Explicit file selection</strong> at setup &mdash; one read file, one write file. Not a
+          vault scan.</li>
+        <li><strong>The <code>grammar_topics</code> cache</strong>, refreshed whenever the connector reads.</li>
+        <li><strong>Opt-out write-back</strong>, disableable independently of reads.</li>
+        <li><strong>Fold topics into the generation prompt</strong> as optional context.</li>
+      </ol>
+      <p class="lands">
+        <b>What you get:</b> questions that exercise the grammar you just studied, not only the vocab.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== loose ends ===== -->
+  <section class="section">
+    <div class="eyebrow">alongside</div>
+    <h2>Smaller things worth doing</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Item</th><th>Where</th><th>When</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>End-of-session sync trigger</td>
+            <td class="mono">mobile/src/data/sync.ts</td>
+            <td>With phase 1. Unlocks and level-ups do not appear in the review response, so a single sync when the outbox drains is the only way to learn about them.</td>
+          </tr>
+          <tr>
+            <td>Store ETags</td>
+            <td class="mono">backend/app/db/</td>
+            <td>Any time. The client already sends <code>If-None-Match</code> and passes 304 through, but nothing persists an ETag, so no caller benefits yet.</td>
+          </tr>
+          <tr>
+            <td>Decide the <code>study_progress</code> FK</td>
+            <td class="mono">backend/app/db/models.py</td>
+            <td>During phase 1, before there is data. It points at <code>subjects</code> today; the notes imply routing it through <code>vocab_items</code> for one mastery record per word.</td>
+          </tr>
+          <tr>
+            <td>Tighten CORS</td>
+            <td class="mono">backend/app/main.py</td>
+            <td>Before the Function URL is public. <code>allow_origins</code> is <code>["*"]</code> whenever <code>ENVIRONMENT</code> is <code>local</code>.</td>
+          </tr>
+          <tr>
+            <td>Auth / multi-user</td>
+            <td class="mono">&mdash;</td>
+            <td>Not yet. A stored token needs encryption at rest, and that is not worth building before there is a second account.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===== first ===== -->
+  <section class="section">
+    <div class="eyebrow">if you only do one thing</div>
+    <h2>Start with the migration</h2>
+    <div class="prose">
+      <p>
+        Everything else in phase 1 is blocked on it, and it is the smallest of the seven steps. Four
+        commands and a file you read before applying:
+      </p>
+    </div>
+
+<pre><code>cd backend
+alembic init -t async migrations
+# edit migrations/env.py: import Base from app.db.models,
+# read the URL from app.config.get_settings()
+alembic revision --autogenerate -m "initial schema"
+alembic upgrade head</code></pre>
+
+    <div class="prose">
+      <p>
+        Add <code>vocab_items</code> and <code>vocab_sources</code> to <code>models.py</code> before you
+        autogenerate, so they land in the same first revision. That one decision is what keeps phase 2
+        from starting with a data migration.
+      </p>
+    </div>
+  </section>
+
+  <p class="footnote">
+    Companion to <a href="https://claude.ai/code/artifact/f984ea72-6c43-41d1-9dc6-0e39eef08165">Kanji Workshop System Map</a>,
+    <a href="https://claude.ai/code/artifact/bedc0683-c283-4e6a-b3bd-51a5388e3424">Kanji Workshop Runtime</a>
+    and <a href="https://claude.ai/code/artifact/f1804341-51a7-4768-b423-c16ef6721cef">Anatomy of a Lesson</a>.
+    Sequencing is derived from the code at <code>fcab47d</code> and from
+    <code>backend/docs/wanikani-api-notes.md</code>.
+    Size chips are relative to each other, not estimates in hours.
+    Phases 4 and 5 are described from the design notes; nothing in them has been written.
+  </p>
+
+</div>
+</body>
+</html>
