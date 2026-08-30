@@ -42,6 +42,8 @@ const JLPT_TIERS: (number | null)[] = [5, 4, 3, 2, 1, null];
 export default function ImportScreen() {
   const [imageUri, setImageUri] = React.useState<string | null>(null);
   const [items, setItems] = React.useState<DetectedItem[] | null>(null);
+  /** Set once the upload is accepted; the confirm call is keyed on it. */
+  const [sourceId, setSourceId] = React.useState<number | null>(null);
   const [tier, setTier] = React.useState<number | null>(3);
   const [mode, setMode] = React.useState<StudyMode>('notecards');
   const [busy, setBusy] = React.useState(false);
@@ -75,15 +77,30 @@ export default function ImportScreen() {
 
       const uri = result.assets[0].uri;
       setImageUri(uri);
+      setSourceId(null);
+      setItems(null);
       setBusy(true);
 
       try {
         if (api.isBackendConfigured) {
-          const response = await api.uploadVocabPhoto(uri, tier);
-          setItems(response.items);
+          // The upload returns before the page has been read; the rows arrive
+          // on a later poll. See `pollVocabSource`.
+          const accepted = await api.uploadVocabPhoto(uri, tier);
+          setSourceId(accepted.sourceId);
+
+          const result = await api.pollVocabSource(accepted.sourceId);
+          if (result.status === 'failed') {
+            Alert.alert(
+              "Couldn't read that page",
+              result.detail ?? 'Try a straighter, better-lit photo of the page.',
+            );
+            setImageUri(null);
+            return;
+          }
+          setItems(result.items);
         } else {
-          // No ingestion service yet — show the sample extraction so the review
-          // flow below is still exercisable.
+          // No ingestion service configured — show the sample extraction so the
+          // review flow below is still exercisable.
           setItems(DETECTED_ITEMS);
         }
       } catch {
@@ -269,13 +286,33 @@ export default function ImportScreen() {
             label={`Import ${selected.length} item${selected.length === 1 ? '' : 's'}`}
             tone="vocabulary"
             disabled={selected.length === 0 || ambiguous.length > 0}
-            onPress={() => {
-              Alert.alert(
-                'Imported',
-                `${selected.length} words added to your deck as ${mode}.`,
-              );
+            onPress={async () => {
+              // Send the rows back, not their ids: the user may have corrected
+              // a reading or resolved an ambiguity, and the edited text is the
+              // point of the review step.
+              if (api.isBackendConfigured && sourceId !== null) {
+                setBusy(true);
+                try {
+                  const created = await api.confirmVocabImport(sourceId, selected);
+                  Alert.alert(
+                    'Imported',
+                    `${created.length} word${created.length === 1 ? '' : 's'} added to your deck as ${mode}.`,
+                  );
+                } catch {
+                  Alert.alert('Import failed', 'Those words were not saved. Try again.');
+                  return;
+                } finally {
+                  setBusy(false);
+                }
+              } else {
+                Alert.alert(
+                  'Imported',
+                  `${selected.length} words added to your deck as ${mode}.`,
+                );
+              }
               setImageUri(null);
               setItems(null);
+              setSourceId(null);
             }}
           />
         </View>

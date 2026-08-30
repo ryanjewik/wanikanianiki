@@ -13,7 +13,17 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, optional_db_session, settings_dep, wanikani_client
@@ -21,12 +31,17 @@ from app.config import Settings
 from app.db import repository as repo
 from app.schemas import (
     Assignment,
+    ConfirmImportRequest,
     DashboardSummary,
     ReviewRequest,
     ReviewResult,
     Subject,
     SyncResult,
+    VocabItem,
+    VocabSourceResult,
 )
+from app.services import ocr as ocr_service
+from app.services import storage
 from app.services import sync as sync_service
 from app.wanikani.client import WaniKaniClient, WaniKaniError, WaniKaniValidationError
 from app.wanikani.mapping import (
@@ -305,6 +320,144 @@ async def submit_review(
 
 
 # -- sync ------------------------------------------------------------------
+
+
+# -- photo import ----------------------------------------------------------
+# The vision call takes far longer than a request should, so the upload only
+# records the page and returns; the client polls the GET below until the rows
+# appear. `vocab_sources.status` is the state machine that makes that work.
+
+
+@router.post(
+    "/api/vocab-sources",
+    response_model=VocabSourceResult,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["import"],
+)
+async def upload_vocab_source(
+    background: BackgroundTasks,
+    image: UploadFile = File(...),
+    jlpt_level: int | None = Form(None),
+    label: str | None = Form(None),
+    settings: Settings = Depends(settings_dep),
+    session: AsyncSession = Depends(db_session),
+) -> VocabSourceResult:
+    """Accept a page photo and start reading it.
+
+    Returns `202` with a `sourceId` and `pending` immediately — the extraction
+    runs after the response is sent. Holding the request open for the length of
+    a vision call would exceed an API Gateway timeout outright and is a poor
+    thing to ask a phone on mobile data to wait through.
+    """
+    if not settings.has_vision:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": "Photo import is not configured",
+                "hint": "Set ANTHROPIC_API_KEY to enable page extraction.",
+            },
+        )
+
+    data = await image.read()
+    if not data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="The uploaded file was empty"
+        )
+
+    try:
+        uri = storage.save_image(data, image.content_type or "", settings=settings)
+    except storage.UnsupportedImageType as exc:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
+        ) from exc
+
+    user = await repo.get_default_user(session)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "No user on record yet",
+                "hint": "Run POST /api/sync once so the account is known.",
+            },
+        )
+
+    source = await repo.create_vocab_source(
+        session, user_id=user.id, image_uri=uri, jlpt_level=jlpt_level, label=label
+    )
+    source_id = source.id
+
+    # Commit before scheduling, not after. The extraction runs in its own
+    # session — it has to, since the request's is closed by then — and that
+    # session can only see committed rows. Leaving this to the dependency's
+    # teardown makes the handoff depend on whether FastAPI exits `yield`
+    # dependencies before or after background tasks, which is not a detail to
+    # build on.
+    await session.commit()
+
+    # Runs after the response is flushed. Under Lambda this becomes an SQS
+    # message and `ocr_handler` picks it up instead — same service function.
+    background.add_task(_run_extraction, source_id)
+
+    return VocabSourceResult(source_id=source_id, status="pending", items=[])
+
+
+async def _run_extraction(source_id: int) -> None:
+    """Own transaction: the request's session is closed by the time this runs."""
+    from app.db.session import session_scope
+
+    async with session_scope() as session:
+        await ocr_service.process_source(session, source_id)
+
+
+@router.get(
+    "/api/vocab-sources/{source_id}",
+    response_model=VocabSourceResult,
+    tags=["import"],
+)
+async def get_vocab_source(
+    source_id: int,
+    session: AsyncSession = Depends(db_session),
+) -> VocabSourceResult:
+    """What the client polls. Rows appear once `status` reaches `processed`."""
+    source = await repo.get_vocab_source(session, source_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown source")
+
+    items, failure = ocr_service.take_result(source_id)
+    return VocabSourceResult(
+        source_id=source_id,
+        status=source.status,
+        items=items,
+        detail=failure,
+    )
+
+
+@router.post(
+    "/api/vocab-sources/{source_id}/confirm",
+    response_model=list[VocabItem],
+    tags=["import"],
+)
+async def confirm_vocab_source(
+    source_id: int,
+    payload: ConfirmImportRequest,
+    session: AsyncSession = Depends(db_session),
+) -> list[VocabItem]:
+    """Commit the rows the user kept.
+
+    The client sends back the corrected rows rather than a list of ids, because
+    the user may have fixed a reading or picked between ambiguous ones — the
+    edited text is the point, not the original extraction.
+    """
+    source = await repo.get_vocab_source(session, source_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown source")
+
+    keep = [item for item in payload.items if item.selected and item.status != "duplicate"]
+    created = await repo.insert_vocab_items(session, keep, source_image_id=source_id)
+
+    # The draft has served its purpose; holding it would leak for every import.
+    ocr_service.discard_result(source_id)
+    return created
 
 
 @router.post("/api/sync", response_model=SyncResult, tags=["ops"])

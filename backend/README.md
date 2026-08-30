@@ -40,6 +40,9 @@ could leak a token.
 | `GET /api/subjects` | Content, by `ids` or `level`. Cache-first. |
 | `PUT /api/assignments/{id}/start` | **Write.** Finish a lesson. |
 | `POST /api/reviews` | **Write.** Submit one answered review. |
+| `POST /api/vocab-sources` | **Write.** Upload a page photo. Returns `202` immediately. |
+| `GET /api/vocab-sources/{id}` | Poll until `status` leaves `pending`. |
+| `POST /api/vocab-sources/{id}/confirm` | **Write.** Commit the reviewed rows. |
 | `POST /api/sync` | Run a sync pass now. |
 | `POST /api/sync/backfill` | One-time content pull for every level the account can see. |
 
@@ -94,6 +97,40 @@ field, which would otherwise fail validation.
 **`accepted_answer` is not always true.** Nanori and some kunyomi readings are
 listed for reference but rejected as answers. Grading must respect it.
 
+## Photo import
+
+Upload a textbook page, get vocabulary rows. Three routes and one rule: the
+upload never waits for the extraction.
+
+```
+POST /api/vocab-sources        -> 202 {sourceId, status: "pending"}
+GET  /api/vocab-sources/{id}   -> poll until "processed" or "failed"
+POST /api/vocab-sources/{id}/confirm  -> the rows the user kept
+```
+
+Reading a page is a vision-model call that takes tens of seconds — longer than
+an API Gateway integration will wait, and far longer than a phone on mobile data
+should hold a request open. So `vocab_sources.status` carries the state, the
+upload returns as soon as the bytes land, and the client polls. Locally the
+extraction runs as a FastAPI background task; in Lambda the same
+`process_source` runs in `ocr_handler`, woken by a queue message.
+
+**It is not OCR.** A vocab page is a table, and the useful part is keeping its
+three columns apart — kanji+furigana, kana, English. Raw text extraction throws
+that structure away. The page goes to `claude-opus-5` with a schema attached and
+comes back as rows.
+
+**Ambiguity is flagged, not guessed.** 辛い is からい or つらい and the page
+often does not say. Those rows come back `ambiguous`, with the candidates
+listed, and arrive **deselected** — a wrong reading here goes into an SRS and
+gets rehearsed until it sticks, so an admitted unknown beats a confident guess.
+
+Nothing enters `vocab_items` until the user confirms. Duplicates are matched on
+the written form, not the reading, so 橋 and 箸 stay distinct.
+
+Set `ANTHROPIC_API_KEY` to enable it; unset, uploads are refused with a `503`
+rather than accepted and never processed.
+
 ## Deployment — Lambda + serverless Postgres
 
 The app is plain ASGI with no hosting-specific code in it. `uvicorn` runs it
@@ -107,6 +144,7 @@ Two functions off one artifact:
 |---|---|---|
 | `app.lambda_handler.handler` | Function URL / API Gateway HTTP API | The HTTP API. |
 | `app.lambda_handler.sync_handler` | EventBridge, every 15–60 min | **Reserved concurrency 1.** |
+| `app.lambda_handler.ocr_handler` | SQS | Minutes, not seconds — size the timeout for a vision call. |
 
 ### Keep Lambda out of a VPC
 
@@ -225,4 +263,7 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/kanji_test \
   that is not worth building before there is a second account.
 - **Conditional requests.** The client supports `If-None-Match` and returns 304
   through, but nothing stores ETags yet, so no caller benefits.
-- **Part 2** — OCR ingestion, generated lessons, JLPT tracking. Untouched.
+- **Image storage.** `services/storage.py` writes to a local directory. The S3
+  branch raises rather than silently writing to a `/tmp` a cold start discards.
+- **Part 2** — generated lessons and JLPT tracking. Photo import is built;
+  question generation and the Obsidian connector are not.

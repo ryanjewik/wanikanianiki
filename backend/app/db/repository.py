@@ -21,11 +21,14 @@ from app.db.models import (
     StudyProgress,
     SyncMeta,
     User,
+    VocabItem,
+    VocabSource,
 )
 from app.db.models import (
     Subject as SubjectRow,
 )
-from app.schemas import Assignment, Subject
+from app.schemas import Assignment, DetectedItem, Subject, VocabSourceImage
+from app.schemas import VocabItem as VocabItemOut
 
 # -- users -----------------------------------------------------------------
 
@@ -340,8 +343,137 @@ async def get_last_synced_at(session: AsyncSession) -> datetime | None:
         return None
 
 
+# -- photo import ----------------------------------------------------------
+
+
+async def create_vocab_source(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    image_uri: str,
+    jlpt_level: int | None = None,
+    label: str | None = None,
+) -> VocabSource:
+    """Record the upload before anything has been read from it.
+
+    The row exists in `pending` from the moment the bytes land, which is what
+    lets the client poll for a result instead of holding a request open for the
+    length of a vision call.
+    """
+    row = VocabSource(
+        user_id=user_id,
+        image_uri=image_uri,
+        jlpt_level=jlpt_level,
+        label=label,
+        status="pending",
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def get_vocab_source(session: AsyncSession, source_id: int) -> VocabSource | None:
+    return await session.get(VocabSource, source_id)
+
+
+async def set_vocab_source_status(
+    session: AsyncSession, source_id: int, status: str
+) -> None:
+    source = await session.get(VocabSource, source_id)
+    if source is not None:
+        source.status = status
+
+
+async def get_known_written_forms(session: AsyncSession) -> set[str]:
+    """Every word already in the deck, for duplicate detection.
+
+    Keyed on the written form rather than the reading, so 橋 and 箸 stay
+    distinct even though they read the same.
+    """
+    result = await session.execute(select(VocabItem.kanji_furigana))
+    return set(result.scalars())
+
+
+async def insert_vocab_items(
+    session: AsyncSession,
+    items: Sequence[DetectedItem],
+    *,
+    source_image_id: int | None = None,
+) -> list[VocabItemOut]:
+    """Commit reviewed rows into the deck.
+
+    Skips anything already present rather than raising: the review screen marks
+    duplicates, but the deck can have moved on between extraction and confirm,
+    and a late duplicate is not worth failing the whole import over.
+    """
+    if not items:
+        return []
+
+    existing = await get_known_written_forms(session)
+    rows = [
+        VocabItem(
+            source="ocr_import",
+            kanji_furigana=item.kanji_furigana,
+            furigana_only=item.furigana_only,
+            english=item.english,
+            jlpt_level=item.jlpt_level,
+            source_image_id=source_image_id,
+            is_user_edited=False,
+        )
+        for item in items
+        if item.kanji_furigana not in existing
+    ]
+    if not rows:
+        return []
+
+    session.add_all(rows)
+    await session.flush()
+    return [_to_vocab_item(row) for row in rows]
+
+
+async def get_vocab_items(
+    session: AsyncSession, *, source_image_id: int | None = None
+) -> list[VocabItemOut]:
+    statement = select(VocabItem)
+    if source_image_id is not None:
+        statement = statement.where(VocabItem.source_image_id == source_image_id)
+    result = await session.execute(statement.order_by(VocabItem.id))
+    return [_to_vocab_item(row) for row in result.scalars()]
+
+
+def _to_vocab_item(row: VocabItem) -> VocabItemOut:
+    return VocabItemOut(
+        id=row.id,
+        source=row.source,
+        wanikani_subject_id=row.wanikani_subject_id,
+        kanji_furigana=row.kanji_furigana,
+        furigana_only=row.furigana_only,
+        english=row.english,
+        source_image_id=row.source_image_id,
+        is_user_edited=row.is_user_edited,
+        jlpt_level=row.jlpt_level,
+        updated_at=row.updated_at,
+    )
+
+
+def to_vocab_source_image(row: VocabSource) -> VocabSourceImage:
+    return VocabSourceImage(
+        id=row.id,
+        image_uri=row.image_uri,
+        uploaded_at=row.uploaded_at,
+        status=row.status,
+        jlpt_level=row.jlpt_level,
+        label=row.label,
+    )
+
+
 async def table_counts(session: AsyncSession) -> dict[str, Any]:
     """Cheap introspection for the health endpoint."""
     subjects = await session.scalar(select(func.count()).select_from(SubjectRow))
     progress = await session.scalar(select(func.count()).select_from(StudyProgress))
-    return {"subjects": subjects or 0, "study_progress": progress or 0}
+    vocab = await session.scalar(select(func.count()).select_from(VocabItem))
+    return {
+        "subjects": subjects or 0,
+        "study_progress": progress or 0,
+        "vocab_items": vocab or 0,
+    }

@@ -50,6 +50,21 @@ class Settings(BaseSettings):
     wanikani_timeout_seconds: float = 20.0
     wanikani_max_retries: int = 3
 
+    # --- Vision extraction ---------------------------------------------------
+    # Photo import only. Empty means the feature is off: uploads are rejected
+    # with a 503 rather than silently accepted and never processed.
+    anthropic_api_key: SecretStr | None = None
+
+    # Pinned deliberately, the same way `wanikani_revision` is — an extraction
+    # prompt is tuned against a model, and a silent upgrade re-tunes it.
+    vision_model: str = "claude-opus-5"
+
+    # Where uploaded page photos are kept. A local directory in development; in
+    # Lambda this is the only writable path, and S3 takes over via
+    # `VOCAB_IMAGE_BUCKET` once that is wired.
+    vocab_image_dir: str = "/tmp/kanji-workshop/vocab-sources"
+    vocab_image_bucket: str = ""
+
     # --- Database -----------------------------------------------------------
     # Neon/Supabase style URL. Empty means "no database configured": the app
     # still serves every read-only WaniKani-backed route, it just cannot cache.
@@ -91,6 +106,10 @@ class Settings(BaseSettings):
     @property
     def has_database(self) -> bool:
         return bool(self.database_url)
+
+    @property
+    def has_vision(self) -> bool:
+        return self.anthropic_api_key is not None
 
     @property
     def migration_url(self) -> str:
