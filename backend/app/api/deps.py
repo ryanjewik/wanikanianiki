@@ -4,31 +4,29 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db.session import get_session_factory
-from app.wanikani.client import WaniKaniClient
+from app.wanikani.client import WaniKaniClient, get_client
 
 
 def settings_dep() -> Settings:
     return get_settings()
 
 
-async def wanikani_client(request: Request) -> WaniKaniClient:
-    """The client built once at startup.
+async def wanikani_client() -> WaniKaniClient:
+    """The one client for this process.
 
     Shared deliberately: it owns the rate limiter, and a per-request client
     would give each request its own budget and defeat the limit entirely.
+
+    Read from the module rather than `app.state`, because under Mangum the
+    lifespan that populates `app.state` re-runs on every invocation — see
+    `get_client()`.
     """
-    client: WaniKaniClient | None = getattr(request.app.state, "wanikani", None)
-    if client is None:  # pragma: no cover - only if lifespan did not run
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WaniKani client unavailable",
-        )
-    return client
+    return get_client()
 
 
 async def db_session(

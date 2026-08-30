@@ -56,6 +56,14 @@ can only manufacture 429s. Requests are serialised through a token bucket, and
 the client is built **once per process** and shared — a per-request client would
 hand every request its own budget and defeat the limiter entirely.
 
+"Once per process" has to mean the module, not the app. Mangum builds its
+`LifespanCycle` inside `__call__`, so a FastAPI lifespan runs startup *and
+shutdown* on every Lambda invocation rather than once per container. The client
+therefore hangs off `get_client()`, an `lru_cache` in `app/wanikani/client.py`,
+and the lifespan skips teardown when `is_lambda` so a frozen container keeps its
+connections. `tests/test_lambda_handler.py` asserts the instance survives two
+invocations; both of those tests fail if the carve-out is removed.
+
 **429 carries an exact answer.** `RateLimit-Reset` is an absolute Unix
 timestamp, so the client sleeps until precisely then instead of guessing at a
 backoff curve.

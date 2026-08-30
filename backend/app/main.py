@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.routes import router
 from app.config import get_settings
-from app.wanikani.client import WaniKaniAuthError, WaniKaniClient, WaniKaniError
+from app.wanikani.client import WaniKaniAuthError, WaniKaniError, get_client
 
 
 def configure_logging(level: str) -> None:
@@ -30,24 +30,37 @@ def configure_logging(level: str) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Build the shared WaniKani client once per process.
+    """Warm the process-level client, and tear it down only where that is safe.
 
-    Sharing it is not just an optimisation: the client owns the rate limiter,
-    and a per-request client would hand each request its own 60/min budget,
-    which is exactly how you get 429s.
+    The client owns the rate limiter, so it must outlive the request — a
+    per-request client would hand each request its own 60/min budget against a
+    limit that is per token. `get_client()` is cached on the module, so the
+    instance survives regardless of how often this function runs.
+
+    **That last part matters under Lambda.** Mangum builds its `LifespanCycle`
+    inside `__call__`, so startup *and shutdown* fire on every invocation, not
+    once per container. Closing the client here would therefore close it after
+    every request and reopen it on the next — which is the exact per-request
+    client the rate limiter cannot tolerate. So teardown is skipped there, and
+    the frozen container keeps its connections for the next invocation.
+
+    Under uvicorn, where shutdown really does mean shutdown, both are closed
+    properly.
     """
     settings = get_settings()
     configure_logging(settings.log_level)
 
-    app.state.wanikani = WaniKaniClient(settings)
+    app.state.wanikani = get_client()
     try:
         yield
     finally:
-        await app.state.wanikani.aclose()
-        if settings.has_database:
-            from app.db.session import dispose_engine
+        if not settings.is_lambda:
+            await app.state.wanikani.aclose()
+            get_client.cache_clear()
+            if settings.has_database:
+                from app.db.session import dispose_engine
 
-            await dispose_engine()
+                await dispose_engine()
 
 
 def create_app() -> FastAPI:

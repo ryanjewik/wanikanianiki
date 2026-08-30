@@ -52,6 +52,11 @@ async def _run_sync() -> dict[str, Any]:
     from app.services.sync import sync_all
     from app.wanikani.client import WaniKaniClient
 
+    # Builds its own client rather than sharing `get_client()`, deliberately:
+    # `async with` closes what it opens, and closing the process-level client
+    # would leave the HTTP handler in this container holding a dead transport.
+    # Nothing is lost by not sharing — this function is reserved-concurrency 1
+    # and runs on a schedule far longer than the limiter's one-minute window.
     async with WaniKaniClient() as client:
         try:
             async with session_scope() as session:
