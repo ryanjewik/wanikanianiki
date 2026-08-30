@@ -1,0 +1,755 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kanji Workshop Runtime</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400..600&display=swap">
+<style>
+  :root {
+    --ground:      #EBEDF0;
+    --surface:     #FCFCFD;
+    --surface-2:   #F3F5F8;
+    --ink:         #171A1F;
+    --muted:       #5D6472;
+    --line:        #CDD3DB;
+    --line-soft:   #DFE3E9;
+    --ember:       #A9500F;
+    --ember-soft:  #F5E6D8;
+    --frost:       #256373;
+    --frost-soft:  #DCE9ED;
+
+    --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+    --body:    "Source Serif 4", Georgia, "Times New Roman", serif;
+    --mono:    "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #14171C;
+      --surface:     #1B1F26;
+      --surface-2:   #222730;
+      --ink:         #E7EAEF;
+      --muted:       #98A1B0;
+      --line:        #2E343E;
+      --line-soft:   #262B34;
+      --ember:       #E28A48;
+      --ember-soft:  #3A2415;
+      --frost:       #64AABA;
+      --frost-soft:  #14303A;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #14171C;
+    --surface:     #1B1F26;
+    --surface-2:   #222730;
+    --ink:         #E7EAEF;
+    --muted:       #98A1B0;
+    --line:        #2E343E;
+    --line-soft:   #262B34;
+    --ember:       #E28A48;
+    --ember-soft:  #3A2415;
+    --frost:       #64AABA;
+    --frost-soft:  #14303A;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 56px 32px 96px;
+  }
+
+  .prose { max-width: 67ch; }
+
+  /* ---- masthead ---- */
+  .masthead { border-bottom: 2px solid var(--ink); padding-bottom: 28px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .masthead h1 {
+    font-family: var(--display);
+    font-weight: 750;
+    font-size: clamp(38px, 6vw, 62px);
+    line-height: 1.02;
+    letter-spacing: -0.022em;
+    text-wrap: balance;
+    margin: 14px 0 0;
+  }
+  .deck {
+    max-width: 62ch;
+    margin: 18px 0 0;
+    font-size: 19px;
+    color: var(--muted);
+  }
+
+  /* ---- sections ---- */
+  .section { margin-top: 68px; }
+  .section > h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 27px;
+    letter-spacing: -0.012em;
+    line-height: 1.2;
+    text-wrap: balance;
+    margin: 8px 0 18px;
+  }
+  .section p { margin: 0 0 16px; }
+  .section p:last-child { margin-bottom: 0; }
+
+  h3 {
+    font-family: var(--display);
+    font-weight: 650;
+    font-size: 18px;
+    letter-spacing: -0.005em;
+    margin: 30px 0 10px;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    border: 1px solid var(--line-soft);
+    border-radius: 4px;
+    padding: 0.1em 0.34em;
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.62;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--ember);
+    border-radius: 6px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 20px 0;
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+  strong { font-weight: 600; }
+
+  /* ---- figures ---- */
+  figure { margin: 34px 0; }
+  .figframe {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 20px 14px;
+    overflow-x: auto;
+  }
+  figure svg { display: block; width: 100%; min-width: 720px; height: auto; }
+  figcaption {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin-top: 14px;
+    max-width: 78ch;
+  }
+  figcaption b { color: var(--ink); font-weight: 600; }
+
+  /* ---- svg vocabulary ---- */
+  .box       { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.25; }
+  .box-live  { fill: var(--ember-soft); stroke: var(--ember); stroke-width: 1.4; }
+  .box-cold  { fill: var(--frost-soft); stroke: var(--frost); stroke-width: 1.25; }
+  .box-plan  { fill: none; stroke: var(--muted); stroke-width: 1.25; stroke-dasharray: 5 4; }
+  .box-group { fill: none; stroke: var(--muted); stroke-width: 1.15; stroke-dasharray: 3 5; }
+
+  .flow      { stroke: var(--ink); stroke-width: 1.5; fill: none; }
+  .flow-warm { stroke: var(--ember); stroke-width: 1.8; fill: none; }
+  .flow-cool { stroke: var(--frost); stroke-width: 1.5; fill: none; }
+  .flow-dash { stroke: var(--muted); stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; }
+  .hair      { stroke: var(--line); stroke-width: 1; fill: none; }
+
+  .head-ink  { fill: var(--ink); }
+  .head-warm { fill: var(--ember); }
+  .head-cool { fill: var(--frost); }
+  .head-mute { fill: var(--muted); }
+
+  .t-name  { font-family: var(--mono); font-size: 13.5px; font-weight: 600; fill: var(--ink); }
+  .t-sub   { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); }
+  .t-lab   { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); }
+  .t-lab-w { font-family: var(--mono); font-size: 10.5px; font-weight: 500; fill: var(--ember); }
+  .t-cap   { font-family: var(--mono); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; fill: var(--muted); }
+  .t-tick  { font-family: var(--mono); font-size: 10px; fill: var(--muted); }
+
+  /* ---- table ---- */
+  .tablewrap { overflow-x: auto; margin: 28px 0 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 780px; }
+  th, td {
+    text-align: left;
+    padding: 12px 16px 12px 0;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td { font-size: 14.5px; line-height: 1.5; }
+  td.mono { font-family: var(--mono); font-size: 12.5px; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  .pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    padding: 3px 9px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill-built   { background: var(--ember-soft); color: var(--ember); border: 1px solid var(--ember); }
+  .pill-planned { background: none; color: var(--muted); border: 1px dashed var(--muted); }
+
+  /* ---- callout ---- */
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--frost);
+    border-radius: 6px;
+    padding: 20px 24px;
+    margin: 28px 0;
+    max-width: 74ch;
+  }
+  .callout .eyebrow { color: var(--frost); }
+  .callout p { margin: 10px 0 0; font-size: 16px; }
+  .callout p:first-of-type { margin-top: 8px; }
+
+  .callout-warn { border-left-color: var(--ember); }
+  .callout-warn .eyebrow { color: var(--ember); }
+
+  ul { margin: 0 0 16px; padding-left: 1.15em; }
+  li { margin-bottom: 8px; }
+  li::marker { color: var(--muted); }
+
+  .footnote {
+    margin-top: 72px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--muted);
+    max-width: 76ch;
+  }
+  .footnote a { color: var(--ember); }
+
+  @media (max-width: 720px) {
+    .page { padding: 40px 20px 72px; }
+    body { font-size: 16px; }
+  }
+</style>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Kanji Workshop &middot; backend architecture</div>
+    <h1>What wakes the backend</h1>
+    <p class="deck">
+      Four Lambda functions off one artifact. Nothing runs between requests, nothing
+      installs at invocation, and each function is woken by a different signal.
+    </p>
+  </header>
+
+  <!-- ============ 1. THE LEDGER ============ -->
+  <section class="section">
+    <div class="eyebrow">01 &middot; the components</div>
+    <h2>Four functions, one codebase</h2>
+    <div class="prose">
+      <p>
+        Every box below is a separate Lambda function with its own memory, timeout, concurrency
+        limit and trigger &mdash; but all four are the same <code>app/</code> package, deployed once.
+        Only the entry point differs.
+      </p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Function</th>
+            <th>Entry point</th>
+            <th>Woken by</th>
+            <th>Config</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">api-fn</td>
+            <td class="mono">lambda_handler.handler</td>
+            <td>A request from the phone, via Function URL</td>
+            <td class="mono">512 MB &middot; 30 s</td>
+            <td><span class="pill pill-built">built</span></td>
+          </tr>
+          <tr>
+            <td class="mono">sync-fn</td>
+            <td class="mono">lambda_handler.sync_handler</td>
+            <td>EventBridge, on a clock</td>
+            <td class="mono">512 MB &middot; 5 min &middot; concurrency 1</td>
+            <td><span class="pill pill-built">built</span></td>
+          </tr>
+          <tr>
+            <td class="mono">ocr-fn</td>
+            <td class="mono">lambda_handler.ocr_handler</td>
+            <td>A queued photo job</td>
+            <td class="mono">1 GB &middot; 2 min</td>
+            <td><span class="pill pill-planned">planned</span></td>
+          </tr>
+          <tr>
+            <td class="mono">generate-fn</td>
+            <td class="mono">lambda_handler.generate_handler</td>
+            <td>A queued generation job</td>
+            <td class="mono">1 GB &middot; 15 min &middot; concurrency 1</td>
+            <td><span class="pill pill-planned">planned</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1160 726" role="img" aria-label="Four Lambda functions inside one deployment artifact, each woken by a different trigger: the phone opening the app, an EventBridge schedule, and two SQS queues. All four read and write one Postgres database; two call WaniKani and two call the vision and language APIs.">
+          <defs>
+            <marker id="a1-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/>
+            </marker>
+            <marker id="a1-cool" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-cool"/>
+            </marker>
+            <marker id="a1-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-mute"/>
+            </marker>
+          </defs>
+
+          <!-- column captions -->
+          <text x="20"  y="22" class="t-cap">TRIGGER</text>
+          <text x="330" y="22" class="t-cap">LAMBDA FUNCTIONS</text>
+          <text x="880" y="22" class="t-cap">EXTERNAL</text>
+
+          <!-- artifact container -->
+          <rect x="330" y="34" width="430" height="566" rx="14" class="box-group"/>
+          <text x="545" y="57" class="t-sub" text-anchor="middle">one artifact &mdash; app/ &middot; same code, four entry points</text>
+
+          <!-- ---- trigger 1 ---- -->
+          <rect x="20" y="90" width="230" height="76" rx="8" class="box"/>
+          <text x="36" y="122" class="t-name">You open the app</text>
+          <text x="36" y="141" class="t-sub">GET /api/dashboard</text>
+          <text x="36" y="156" class="t-sub">HTTPS &rarr; Function URL</text>
+          <line x1="250" y1="128" x2="344" y2="128" class="flow" marker-end="url(#a1-ink)"/>
+          <text x="297" y="120" class="t-lab" text-anchor="middle">on demand</text>
+
+          <!-- fn 1 -->
+          <rect x="352" y="76" width="386" height="104" rx="8" class="box-live"/>
+          <text x="372" y="108" class="t-name">api-fn</text>
+          <text x="372" y="130" class="t-sub">app.lambda_handler.handler</text>
+          <text x="372" y="150" class="t-sub">FastAPI via Mangum &middot; 512 MB &middot; 30 s</text>
+          <text x="372" y="167" class="t-sub">idle cost: nothing</text>
+
+          <!-- ---- trigger 2 ---- -->
+          <rect x="20" y="222" width="230" height="76" rx="8" class="box"/>
+          <text x="36" y="254" class="t-name">EventBridge</text>
+          <text x="36" y="273" class="t-sub">rate(30 minutes)</text>
+          <text x="36" y="288" class="t-sub">fires whether or not you look</text>
+          <line x1="250" y1="260" x2="344" y2="260" class="flow" marker-end="url(#a1-ink)"/>
+          <text x="297" y="252" class="t-lab" text-anchor="middle">on a clock</text>
+
+          <!-- fn 2 -->
+          <rect x="352" y="208" width="386" height="104" rx="8" class="box-live"/>
+          <text x="372" y="240" class="t-name">sync-fn</text>
+          <text x="372" y="262" class="t-sub">app.lambda_handler.sync_handler</text>
+          <text x="372" y="282" class="t-sub">512 MB &middot; 5 min &middot; concurrency 1</text>
+          <text x="372" y="299" class="t-sub">concurrency 1 protects the 60/min token budget</text>
+
+          <!-- ---- trigger 3 ---- -->
+          <rect x="20" y="354" width="230" height="76" rx="8" class="box-plan"/>
+          <text x="36" y="386" class="t-name">SQS &middot; vocab-jobs</text>
+          <text x="36" y="405" class="t-sub">message written by api-fn</text>
+          <text x="36" y="420" class="t-sub">when you upload a photo</text>
+          <line x1="250" y1="392" x2="344" y2="392" class="flow-dash" marker-end="url(#a1-mute)"/>
+          <text x="297" y="384" class="t-lab" text-anchor="middle">on message</text>
+
+          <!-- fn 3 -->
+          <rect x="352" y="340" width="386" height="104" rx="8" class="box-plan"/>
+          <text x="372" y="372" class="t-name">ocr-fn</text>
+          <text x="372" y="394" class="t-sub">app.lambda_handler.ocr_handler</text>
+          <text x="372" y="414" class="t-sub">1 GB &middot; 2 min</text>
+          <text x="372" y="431" class="t-sub">too slow to sit inside a request</text>
+
+          <!-- ---- trigger 4 ---- -->
+          <rect x="20" y="486" width="230" height="76" rx="8" class="box-plan"/>
+          <text x="36" y="518" class="t-name">SQS &middot; generate-jobs</text>
+          <text x="36" y="537" class="t-sub">message written by api-fn</text>
+          <text x="36" y="552" class="t-sub">when the bundle runs low</text>
+          <line x1="250" y1="524" x2="344" y2="524" class="flow-dash" marker-end="url(#a1-mute)"/>
+          <text x="297" y="516" class="t-lab" text-anchor="middle">on message</text>
+
+          <!-- fn 4 -->
+          <rect x="352" y="472" width="386" height="104" rx="8" class="box-plan"/>
+          <text x="372" y="504" class="t-name">generate-fn</text>
+          <text x="372" y="526" class="t-sub">app.lambda_handler.generate_handler</text>
+          <text x="372" y="546" class="t-sub">1 GB &middot; 15 min &middot; concurrency 1</text>
+          <text x="372" y="563" class="t-sub">writes questions, verifier flips verified</text>
+
+          <!-- external: wanikani -->
+          <rect x="880" y="140" width="250" height="76" rx="8" class="box-cool"/>
+          <text x="898" y="172" class="t-name">api.wanikani.com</text>
+          <text x="898" y="191" class="t-sub">60 requests / min, per token</text>
+          <text x="898" y="206" class="t-sub">the only holder is app/wanikani</text>
+          <line x1="742" y1="128" x2="874" y2="162" class="flow-cool" marker-end="url(#a1-cool)"/>
+          <line x1="742" y1="260" x2="874" y2="200" class="flow-cool" marker-end="url(#a1-cool)"/>
+
+          <!-- external: vision -->
+          <rect x="880" y="410" width="250" height="76" rx="8" class="box-cool"/>
+          <text x="898" y="442" class="t-name">Vision + LLM API</text>
+          <text x="898" y="461" class="t-sub">page extraction, question drafts</text>
+          <text x="898" y="476" class="t-sub">seconds to minutes per call</text>
+          <line x1="742" y1="392" x2="874" y2="432" class="flow-dash" marker-end="url(#a1-mute)"/>
+          <line x1="742" y1="524" x2="874" y2="470" class="flow-dash" marker-end="url(#a1-mute)"/>
+
+          <!-- postgres -->
+          <line x1="545" y1="600" x2="545" y2="638" class="flow" marker-end="url(#a1-ink)"/>
+          <rect x="410" y="642" width="270" height="60" rx="8" class="box"/>
+          <text x="430" y="670" class="t-name">Postgres</text>
+          <text x="430" y="688" class="t-sub">Supabase or Neon &middot; no VPC</text>
+          <text x="700" y="666" class="t-lab">all four read and write it</text>
+          <text x="700" y="682" class="t-lab">one schema, one migration story</text>
+
+          <!-- legend -->
+          <line x1="20" y1="640" x2="20" y2="702" class="hair"/>
+          <rect x="34" y="646" width="22" height="14" rx="3" class="box-live"/>
+          <text x="66" y="657" class="t-lab">built today</text>
+          <rect x="34" y="674" width="22" height="14" rx="3" class="box-plan"/>
+          <text x="66" y="685" class="t-lab">planned, not written yet</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Every arrow into a function is a wake-up.</b> Nothing in the middle column exists between
+        those arrows &mdash; there is no idle process holding a connection. The dashed container is not a
+        runtime boundary; it means the four functions are built and deployed from the same artifact,
+        so a change to <code>db/models.py</code> ships to all four at once.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 2. LIFECYCLE ============ -->
+  <section class="section">
+    <div class="eyebrow">02 &middot; how a function starts</div>
+    <h2>Cold start, warm start, freeze</h2>
+    <div class="prose">
+      <p>
+        The dependencies are already inside the artifact before the first request ever arrives. Lambda
+        downloads and unpacks; it never resolves or installs anything. That work happened on your
+        machine or in CI, at deploy time.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1160 430" role="img" aria-label="A timeline showing that dependencies are installed at build time, then a request triggers a cold start of provision, load and init before the handler runs; afterwards the container freezes at zero cost and a later request runs the handler alone.">
+          <defs>
+            <marker id="a2-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/>
+            </marker>
+            <marker id="a2-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-mute"/>
+            </marker>
+          </defs>
+
+          <!-- build row -->
+          <text x="20" y="22" class="t-cap">AT DEPLOY TIME &mdash; ONCE</text>
+          <rect x="20" y="36" width="300" height="66" rx="8" class="box"/>
+          <text x="38" y="64" class="t-name">Your machine or CI</text>
+          <text x="38" y="83" class="t-sub">pip install &rarr; zip the site-packages</text>
+          <line x1="320" y1="69" x2="392" y2="69" class="flow" marker-end="url(#a2-ink)"/>
+          <text x="356" y="60" class="t-lab" text-anchor="middle">upload</text>
+          <rect x="398" y="36" width="250" height="66" rx="8" class="box"/>
+          <text x="416" y="64" class="t-name">S3 or ECR</text>
+          <text x="416" y="83" class="t-sub">artifact at rest, deps inside</text>
+          <text x="672" y="62" class="t-lab-w">This is the only place</text>
+          <text x="672" y="78" class="t-lab-w">anything is ever installed.</text>
+
+          <line x1="20" y1="126" x2="1140" y2="126" class="hair"/>
+
+          <!-- request marker -->
+          <text x="20" y="160" class="t-cap">AT REQUEST TIME &mdash; EVERY TIME</text>
+          <line x1="30" y1="176" x2="30" y2="214" class="flow" marker-end="url(#a2-ink)"/>
+          <text x="42" y="192" class="t-lab">request arrives, no warm container</text>
+
+          <!-- the band -->
+          <rect x="30"  y="222" width="150" height="62" rx="5" class="box-cold"/>
+          <text x="105" y="248" class="t-sub" text-anchor="middle">provision</text>
+          <text x="105" y="265" class="t-sub" text-anchor="middle">microVM</text>
+
+          <rect x="184" y="222" width="196" height="62" rx="5" class="box-cold"/>
+          <text x="282" y="248" class="t-sub" text-anchor="middle">load artifact</text>
+          <text x="282" y="265" class="t-sub" text-anchor="middle">deps already inside</text>
+
+          <rect x="384" y="222" width="238" height="62" rx="5" class="box-cold"/>
+          <text x="503" y="243" class="t-sub" text-anchor="middle">INIT &mdash; import module</text>
+          <text x="503" y="260" class="t-sub" text-anchor="middle">app = create_app()</text>
+          <text x="503" y="276" class="t-sub" text-anchor="middle">module-level state lives here</text>
+
+          <rect x="626" y="222" width="176" height="62" rx="5" class="box-live"/>
+          <text x="714" y="248" class="t-name" text-anchor="middle">INVOKE</text>
+          <text x="714" y="266" class="t-sub" text-anchor="middle">your handler runs</text>
+
+          <rect x="806" y="222" width="180" height="62" rx="5" class="box"/>
+          <text x="896" y="248" class="t-sub" text-anchor="middle">FREEZE</text>
+          <text x="896" y="265" class="t-sub" text-anchor="middle">kept, not billed</text>
+
+          <rect x="990" y="222" width="150" height="62" rx="5" class="box-live"/>
+          <text x="1065" y="248" class="t-name" text-anchor="middle">INVOKE</text>
+          <text x="1065" y="266" class="t-sub" text-anchor="middle">warm &mdash; that's all</text>
+
+          <!-- brackets -->
+          <path d="M 30 296 L 30 306 L 622 306 L 622 296" class="hair"/>
+          <text x="326" y="324" class="t-lab" text-anchor="middle">cold start &mdash; a few hundred ms, paid on the first open of the day</text>
+
+          <path d="M 990 296 L 990 306 L 1140 306 L 1140 296" class="hair"/>
+          <text x="1065" y="324" class="t-lab" text-anchor="middle">single-digit ms</text>
+
+          <!-- response marker -->
+          <line x1="802" y1="214" x2="802" y2="196" class="flow-warm"/>
+          <text x="794" y="190" class="t-lab-w" text-anchor="end">response sent</text>
+
+          <!-- reclaim loop -->
+          <path d="M 896 348 L 896 386 L 105 386 L 105 350" class="flow-dash" marker-end="url(#a2-mute)"/>
+          <text x="500" y="380" class="t-lab" text-anchor="middle">idle too long &rarr; container reclaimed &rarr; the next open is cold again</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Only the two amber blocks are your code doing work.</b> Everything left of them is Lambda
+        getting ready, and everything right of the first one costs nothing. For an app you open a few
+        times a day, most opens land on the cold path &mdash; that is the trade you make for a $0 idle bill.
+      </figcaption>
+    </figure>
+
+    <div class="callout">
+      <div class="eyebrow">the short answer</div>
+      <p>
+        <strong>Opening the app wakes <code>api-fn</code> only.</strong> EventBridge wakes
+        <code>sync-fn</code> on its own schedule with the app closed. SQS is not something the app
+        opening triggers either &mdash; it is how <code>api-fn</code> hands slow work to another function
+        without making the phone wait.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 3. WHERE INIT RUNS ============ -->
+  <section class="section">
+    <div class="eyebrow">03 &middot; a wrinkle in your code</div>
+    <h2>Where process-level setup actually belongs</h2>
+    <div class="prose">
+      <p>
+        The INIT block in the diagram above is the only place that runs once per container. Anything you
+        want shared across warm invocations &mdash; a connection pool, a rate limiter &mdash; has to live at
+        module scope to land there.
+      </p>
+      <p>
+        FastAPI's <code>lifespan</code> looks like the right home for it, and under uvicorn it is. Under
+        Mangum it is not. In <code>mangum/adapter.py</code>, the <code>LifespanCycle</code> is constructed
+        <em>inside</em> <code>__call__</code>, and its <code>__enter__</code> / <code>__exit__</code> run
+        startup and shutdown &mdash; so both fire on every single invocation, not once per container.
+      </p>
+    </div>
+
+    <div class="callout callout-warn">
+      <div class="eyebrow">what this costs you today</div>
+      <p>
+        <code>main.py</code>'s lifespan builds the shared <code>WaniKaniClient</code> and closes it again.
+        Per request, in Lambda, that means a brand-new <code>RateLimiter</code> with an empty window, a
+        fresh httpx pool, and a <code>dispose_engine()</code> call. Every request believes it owns the
+        full 60/min budget &mdash; the exact failure the docstring in <code>main.py</code> warns about.
+      </p>
+      <p>
+        Harmless at one user. It becomes real the moment two things run at once.
+      </p>
+    </div>
+
+    <div class="prose">
+      <p>The fix is to hang it off the module, the same shape as <code>get_settings()</code>:</p>
+    </div>
+
+<pre><code>@lru_cache
+def get_client() -> WaniKaniClient:
+    return WaniKaniClient(get_settings())</code></pre>
+
+    <div class="prose">
+      <p>
+        <code>deps.wanikani_client</code> then returns that instead of reading <code>app.state</code>,
+        and the lifespan skips <code>aclose()</code> and <code>dispose_engine()</code> when
+        <code>settings.is_lambda</code> is true &mdash; the flag already exists in <code>config.py</code>.
+        Under uvicorn nothing changes. Under Lambda the client finally lives as long as the container does.
+      </p>
+      <p>
+        <code>sync-fn</code> is unaffected: it builds its own client with
+        <code>async with WaniKaniClient()</code> and never touches Mangum.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ 4. ASYNC BOUNDARY ============ -->
+  <section class="section">
+    <div class="eyebrow">04 &middot; why a queue and not a call</div>
+    <h2>The photo upload never blocks the phone</h2>
+    <div class="prose">
+      <p>
+        A vision call takes thirty seconds or more. If <code>api-fn</code> waited for it, the phone would
+        wait too, and the request would sit there burning Lambda time doing nothing. So the HTTP function
+        writes a row, drops a message, and returns &mdash; the slow function wakes up on its own.
+      </p>
+      <p>
+        Your schema already assumes this: <code>vocab_sources.status</code> is
+        <code>pending | processed | failed</code>, which is a job table.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1160 474" role="img" aria-label="The phone posts a photo to the API function, which returns a pending source id in under a second, then enqueues a message. A separate OCR function wakes from the queue, calls the vision API for thirty to sixty seconds, and marks the row processed, which the phone reads back by polling.">
+          <defs>
+            <marker id="a3-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/>
+            </marker>
+            <marker id="a3-warm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-warm"/>
+            </marker>
+            <marker id="a3-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-mute"/>
+            </marker>
+          </defs>
+
+          <text x="30" y="30" class="t-cap">SYNCHRONOUS &mdash; THE PHONE IS WAITING</text>
+
+          <rect x="30" y="52" width="180" height="84" rx="8" class="box"/>
+          <text x="50" y="84" class="t-name">Phone</text>
+          <text x="50" y="103" class="t-sub">import.tsx</text>
+          <text x="50" y="119" class="t-sub">uploadVocabPhoto()</text>
+
+          <line x1="212" y1="80" x2="326" y2="80" class="flow" marker-end="url(#a3-ink)"/>
+          <text x="269" y="70" class="t-lab" text-anchor="middle">POST photo</text>
+
+          <rect x="330" y="52" width="210" height="84" rx="8" class="box-live"/>
+          <text x="350" y="84" class="t-name">api-fn</text>
+          <text x="350" y="103" class="t-sub">writes vocab_sources row</text>
+          <text x="350" y="119" class="t-sub">status: pending</text>
+
+          <path d="M 326 112 L 216 112" class="flow-warm" marker-end="url(#a3-warm)"/>
+          <text x="271" y="132" class="t-lab-w" text-anchor="middle">201 {sourceId} &middot; under 1 s</text>
+
+          <line x1="30" y1="164" x2="1130" y2="164" class="hair"/>
+          <text x="30" y="192" class="t-cap">ASYNCHRONOUS &mdash; NOBODY IS WAITING</text>
+
+          <line x1="435" y1="138" x2="435" y2="228" class="flow" marker-end="url(#a3-ink)"/>
+          <text x="448" y="188" class="t-lab">enqueue, then return</text>
+
+          <rect x="330" y="232" width="210" height="76" rx="8" class="box"/>
+          <text x="350" y="264" class="t-name">SQS vocab-jobs</text>
+          <text x="350" y="283" class="t-sub">holds the job while</text>
+          <text x="350" y="298" class="t-sub">nothing is running</text>
+
+          <line x1="542" y1="270" x2="646" y2="270" class="flow" marker-end="url(#a3-ink)"/>
+          <text x="594" y="260" class="t-lab" text-anchor="middle">invokes</text>
+
+          <rect x="650" y="232" width="210" height="76" rx="8" class="box-plan"/>
+          <text x="670" y="264" class="t-name">ocr-fn</text>
+          <text x="670" y="283" class="t-sub">cold starts on its own</text>
+          <text x="670" y="298" class="t-sub">timeout 2 min, not 30 s</text>
+
+          <line x1="862" y1="270" x2="954" y2="270" class="flow-cool" marker-end="url(#a3-ink)"/>
+          <text x="908" y="260" class="t-lab" text-anchor="middle">30&ndash;60 s</text>
+
+          <rect x="958" y="232" width="172" height="76" rx="8" class="box-cool"/>
+          <text x="976" y="264" class="t-name">Vision API</text>
+          <text x="976" y="283" class="t-sub">three columns out,</text>
+          <text x="976" y="298" class="t-sub">as structured JSON</text>
+
+          <line x1="755" y1="310" x2="755" y2="348" class="flow" marker-end="url(#a3-ink)"/>
+          <text x="768" y="332" class="t-lab">writes rows &middot; status: processed</text>
+
+          <rect x="650" y="352" width="210" height="60" rx="8" class="box"/>
+          <text x="670" y="380" class="t-name">Postgres</text>
+          <text x="670" y="398" class="t-sub">vocab_items, vocab_sources</text>
+
+          <path d="M 646 382 L 120 382 L 120 142" class="flow-dash" marker-end="url(#a3-mute)"/>
+          <text x="140" y="404" class="t-lab">read back via api-fn: GET /api/vocab-sources/{id}, until status flips</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The queue is the only reason two functions can exist without one waiting on the other.</b>
+        Replace SQS with a direct call from <code>api-fn</code> to <code>ocr-fn</code> and you get two cold
+        starts in series, both billed, with the phone holding the connection for all of it.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 5. IDLE COST ============ -->
+  <section class="section">
+    <div class="eyebrow">05 &middot; what "not always on" actually means</div>
+    <h2>The idle bill</h2>
+    <div class="prose">
+      <p>
+        Lambda is genuinely zero when nothing is happening. The pieces that are not zero are worth knowing
+        about, because they are what "always on" really costs you.
+      </p>
+      <ul>
+        <li><strong>The four functions</strong> &mdash; nothing. No invocations, no charge.</li>
+        <li><strong>The artifact at rest</strong> &mdash; cents. S3 storage, or ECR if you go the container route.</li>
+        <li><strong>EventBridge</strong> &mdash; the schedule itself is free; you pay for the invocations it causes, so a
+          longer interval is a real lever.</li>
+        <li><strong>Postgres</strong> &mdash; the one thing that does not truly scale to zero. Neon suspends and resumes
+          automatically in well under a second; Supabase's free tier pauses after a stretch of inactivity and
+          needs a manual restore. Check both providers' current terms before you commit &mdash; your
+          <code>config.py</code> takes either URL unchanged, so it stays a cheap decision to revisit.</li>
+        <li><strong>No NAT gateway</strong> &mdash; because the functions stay out of a VPC, per the call already recorded
+          in <code>backend/README.md</code>. That single line item would have cost more than everything above combined.</li>
+      </ul>
+    </div>
+  </section>
+
+  <p class="footnote">
+    Companion to <a href="https://claude.ai/code/artifact/f984ea72-6c43-41d1-9dc6-0e39eef08165">Kanji Workshop System Map</a>
+    and <a href="https://claude.ai/code/artifact/f1804341-51a7-4768-b423-c16ef6721cef">Anatomy of a Lesson</a>.
+    Reflects the tree at <code>fcab47d</code> on <code>claude/project-roadmap-planning-6uw67z</code>.
+    <code>api-fn</code> and <code>sync-fn</code> exist today in <code>app/lambda_handler.py</code>;
+    <code>ocr-fn</code> and <code>generate-fn</code> are the shape the Part 2 notes imply, not code that
+    has been written. Memory and timeout figures are sensible starting points, not measurements.
+    The Mangum behaviour in section 03 was read from version 0.22.0 of <code>mangum/adapter.py</code>.
+  </p>
+
+</div>
+</body>
+</html>
