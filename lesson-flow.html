@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anatomy of a Lesson</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400..600&display=swap">
+<style>
+  :root {
+    --ground:#EBEDF0; --surface:#FCFCFD; --surface-2:#F3F5F8;
+    --ink:#171A1F; --muted:#5D6472; --line:#CDD3DB; --line-soft:#DFE3E9;
+    --ember:#A9500F; --ember-soft:#F5E6D8; --frost:#256373; --frost-soft:#DCE9ED;
+    --display:"Bricolage Grotesque","Helvetica Neue",Arial,sans-serif;
+    --body:"Source Serif 4",Georgia,"Times New Roman",serif;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#14171C; --surface:#1B1F26; --surface-2:#222730;
+      --ink:#E7EAEF; --muted:#98A1B0; --line:#2E343E; --line-soft:#262B34;
+      --ember:#E28A48; --ember-soft:#3A2415; --frost:#64AABA; --frost-soft:#14303A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#14171C; --surface:#1B1F26; --surface-2:#222730;
+    --ink:#E7EAEF; --muted:#98A1B0; --line:#2E343E; --line-soft:#262B34;
+    --ember:#E28A48; --ember-soft:#3A2415; --frost:#64AABA; --frost-soft:#14303A;
+  }
+
+  body { background:var(--ground); color:var(--ink); font-family:var(--body);
+         font-size:17px; line-height:1.62; -webkit-font-smoothing:antialiased; }
+  .page { max-width:1180px; margin:0 auto; padding:56px 32px 96px; }
+  .prose { max-width:67ch; }
+
+  .masthead { border-bottom:2px solid var(--ink); padding-bottom:28px; }
+  .eyebrow { font-family:var(--mono); font-size:11.5px; font-weight:500;
+             letter-spacing:0.14em; text-transform:uppercase; color:var(--muted); }
+  .masthead h1 { font-family:var(--display); font-weight:750;
+                 font-size:clamp(38px,6vw,62px); line-height:1.02;
+                 letter-spacing:-0.022em; text-wrap:balance; margin:14px 0 0; }
+  .deck { max-width:62ch; margin:18px 0 0; font-size:19px; color:var(--muted); }
+
+  .section { margin-top:68px; }
+  .section > h2 { font-family:var(--display); font-weight:700; font-size:27px;
+                  letter-spacing:-0.012em; line-height:1.2; text-wrap:balance; margin:8px 0 18px; }
+  .section p { margin:0 0 16px; }
+  .section p:last-child { margin-bottom:0; }
+  h3 { font-family:var(--display); font-weight:650; font-size:18px; margin:30px 0 10px; }
+
+  code { font-family:var(--mono); font-size:0.855em; background:var(--surface-2);
+         border:1px solid var(--line-soft); border-radius:4px; padding:0.1em 0.34em; }
+  pre { font-family:var(--mono); font-size:13.5px; line-height:1.62;
+        background:var(--surface); border:1px solid var(--line);
+        border-left:3px solid var(--ember); border-radius:6px;
+        padding:18px 20px; overflow-x:auto; margin:20px 0; }
+  pre code { background:none; border:0; padding:0; font-size:inherit; }
+  strong { font-weight:600; }
+
+  figure { margin:34px 0; }
+  .figframe { background:var(--surface); border:1px solid var(--line);
+              border-radius:10px; padding:22px 20px 14px; overflow-x:auto; }
+  figure svg { display:block; width:100%; min-width:760px; height:auto; }
+  figcaption { font-family:var(--mono); font-size:12px; line-height:1.55;
+               color:var(--muted); margin-top:14px; max-width:80ch; }
+  figcaption b { color:var(--ink); font-weight:600; }
+
+  .box{fill:var(--surface-2);stroke:var(--line);stroke-width:1.25}
+  .box-live{fill:var(--ember-soft);stroke:var(--ember);stroke-width:1.4}
+  .box-cool{fill:var(--frost-soft);stroke:var(--frost);stroke-width:1.25}
+  .box-plan{fill:none;stroke:var(--muted);stroke-width:1.25;stroke-dasharray:5 4}
+  .lane{fill:var(--surface-2);stroke:none;opacity:0.55}
+  .flow{stroke:var(--ink);stroke-width:1.5;fill:none}
+  .flow-warm{stroke:var(--ember);stroke-width:1.7;fill:none}
+  .flow-cool{stroke:var(--frost);stroke-width:1.5;fill:none}
+  .flow-dash{stroke:var(--muted);stroke-width:1.3;fill:none;stroke-dasharray:5 4}
+  .hair{stroke:var(--line);stroke-width:1;fill:none}
+  .head-ink{fill:var(--ink)} .head-warm{fill:var(--ember)}
+  .head-cool{fill:var(--frost)} .head-mute{fill:var(--muted)}
+  .t-name{font-family:var(--mono);font-size:13px;font-weight:600;fill:var(--ink)}
+  .t-sub{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+  .t-lab{font-family:var(--mono);font-size:10.5px;fill:var(--muted)}
+  .t-warm{font-family:var(--mono);font-size:10.5px;font-weight:500;fill:var(--ember)}
+  .t-cap{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:0.1em;fill:var(--muted)}
+  .t-num{font-family:var(--mono);font-size:11px;font-weight:600;fill:var(--ember)}
+
+  .tablewrap { overflow-x:auto; margin:28px 0 0; }
+  table { border-collapse:collapse; width:100%; min-width:700px; }
+  th,td { text-align:left; padding:12px 16px 12px 0;
+          border-bottom:1px solid var(--line-soft); vertical-align:top; }
+  th { font-family:var(--mono); font-size:10.5px; font-weight:600;
+       letter-spacing:0.11em; text-transform:uppercase; color:var(--muted);
+       border-bottom:1px solid var(--line); white-space:nowrap; }
+  td { font-size:14.5px; line-height:1.5; }
+  td.mono { font-family:var(--mono); font-size:12.5px; }
+  td.num { font-family:var(--mono); font-variant-numeric:tabular-nums; text-align:right; padding-right:24px; }
+  th.num { text-align:right; padding-right:24px; }
+  tbody tr:last-child td { border-bottom:0; }
+  tr.total td { border-top:1px solid var(--line); font-weight:600; }
+
+  .callout { background:var(--surface); border:1px solid var(--line);
+             border-left:3px solid var(--frost); border-radius:6px;
+             padding:20px 24px; margin:28px 0; max-width:74ch; }
+  .callout .eyebrow { color:var(--frost); }
+  .callout p { margin:8px 0 0; font-size:16px; }
+  .callout-warn { border-left-color:var(--ember); }
+  .callout-warn .eyebrow { color:var(--ember); }
+
+  ul { margin:0 0 16px; padding-left:1.15em; }
+  li { margin-bottom:8px; }
+  li::marker { color:var(--muted); }
+
+  .footnote { margin-top:72px; padding-top:22px; border-top:1px solid var(--line);
+              font-family:var(--mono); font-size:12px; line-height:1.7;
+              color:var(--muted); max-width:76ch; }
+  .footnote a { color:var(--ember); }
+
+  @media (max-width:720px){ .page{padding:40px 20px 72px} body{font-size:16px} }
+</style>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { color-scheme: light dark; }
+  body { margin: 0; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Kanji Workshop &middot; request flow</div>
+    <h1>Anatomy of a Lesson</h1>
+    <p class="deck">
+      Every call the backend makes to WaniKani while you learn five new items &mdash; and the
+      separate question of when any of it gets synced.
+    </p>
+  </header>
+
+  <!-- ===== 1 ===== -->
+  <section class="section">
+    <div class="eyebrow">01 &middot; the lesson</div>
+    <h2>Three reads, then one write per item</h2>
+    <div class="prose">
+      <p>
+        A lesson is mostly reading. The only thing that changes anything on WaniKani's side is the
+        very last step, and it happens once per item you finish.
+      </p>
+      <p>
+        Everything between loading the content and finishing runs with no network at all &mdash; that
+        is the whole point of mirroring subjects onto the device.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1200 780" role="img" aria-label="A lesson in three phases. The phone asks the backend for the lesson queue, which always goes live to WaniKani. It then asks for subject content, which is served from the Postgres cache unless missing. The user studies with no network. Finishing sends a start call per item, which the backend forwards to WaniKani and writes into study progress.">
+          <defs>
+            <marker id="l1-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/></marker>
+            <marker id="l1-warm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-warm"/></marker>
+            <marker id="l1-mute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-mute"/></marker>
+          </defs>
+
+          <rect x="30"  y="48" width="240" height="660" rx="10" class="lane"/>
+          <rect x="470" y="48" width="300" height="660" rx="10" class="lane"/>
+          <rect x="970" y="48" width="200" height="660" rx="10" class="lane"/>
+
+          <text x="30"  y="34" class="t-cap">THE PHONE</text>
+          <text x="470" y="34" class="t-cap">YOUR BACKEND &mdash; api-fn</text>
+          <text x="970" y="34" class="t-cap">WANIKANI</text>
+
+          <!-- phase A -->
+          <text x="30" y="80" class="t-num">A &middot; WHAT CAN I LEARN?</text>
+
+          <line x1="274" y1="118" x2="466" y2="118" class="flow" marker-start="url(#l1-ink)" marker-end="url(#l1-ink)"/>
+          <text x="370" y="106" class="t-lab" text-anchor="middle">GET /api/assignments</text>
+          <text x="370" y="136" class="t-lab" text-anchor="middle">?immediately_available</text>
+          <text x="370" y="151" class="t-lab" text-anchor="middle">_for_lessons=true</text>
+
+          <line x1="774" y1="118" x2="966" y2="118" class="flow-cool" marker-start="url(#l1-ink)" marker-end="url(#l1-ink)"/>
+          <text x="870" y="106" class="t-lab" text-anchor="middle">GET /assignments</text>
+          <text x="870" y="136" class="t-lab" text-anchor="middle">always live &mdash; a cache</text>
+          <text x="870" y="151" class="t-lab" text-anchor="middle">cannot answer "due now"</text>
+
+          <line x1="30" y1="180" x2="1170" y2="180" class="hair"/>
+
+          <!-- phase B -->
+          <text x="30" y="212" class="t-num">B &middot; GIVE ME THE CONTENT</text>
+
+          <line x1="274" y1="252" x2="466" y2="252" class="flow" marker-start="url(#l1-ink)" marker-end="url(#l1-ink)"/>
+          <text x="370" y="240" class="t-lab" text-anchor="middle">GET /api/subjects?ids=…</text>
+          <text x="370" y="270" class="t-lab" text-anchor="middle">meanings, readings,</text>
+          <text x="370" y="285" class="t-lab" text-anchor="middle">mnemonics</text>
+
+          <rect x="486" y="222" width="268" height="60" rx="7" class="box"/>
+          <text x="500" y="246" class="t-name">cache first</text>
+          <text x="500" y="266" class="t-sub">Postgres answers if every id is held</text>
+
+          <line x1="774" y1="252" x2="966" y2="252" class="flow-dash" marker-end="url(#l1-mute)"/>
+          <text x="870" y="240" class="t-lab" text-anchor="middle">GET /subjects</text>
+          <text x="870" y="270" class="t-lab" text-anchor="middle">only on a miss &mdash; this</text>
+          <text x="870" y="285" class="t-lab" text-anchor="middle">content never changes</text>
+
+          <line x1="30" y1="316" x2="1170" y2="316" class="hair"/>
+
+          <!-- phase C -->
+          <text x="30" y="348" class="t-num">C &middot; YOU STUDY</text>
+
+          <rect x="44" y="366" width="212" height="86" rx="8" class="box-live"/>
+          <text x="60" y="394" class="t-name">no network</text>
+          <text x="60" y="414" class="t-sub">every card comes from</text>
+          <text x="60" y="430" class="t-sub">the device's own SQLite</text>
+          <text x="60" y="446" class="t-sub">db.ts</text>
+
+          <text x="300" y="400" class="t-lab">Nothing is called here. A whole lesson</text>
+          <text x="300" y="418" class="t-lab">runs on the subway, and so does a review.</text>
+
+          <line x1="30" y1="482" x2="1170" y2="482" class="hair"/>
+
+          <!-- phase D -->
+          <text x="30" y="514" class="t-num">D &middot; FINISHING &mdash; ONCE PER ITEM</text>
+
+          <line x1="274" y1="556" x2="466" y2="556" class="flow" marker-end="url(#l1-ink)"/>
+          <text x="370" y="544" class="t-lab" text-anchor="middle">PUT /api/assignments</text>
+          <text x="370" y="574" class="t-lab" text-anchor="middle">/{id}/start</text>
+
+          <line x1="774" y1="556" x2="966" y2="556" class="flow-cool" marker-end="url(#l1-ink)"/>
+          <text x="870" y="544" class="t-lab" text-anchor="middle">PUT /assignments/{id}/start</text>
+          <text x="870" y="574" class="t-warm" text-anchor="middle">the only write</text>
+
+          <line x1="966" y1="612" x2="774" y2="612" class="flow-warm" marker-end="url(#l1-warm)"/>
+          <text x="870" y="600" class="t-lab" text-anchor="middle">the updated assignment</text>
+          <text x="870" y="630" class="t-warm" text-anchor="middle">srs_stage 0 → 1</text>
+
+          <rect x="486" y="646" width="268" height="46" rx="7" class="box-live"/>
+          <text x="500" y="672" class="t-sub">upsert_assignments → study_progress</text>
+
+          <line x1="466" y1="670" x2="278" y2="670" class="flow-warm" marker-end="url(#l1-warm)"/>
+          <text x="370" y="658" class="t-lab" text-anchor="middle">back as JSON</text>
+          <text x="370" y="688" class="t-lab" text-anchor="middle">local mirror updated</text>
+
+          <rect x="44" y="712" width="212" height="52" rx="8" class="box-plan"/>
+          <text x="58" y="734" class="t-sub">offline? the write goes to</text>
+          <text x="58" y="752" class="t-sub">pending_writes and drains later</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>Phase D is the only part that changes anything.</b> Phases A and B are reads, and B usually
+        does not reach WaniKani at all &mdash; subject content is effectively immutable, so a cache hit is
+        the normal case. <code>PUT /start</code> moves the item from "unlocked" to stage 1, which is what
+        makes it appear in reviews later.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== 2 ===== -->
+  <section class="section">
+    <div class="eyebrow">02 &middot; the budget</div>
+    <h2>What a five-item lesson costs</h2>
+    <div class="prose">
+      <p>
+        WaniKani allows 60 requests per minute, counted against your token rather than your
+        connection. Here is what one lesson batch actually spends, with the subject cache warm.
+      </p>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Step</th><th>Reaches WaniKani?</th><th class="num">Requests</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">GET /api/assignments</td><td>Yes &mdash; availability filters always go live</td><td class="num">1</td></tr>
+          <tr><td class="mono">GET /api/subjects?ids=…</td><td>No &mdash; served from Postgres</td><td class="num">0</td></tr>
+          <tr><td>Studying the items</td><td>No</td><td class="num">0</td></tr>
+          <tr><td class="mono">PUT .../start &times; 5</td><td>Yes &mdash; one per item</td><td class="num">5</td></tr>
+          <tr class="total"><td>Total</td><td>out of 60 per minute</td><td class="num">6</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout callout-warn">
+      <div class="eyebrow">why not sync after each answer</div>
+      <p>
+        A 40-item review session is already 40 writes. Add a sync pass after each one &mdash; each pass
+        being a user call, an assignments page, and possibly a subjects page &mdash; and you are past 150
+        requests for a session that needed 40. The client would spend most of it asleep waiting on
+        <code>RateLimit-Reset</code>.
+      </p>
+      <p>
+        Sync once when the session ends, not once per answer.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== 3 ===== -->
+  <section class="section">
+    <div class="eyebrow">03 &middot; the write, in detail</div>
+    <h2>What comes back, and what doesn't</h2>
+    <div class="prose">
+      <p>
+        Both writes return the recomputed assignment, and the backend upserts it immediately. That
+        is why no sync is needed to know the result of your own answer. But the two writes differ in
+        what they leave unknown.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1200 330" role="img" aria-label="Finishing a lesson changes only that item's stage and returns everything you need. Passing a review can also unlock dependent items and trigger a level up, neither of which appears in the response, which is why a sync is needed after a review session.">
+          <rect x="30" y="40" width="550" height="250" rx="9" class="box"/>
+          <text x="52" y="72" class="t-name">Finishing a lesson</text>
+          <text x="52" y="94" class="t-sub">PUT /assignments/{id}/start</text>
+          <line x1="52" y1="112" x2="558" y2="112" class="hair"/>
+          <text x="52" y="138" class="t-lab">CHANGES UPSTREAM</text>
+          <text x="52" y="158" class="t-sub">srs_stage 0 → 1, on that item only</text>
+          <text x="52" y="192" class="t-lab">COMES BACK</text>
+          <text x="52" y="212" class="t-sub">the full updated assignment</text>
+          <text x="52" y="246" class="t-lab">STILL UNKNOWN AFTERWARDS</text>
+          <text x="52" y="266" class="t-warm">nothing — a sync here adds little</text>
+
+          <rect x="620" y="40" width="550" height="250" rx="9" class="box-live"/>
+          <text x="642" y="72" class="t-name">Passing a review</text>
+          <text x="642" y="94" class="t-sub">POST /reviews</text>
+          <line x1="642" y1="112" x2="1148" y2="112" class="hair"/>
+          <text x="642" y="138" class="t-lab">CHANGES UPSTREAM</text>
+          <text x="642" y="158" class="t-sub">the stage, recomputed by WaniKani —</text>
+          <text x="642" y="174" class="t-sub">and possibly unlocks, and a level-up</text>
+          <text x="642" y="200" class="t-lab">COMES BACK</text>
+          <text x="642" y="220" class="t-sub">this one assignment. Nothing else.</text>
+          <text x="642" y="248" class="t-lab">STILL UNKNOWN AFTERWARDS</text>
+          <text x="642" y="268" class="t-warm">what just unlocked, and whether you levelled</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>The right-hand gap is the entire reason the end-of-session sync exists.</b> WaniKani computes
+        unlocks and level-ups server-side and reports neither in the review response, so the only way to
+        learn about them is to ask again afterwards.
+      </figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>
+        One more thing the backend does on a review that it does not do on a lesson: it appends a row to
+        <code>reviews_log</code>. WaniKani's own <code>POST /reviews</code> returns <code>id: 0</code>
+        and keeps no history, so that table is the only durable record of what you answered and when.
+        Your streak is derived from it, which is why the streak is empty without a database.
+      </p>
+    </div>
+  </section>
+
+  <!-- ===== 4 ===== -->
+  <section class="section">
+    <div class="eyebrow">04 &middot; sync</div>
+    <h2>What one sync pass actually does</h2>
+    <div class="prose">
+      <p>
+        Sync is not for your own answers &mdash; those are already handled by the write responses above.
+        It exists for everything the app did not cause: items unlocking on level-up, studying done on
+        wanikani.com, resets, subscription changes. WaniKani has no webhooks, so it is poll-only.
+      </p>
+    </div>
+
+    <figure>
+      <div class="figframe">
+        <svg viewBox="0 0 1200 340" role="img" aria-label="A sync pass reads its cursor, fetches the user, fetches assignments changed since the cursor, fetches only the subjects it has no row for, and advances the cursors last so a failed pass re-runs cleanly.">
+          <defs>
+            <marker id="l2-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" class="head-ink"/></marker>
+          </defs>
+
+          <text x="26" y="26" class="t-cap">services/sync.py &mdash; sync_all()</text>
+
+          <rect x="26" y="46" width="210" height="118" rx="8" class="box"/>
+          <text x="42" y="74"  class="t-name">1 &middot; read cursor</text>
+          <text x="42" y="96"  class="t-sub">sync_meta table</text>
+          <text x="42" y="114" class="t-sub">assignments_updated</text>
+          <text x="42" y="130" class="t-sub">_after</text>
+          <text x="42" y="152" class="t-sub">no WaniKani call</text>
+          <line x1="236" y1="105" x2="254" y2="105" class="flow" marker-end="url(#l2-ink)"/>
+
+          <rect x="258" y="46" width="210" height="118" rx="8" class="box-cool"/>
+          <text x="274" y="74"  class="t-name">2 &middot; GET /user</text>
+          <text x="274" y="96"  class="t-sub">level, subscription,</text>
+          <text x="274" y="114" class="t-sub">max_level_granted</text>
+          <text x="274" y="152" class="t-sub">bounds everything below</text>
+          <line x1="468" y1="105" x2="486" y2="105" class="flow" marker-end="url(#l2-ink)"/>
+
+          <rect x="490" y="46" width="210" height="118" rx="8" class="box-cool"/>
+          <text x="506" y="74"  class="t-name">3 &middot; GET /assignments</text>
+          <text x="506" y="96"  class="t-sub">?updated_after=cursor</text>
+          <text x="506" y="114" class="t-sub">a diff, not a re-pull</text>
+          <text x="506" y="152" class="t-sub">usually returns nothing</text>
+          <line x1="700" y1="105" x2="718" y2="105" class="flow" marker-end="url(#l2-ink)"/>
+
+          <rect x="722" y="46" width="210" height="118" rx="8" class="box-cool"/>
+          <text x="738" y="74"  class="t-name">4 &middot; GET /subjects</text>
+          <text x="738" y="96"  class="t-sub">by id, not by date</text>
+          <text x="738" y="114" class="t-sub">only ids with no row</text>
+          <text x="738" y="152" class="t-sub">an unlock is not a change</text>
+          <line x1="932" y1="105" x2="950" y2="105" class="flow" marker-end="url(#l2-ink)"/>
+
+          <rect x="954" y="46" width="210" height="118" rx="8" class="box-live"/>
+          <text x="970" y="74"  class="t-name">5 &middot; advance</text>
+          <text x="970" y="96"  class="t-sub">write both cursors</text>
+          <text x="970" y="114" class="t-sub">and last_synced_at</text>
+          <text x="970" y="152" class="t-warm">last, deliberately</text>
+
+          <line x1="26" y1="196" x2="1164" y2="196" class="hair"/>
+          <text x="26" y="226" class="t-lab">Cursors move only after every step above succeeded, so a pass that dies halfway simply re-runs the same window.</text>
+          <text x="26" y="248" class="t-lab">Step 4 fetches by id rather than by updated_after because a newly unlocked subject has not changed — it always existed,</text>
+          <text x="26" y="266" class="t-lab">there was just never a reason to cache it before.</text>
+          <text x="26" y="298" class="t-warm">last_synced_at does double duty: it is the "Synced 4 minutes ago" line in the UI and the next poll's cursor.</text>
+        </svg>
+      </div>
+      <figcaption>
+        <b>A quiet sync costs two requests.</b> Step 3 returns an empty list when nothing moved, and step
+        4 is skipped entirely &mdash; so the scheduled poll is cheap enough to run every half hour without
+        thinking about it.
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ===== 5 ===== -->
+  <section class="section">
+    <div class="eyebrow">05 &middot; cadence</div>
+    <h2>When sync runs</h2>
+
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>Trigger</th><th>Runs</th><th>Catches</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>App open</td><td class="mono">syncNow()</td>
+            <td>Staleness the moment it becomes visible to a person. The primary trigger.</td>
+          </tr>
+          <tr>
+            <td>Session ends</td><td class="mono">syncNow()</td>
+            <td>Unlocks and level-ups caused by items you just passed &mdash; the gap in the review response.</td>
+          </tr>
+          <tr>
+            <td>Safety-net poll</td><td class="mono">SAFETY_NET_POLL_MS &mdash; 20 min</td>
+            <td>Studying done on wanikani.com while the app sat open.</td>
+          </tr>
+          <tr>
+            <td>EventBridge</td><td class="mono">sync_handler, 30 min</td>
+            <td>Everything, with the app closed. Keeps the cache warm for the next open.</td>
+          </tr>
+          <tr>
+            <td>Each answer</td><td>&mdash;</td>
+            <td><strong>Nothing.</strong> The write response already carries the authoritative state.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The ordering rule</h3>
+    <div class="prose">
+      <p>
+        The outbox drains before the pull, always. <code>syncNow()</code> in
+        <code>mobile/src/data/sync.ts</code> already does this, and the comment there states the reason
+        plainly: pull first and the incoming diff reflects a server that has not yet seen your answers,
+        so it overwrites them with stale state.
+      </p>
+    </div>
+
+<pre><code>const writesReplayed = await replayPendingWrites();   // outbox first
+const assignments = await api.fetchAssignments(lastSyncedAt);
+await upsertAssignments(assignments);                  // then the diff</code></pre>
+
+    <div class="prose">
+      <p>
+        <code>replayPendingWrites()</code> stops at the first failure rather than skipping past it.
+        Two reviews of the same item have to land in the order they were answered, so a delay is
+        always better than a gap.
+      </p>
+    </div>
+
+    <div class="callout">
+      <div class="eyebrow">the split worth keeping</div>
+      <p>
+        <strong>Your actions are synchronous and immediate.</strong> Finish a lesson, the write goes out
+        now and comes back with the answer.
+        <strong>Sync is for everything else</strong> &mdash; the state your app did not cause. Conflating
+        the two is what produces both the redundant traffic and the stale-overwrite bug.
+      </p>
+    </div>
+  </section>
+
+  <p class="footnote">
+    Companion to <a href="https://claude.ai/code/artifact/f984ea72-6c43-41d1-9dc6-0e39eef08165">Kanji Workshop System Map</a>
+    and <a href="https://claude.ai/code/artifact/bedc0683-c283-4e6a-b3bd-51a5388e3424">Kanji Workshop Runtime</a>.
+    Traced from <code>backend/app/api/routes.py</code>, <code>backend/app/services/sync.py</code> and
+    <code>mobile/src/data/sync.ts</code> at <code>fcab47d</code>.
+    The end-of-session sync trigger is a design decision from this discussion, not yet wired into the app;
+    every other row in section 05 exists in code today.
+  </p>
+
+</div>
+</body>
+</html>
