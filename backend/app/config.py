@@ -55,11 +55,19 @@ class Settings(BaseSettings):
     # still serves every read-only WaniKani-backed route, it just cannot cache.
     database_url: str = ""
 
+    # Alembic runs against this instead, when set. Providers hand out two
+    # endpoints: a transaction-mode *pooler* — which is what the app should use,
+    # and what `database_url` should point at — and a *direct* connection.
+    # DDL through a transaction-mode pooler is unreliable, so migrations want
+    # the direct one. Unset falls back to `database_url`, which is correct for a
+    # local Postgres where there is only one endpoint.
+    database_migration_url: str = ""
+
     # --- Runtime ------------------------------------------------------------
     environment: str = "local"
     log_level: str = "INFO"
 
-    @field_validator("database_url")
+    @field_validator("database_url", "database_migration_url")
     @classmethod
     def _normalise_driver(cls, value: str) -> str:
         """Force the async driver.
@@ -83,6 +91,11 @@ class Settings(BaseSettings):
     @property
     def has_database(self) -> bool:
         return bool(self.database_url)
+
+    @property
+    def migration_url(self) -> str:
+        """The URL Alembic connects with. See `database_migration_url`."""
+        return self.database_migration_url or self.database_url
 
     @property
     def is_lambda(self) -> bool:

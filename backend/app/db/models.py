@@ -13,6 +13,19 @@ added later if a cross-subject query ever appears.
 
 `subject_id` reuses WaniKani's own id as the primary key throughout, which
 avoids an id-mapping layer entirely.
+
+A column gets a `server_default` alongside its Python `default` when "unset"
+has an unambiguous correct value — a boolean flag, a counter, a status a row
+begins life in, an empty list. Columns that must come from upstream
+(`users.level`, `max_level_granted`, every `type`) deliberately have neither, so
+an insert that forgets them fails loudly instead of inventing a plausible wrong
+answer. Without this, a raw SQL insert outside the ORM hits NOT NULL on columns
+the ORM was quietly filling in.
+
+`vocab_items` and `vocab_sources` are here from the first revision even though
+nothing writes them yet. They are the table the SRS engine and the question
+generator will hang off, and introducing them now costs an empty CREATE TABLE
+rather than a migration that has to move live rows later.
 """
 
 from __future__ import annotations
@@ -30,6 +43,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -49,18 +63,22 @@ class Subject(Base):
     characters: Mapped[str | None] = mapped_column(String(32))
     character_image_url: Mapped[str | None] = mapped_column(Text)
     level: Mapped[int] = mapped_column(Integer, nullable=False)
-    slug: Mapped[str] = mapped_column(String(128), default="")
+    slug: Mapped[str] = mapped_column(String(128), default="", server_default="")
 
-    meanings: Mapped[list] = mapped_column(JSONB, default=list)
-    readings: Mapped[list] = mapped_column(JSONB, default=list)
+    meanings: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
+    readings: Mapped[list] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"))
 
     meaning_mnemonic: Mapped[str | None] = mapped_column(Text)
     reading_mnemonic: Mapped[str | None] = mapped_column(Text)
     meaning_hint: Mapped[str | None] = mapped_column(Text)
     reading_hint: Mapped[str | None] = mapped_column(Text)
 
-    component_subject_ids: Mapped[list] = mapped_column(JSONB, default=list)
-    amalgamation_subject_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    component_subject_ids: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    amalgamation_subject_ids: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
 
     # Backfilled once from the kanji-data seed import; null until then.
     jlpt_level: Mapped[int | None] = mapped_column(Integer)
@@ -87,7 +105,9 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), nullable=False)
     level: Mapped[int] = mapped_column(Integer, default=1)
     max_level_granted: Mapped[int] = mapped_column(Integer, default=3)
-    subscription_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    subscription_active: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
 
     # NOTE: the token is NOT stored here. It lives in the environment, injected
     # from Secrets Manager. This column exists in the design notes for a
@@ -121,7 +141,9 @@ class StudyProgress(Base):
     assignment_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     subject_type: Mapped[str] = mapped_column(String(20), nullable=False)
 
-    srs_stage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    srs_stage: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
     unlocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     passed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -162,8 +184,8 @@ class ReviewLog(Base):
         ForeignKey("study_progress.id"), nullable=False
     )
 
-    incorrect_meaning: Mapped[int] = mapped_column(Integer, default=0)
-    incorrect_reading: Mapped[int] = mapped_column(Integer, default=0)
+    incorrect_meaning: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    incorrect_reading: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     starting_srs_stage: Mapped[int | None] = mapped_column(Integer)
     ending_srs_stage: Mapped[int | None] = mapped_column(Integer)
 
@@ -189,6 +211,101 @@ class SyncMeta(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class VocabSource(Base):
+    """One imported page.
+
+    A row is created the moment the photo lands, before the vision model has
+    read anything — `status` is what the client polls while extraction runs.
+    """
+
+    __tablename__ = "vocab_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+
+    # Where the original photo is kept. Named to match `imageUri` on the
+    # client's `VocabSourceImage`, which is what the review screen renders.
+    image_uri: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # pending | processed | failed. Left as free text rather than an enum for
+    # the same reason `subjects.type` is: adding a state should not need a
+    # migration that rewrites a type.
+    status: Mapped[str] = mapped_column(
+        String(16), default="pending", server_default="pending", nullable=False
+    )
+
+    # The tier the user picks at upload time, which cascades onto every row
+    # extracted from the page.
+    jlpt_level: Mapped[int | None] = mapped_column(Integer)
+    # Human label for the page, e.g. "Genki II - page 84".
+    label: Mapped[str | None] = mapped_column(String(128))
+
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    items: Mapped[list[VocabItem]] = relationship(back_populates="source_image")
+
+    __table_args__ = (Index("ix_vocab_sources_user_status", "user_id", "status"),)
+
+
+class VocabItem(Base):
+    """The unifying table: one row per word, whatever it came from.
+
+    Vocabulary now has two origins — WaniKani and photo import — and the things
+    built on top of it (SRS state, generated questions) should not care which.
+    They reference `vocab_items.id`; a WaniKani-sourced row simply carries
+    `wanikani_subject_id` as well.
+
+    Deliberately has no `user_id`. This is a catalogue of words, not of anyone's
+    progress through them — per-user state hangs off it in `srs_state` and
+    `study_progress` instead. That also keeps a word importable once and
+    scheduled independently per skill.
+    """
+
+    __tablename__ = "vocab_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # 'wanikani' | 'ocr_import'
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # Populated only for WaniKani-sourced rows. Unique so a sync can upsert by
+    # it idempotently; Postgres allows many NULLs under a unique constraint,
+    # which is exactly right for imported rows.
+    wanikani_subject_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subjects.subject_id"), unique=True
+    )
+
+    kanji_furigana: Mapped[str] = mapped_column(String(64), nullable=False)
+    furigana_only: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", server_default=""
+    )
+    english: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+
+    source_image_id: Mapped[int | None] = mapped_column(ForeignKey("vocab_sources.id"))
+
+    # Set when the user corrects a bad extraction. A local edit never syncs
+    # upstream — WaniKani's own content is read-only from here.
+    is_user_edited: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+
+    jlpt_level: Mapped[int | None] = mapped_column(Integer)
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    source_image: Mapped[VocabSource | None] = relationship(back_populates="items")
+
+    __table_args__ = (
+        Index("ix_vocab_items_source", "source"),
+        Index("ix_vocab_items_jlpt_level", "jlpt_level"),
+    )
+
 
 
 SYNC_KEY_ASSIGNMENTS = "assignments_updated_after"
