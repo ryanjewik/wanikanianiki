@@ -26,7 +26,7 @@ import {
   upsertAssignments,
   upsertSubjects,
 } from './db';
-import type { ReviewAnswer } from './types';
+import type { FlashcardAnswerWrite, ReviewAnswer } from './types';
 
 /** How often the safety-net poll runs. Level-ups don't happen faster. */
 export const SAFETY_NET_POLL_MS = 20 * 60 * 1000;
@@ -60,10 +60,29 @@ export async function replayPendingWrites(): Promise<number> {
     try {
       const payload = JSON.parse(write.payload) as Record<string, unknown>;
 
-      if (write.type === 'start_assignment') {
-        await api.startAssignment(payload.assignmentId as number);
-      } else {
-        await api.submitReview(payload as unknown as ReviewAnswer);
+      // Switched exhaustively rather than if/else: an unrecognised type must
+      // not fall through into whichever branch happens to be last, which would
+      // post one kind of answer to another kind of endpoint.
+      switch (write.type) {
+        case 'start_assignment':
+          await api.startAssignment(payload.assignmentId as number);
+          break;
+        case 'submit_review':
+          await api.submitReview(payload as unknown as ReviewAnswer);
+          break;
+        case 'answer_flashcard': {
+          const answer = payload as unknown as FlashcardAnswerWrite;
+          await api.answerFlashcard(answer.srsStateId, {
+            answerGiven: answer.answerGiven,
+          });
+          break;
+        }
+        default: {
+          // A row written by a newer build than this one. Dropping it silently
+          // would lose an answer, so leave it queued and stop here.
+          const unknownType: never = write.type;
+          throw new Error(`Unknown pending write type: ${String(unknownType)}`);
+        }
       }
 
       await markWriteSynced(write.id);

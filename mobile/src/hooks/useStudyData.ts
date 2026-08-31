@@ -15,6 +15,7 @@ import { syncNow, type SyncResult } from '@/data/sync';
 import type {
   Assignment,
   DashboardSummary,
+  Flashcard,
   ReviewAnswer,
   StudyItem,
   Subject,
@@ -183,7 +184,44 @@ export function useStudyActions() {
     }
   }, []);
 
-  return { completeLesson, submitAnswer };
+  /**
+   * One answered imported-vocabulary card.
+   *
+   * The typed string goes up, not the client's verdict: the server regrades it
+   * and its answer is what the deck records. The screen has already shown a
+   * result by the time this runs, from the answers the card carries.
+   */
+  const answerFlashcard = React.useCallback(async (srsStateId: number, answerGiven: string) => {
+    await db.enqueueWrite('answer_flashcard', { srsStateId, answerGiven });
+    if (api.isBackendConfigured) {
+      void syncNow();
+    }
+  }, []);
+
+  return { completeLesson, submitAnswer, answerFlashcard };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Imported vocabulary                                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Cards due from the user's own imported deck — never WaniKani items, which
+ * are scheduled by WaniKani and come through `useReviewQueue`.
+ *
+ * Unlike the WaniKani queues this has no local mirror and no fixture fallback,
+ * and both absences are deliberate. An empty imported deck is the honest state
+ * on a fresh install: you have not photographed anything yet, and inventing
+ * sample words would put vocabulary in front of you that you never chose to
+ * study. The cost is that a session cannot be *started* offline; one already
+ * underway finishes fine, because each card carries its own answers and the
+ * outbox queues what you type.
+ */
+export function useDueFlashcards(limit = 100) {
+  return useAsync<Flashcard[]>(async () => {
+    if (!api.isBackendConfigured) return [];
+    return api.fetchDueFlashcards(limit);
+  }, [limit]);
 }
 
 /* -------------------------------------------------------------------------- */

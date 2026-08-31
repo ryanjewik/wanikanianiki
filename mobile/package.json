@@ -34,6 +34,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "check:grading": "node --experimental-strip-types scripts/check-grading-parity.mjs",
     "fonts:subset": "python scripts/subset-fonts.py",
     "fonts:check": "python scripts/subset-fonts.py --check"
   },

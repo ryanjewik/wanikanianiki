@@ -25,7 +25,13 @@ import {
   SectionHeading,
 } from '@/components/ui';
 import { formatDueIn } from '@/data/sync';
-import { useDashboard, useLessonQueue, useReviewQueue, useSync } from '@/hooks/useStudyData';
+import {
+  useDashboard,
+  useDueFlashcards,
+  useLessonQueue,
+  useReviewQueue,
+  useSync,
+} from '@/hooks/useStudyData';
 import {
   colors,
   radius,
@@ -39,10 +45,12 @@ export default function StudyScreen() {
   const { data: dashboard } = useDashboard();
   const { data: lessons } = useLessonQueue();
   const { data: reviews } = useReviewQueue();
+  const { data: dueCards } = useDueFlashcards();
   const { pendingWrites, result } = useSync();
 
   const lessonCount = lessons?.length ?? 0;
   const reviewCount = reviews?.length ?? 0;
+  const dueCardCount = dueCards?.length ?? 0;
   const offline = result?.error === 'Offline';
 
   /**
@@ -131,7 +139,11 @@ export default function StudyScreen() {
         <Overline style={styles.trackLabel}>Your own deck</Overline>
 
         <Card variant="bordered">
-          <SectionHeading title="Imported vocabulary" trailing="Manage ›" trailingColor={colors.vocabulary} />
+          <SectionHeading
+            title="Imported vocabulary"
+            trailing={dueCardCount > 0 ? `${dueCardCount} due ›` : 'Manage ›'}
+            trailingColor={colors.vocabulary}
+          />
           <Text style={styles.trackBlurb}>
             Words you photographed from a textbook. These run on their own SM-2 schedule, kept
             separate from the WaniKani queue above so the two never disagree about the same word.
@@ -145,10 +157,11 @@ export default function StudyScreen() {
               style={styles.deckButton}
             />
             <ChunkyButton
-              label="Quiz me"
+              label={dueCardCount > 0 ? `Quiz me (${dueCardCount})` : 'Quiz me'}
               tone="neutral"
               size="small"
-              onPress={() => router.push('/import')}
+              disabled={dueCardCount === 0}
+              onPress={() => router.push('/quiz')}
               style={styles.deckButton}
             />
           </View>

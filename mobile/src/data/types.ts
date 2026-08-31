@@ -301,7 +301,18 @@ export interface LessonBundle {
 /* Offline outbox                                                              */
 /* -------------------------------------------------------------------------- */
 
-export type PendingWriteType = 'start_assignment' | 'submit_review';
+export type PendingWriteType =
+  | 'start_assignment'
+  | 'submit_review'
+  | 'answer_flashcard';
+
+/** One answered imported-vocabulary card, queued for the server to grade. */
+export interface FlashcardAnswerWrite {
+  srsStateId: number;
+  /** What the user typed. The server regrades it; the client's verdict is
+   *  only ever used to show a result before the write lands. */
+  answerGiven: string;
+}
 
 export interface PendingWrite {
   id: number;

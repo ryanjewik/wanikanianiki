@@ -75,6 +75,7 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="lesson" />
           <Stack.Screen name="review" />
+          <Stack.Screen name="quiz" />
           {/* The summary ends a session, so it should not slide back into it. */}
           <Stack.Screen name="session-summary" options={{ animation: 'fade' }} />
           <Stack.Screen name="item/[id]" />
