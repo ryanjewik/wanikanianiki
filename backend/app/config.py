@@ -50,6 +50,22 @@ class Settings(BaseSettings):
     wanikani_timeout_seconds: float = 20.0
     wanikani_max_retries: int = 3
 
+    # --- Vision extraction ---------------------------------------------------
+    # Photo import only. Empty means the feature is off: uploads are rejected
+    # with a 503 rather than silently accepted and never processed.
+    anthropic_api_key: SecretStr | None = None
+
+    # Pinned deliberately, the same way `wanikani_revision` is — an extraction
+    # prompt is tuned against a model, and a silent upgrade re-tunes it.
+    vision_model: str = "claude-opus-5"
+
+    # Must stay comfortably *below* the client's polling window, or the app
+    # gives up on work the server is still doing and the user sees a failure
+    # for an import that then quietly succeeds. It also bounds the damage of a
+    # hung call: without it the SDK waits ten minutes, which on Lambda is ten
+    # minutes of billed idle.
+    vision_timeout_seconds: float = 120.0
+
     # --- Database -----------------------------------------------------------
     # Neon/Supabase style URL. Empty means "no database configured": the app
     # still serves every read-only WaniKani-backed route, it just cannot cache.
@@ -91,6 +107,10 @@ class Settings(BaseSettings):
     @property
     def has_database(self) -> bool:
         return bool(self.database_url)
+
+    @property
+    def has_vision(self) -> bool:
+        return self.anthropic_api_key is not None
 
     @property
     def migration_url(self) -> str:

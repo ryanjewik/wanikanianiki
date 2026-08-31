@@ -40,6 +40,9 @@ could leak a token.
 | `GET /api/subjects` | Content, by `ids` or `level`. Cache-first. |
 | `PUT /api/assignments/{id}/start` | **Write.** Finish a lesson. |
 | `POST /api/reviews` | **Write.** Submit one answered review. |
+| `POST /api/vocab-sources` | **Write.** Upload a page photo. Returns `202` immediately. |
+| `GET /api/vocab-sources/{id}` | Poll until `status` leaves `pending`. |
+| `POST /api/vocab-sources/{id}/confirm` | **Write.** Commit the reviewed rows. |
 | `POST /api/sync` | Run a sync pass now. |
 | `POST /api/sync/backfill` | One-time content pull for every level the account can see. |
 
@@ -94,6 +97,46 @@ field, which would otherwise fail validation.
 **`accepted_answer` is not always true.** Nanori and some kunyomi readings are
 listed for reference but rejected as answers. Grading must respect it.
 
+## Photo import
+
+Upload a textbook page, get vocabulary rows. Three routes and one rule: the
+upload never waits for the extraction.
+
+```
+POST /api/vocab-sources        -> 202 {sourceId, status: "pending"}
+GET  /api/vocab-sources/{id}   -> poll until "processed" or "failed"
+POST /api/vocab-sources/{id}/confirm  -> the rows the user kept
+```
+
+Reading a page is a vision-model call taking tens of seconds. That is well
+inside what a Lambda Function URL allows — fifteen minutes — so this is not a
+platform limit. It is that a phone should not be asked to hold a connection
+that long: mobile data drops it on a network switch, both mobile OSes suspend a
+backgrounded app mid-request, and a synchronous wait bills a Lambda for a minute
+of doing nothing. So `vocab_sources.status` carries the state, the upload
+returns as soon as the bytes land, and the client polls.
+
+**Two timeouts, and their order matters.** `VISION_TIMEOUT_SECONDS` (120s)
+bounds the extraction; the app polls for 300s. The server must give up first —
+reversed, a slow extraction shows the user a failure and *then* quietly
+succeeds, leaving a `processed` row nobody is watching.
+
+**It is not OCR.** A vocab page is a table, and the useful part is keeping its
+three columns apart — kanji+furigana, kana, English. Raw text extraction throws
+that structure away. The page goes to `claude-opus-5` with a schema attached and
+comes back as rows.
+
+**Ambiguity is flagged, not guessed.** 辛い is からい or つらい and the page
+often does not say. Those rows come back `ambiguous`, with the candidates
+listed, and arrive **deselected** — a wrong reading here goes into an SRS and
+gets rehearsed until it sticks, so an admitted unknown beats a confident guess.
+
+Nothing enters `vocab_items` until the user confirms. Duplicates are matched on
+the written form, not the reading, so 橋 and 箸 stay distinct.
+
+Set `ANTHROPIC_API_KEY` to enable it; unset, uploads are refused with a `503`
+rather than accepted and never processed.
+
 ## Deployment — Lambda + serverless Postgres
 
 The app is plain ASGI with no hosting-specific code in it. `uvicorn` runs it
@@ -107,6 +150,7 @@ Two functions off one artifact:
 |---|---|---|
 | `app.lambda_handler.handler` | Function URL / API Gateway HTTP API | The HTTP API. |
 | `app.lambda_handler.sync_handler` | EventBridge, every 15–60 min | **Reserved concurrency 1.** |
+| `app.lambda_handler.ocr_handler` | SQS | Minutes, not seconds. Blocked on durable image storage — see below. |
 
 ### Keep Lambda out of a VPC
 
@@ -225,4 +269,13 @@ TEST_DATABASE_URL=postgresql://postgres@localhost:5432/kanji_test \
   that is not worth building before there is a second account.
 - **Conditional requests.** The client supports `If-None-Match` and returns 304
   through, but nothing stores ETags yet, so no caller benefits.
-- **Part 2** — OCR ingestion, generated lessons, JLPT tracking. Untouched.
+- **Durable image storage.** The photo is buffered in the process that received
+  the upload and dropped once extracted, because nothing reads it afterwards —
+  the review screen renders the device's own copy. That is enough while one
+  function serves both the upload and the extraction. Separating `ocr-fn` needs
+  the bytes to cross a process boundary, and SQS cannot carry them (256 KB cap),
+  so `services/storage.py` grows a backend then. Supabase Storage or a `bytea`
+  column both fit better than S3: one comes with the Postgres already being
+  stood up, the other adds no service at all.
+- **Part 2** — generated lessons and JLPT tracking. Photo import is built;
+  question generation and the Obsidian connector are not.

@@ -15,6 +15,10 @@ dependencies = [
     "alembic>=1.14",
     # Lambda adapter. Harmless when running under uvicorn.
     "mangum>=0.19",
+    # Vision extraction for photo import. Only `services/ocr.py` imports it.
+    "anthropic>=1.0",
+    # FastAPI needs this to accept the multipart upload from the phone.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +29,12 @@ dev = [
     "respx>=0.21",
     "ruff>=0.8",
 ]
+
+# Without this, setuptools' flat-layout auto-discovery sees both `app/` and
+# `migrations/` as top-level packages and refuses to build. `migrations/` is
+# Alembic's, not an importable part of the distribution.
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.ruff]
 line-length = 100

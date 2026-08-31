@@ -255,47 +255,80 @@ export const SESSION_SUMMARY: SessionSummary = {
 /* Photo import                                                                */
 /* -------------------------------------------------------------------------- */
 
-export const IMPORT_PAGE_LABEL = 'Genki II · page 84 vocabulary list';
+export const IMPORT_PAGE_LABEL = 'Quartet I · page 230 vocabulary list';
 
+/**
+ * Modelled on a real page rather than invented, so the review screen is
+ * exercised against the shapes that actually turn up: a bracketed particle,
+ * an ambiguous reading, a word the page lists without a meaning, and a
+ * duplicate.
+ */
 export const DETECTED_ITEMS: DetectedItem[] = [
   {
-    key: '経験',
-    kanjiFurigana: '経験',
-    furiganaOnly: 'けいけん',
-    english: 'experience',
+    key: '免許:めんきょ',
+    kanjiFurigana: '免許',
+    furiganaOnly: 'めんきょ',
+    english: 'license',
+    usageContext: null,
     jlptLevel: 3,
     status: 'ok',
     selected: true,
   },
   {
-    key: '習慣',
-    kanjiFurigana: '習慣',
-    furiganaOnly: 'しゅうかん',
-    english: 'habit, custom',
+    key: 'お嬢さん:おじょうさん',
+    kanjiFurigana: 'お嬢さん',
+    furiganaOnly: 'おじょうさん',
+    english: "(someone's) daughter (polite)",
+    usageContext: null,
     jlptLevel: 3,
     status: 'ok',
     selected: true,
   },
   {
-    key: '辛い',
+    key: '苦手な:にがてな',
+    kanjiFurigana: '苦手な',
+    furiganaOnly: 'にがてな',
+    english: 'poor at',
+    // Printed as [〜が]苦手な. Kept apart from the word, which it would
+    // otherwise corrupt.
+    usageContext: '〜が',
+    jlptLevel: 3,
+    status: 'ok',
+    selected: true,
+  },
+  {
+    key: '辛い:',
     kanjiFurigana: '辛い',
-    furiganaOnly: 'からい',
-    english: 'spicy / tough',
+    furiganaOnly: '',
+    english: 'spicy; painful',
+    usageContext: null,
     jlptLevel: 3,
     status: 'ambiguous',
-    selected: true,
+    selected: false,
     readingChoices: ['からい', 'つらい'],
-    note: 'からい or つらい?',
+    note: 'Pick the reading this page means.',
   },
   {
-    key: '大人',
-    kanjiFurigana: '大人',
-    furiganaOnly: 'おとな',
-    english: 'adult',
-    jlptLevel: 5,
+    key: '言葉:',
+    kanjiFurigana: '言葉',
+    furiganaOnly: '',
+    english: '',
+    usageContext: null,
+    jlptLevel: 3,
+    status: 'ok',
+    selected: false,
+    note: 'No meaning printed here. Add one, or import it from the word list.',
+  },
+  {
+    key: '自由:じゆう',
+    kanjiFurigana: '自由',
+    furiganaOnly: 'じゆう',
+    english: 'freedom',
+    usageContext: null,
+    jlptLevel: 3,
     status: 'duplicate',
     selected: false,
-    note: 'already in your deck',
+    note: 'Already in your deck.',
   },
 ];
 

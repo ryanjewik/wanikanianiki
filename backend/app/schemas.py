@@ -156,6 +156,75 @@ class DashboardSummary(CamelModel):
     next_reviews_at: datetime | None = None
 
 
+# -- photo import ----------------------------------------------------------
+# These mirror the Part 2 block of `src/data/types.ts`.
+
+
+VocabItemSource = Literal["wanikani", "ocr_import"]
+ImportStatus = Literal["pending", "processed", "failed"]
+DetectionStatus = Literal["ok", "ambiguous", "duplicate"]
+
+
+class DetectedItem(CamelModel):
+    """One row of the OCR review list, before the user commits anything.
+
+    `status` is what makes the review screen useful rather than a wall of text:
+    `ok` imports as-is, `ambiguous` needs the user to pick a reading, and
+    `duplicate` is already in the deck and is skipped rather than duplicated.
+    """
+
+    key: str
+    kanji_furigana: str
+    furigana_only: str
+    english: str
+    # The particle or object a word is printed with — "〜が" for [〜が]苦手な.
+    # Kept apart from the word, which it would otherwise corrupt, and apart
+    # from the meaning, which it is not.
+    usage_context: str | None = None
+    jlpt_level: int | None = None
+    status: DetectionStatus = "ok"
+    selected: bool = True
+    # Populated only when status is `ambiguous`, e.g. ["からい", "つらい"].
+    reading_choices: list[str] | None = None
+    note: str | None = None
+
+
+class VocabItem(CamelModel):
+    """A word in the deck, whatever it came from."""
+
+    id: int
+    source: VocabItemSource
+    wanikani_subject_id: int | None = None
+    kanji_furigana: str
+    furigana_only: str
+    english: str
+    usage_context: str | None = None
+    source_image_id: int | None = None
+    is_user_edited: bool = False
+    jlpt_level: int | None = None
+    updated_at: datetime
+
+
+class VocabSourceResult(CamelModel):
+    """What the upload returns, and what polling returns afterwards.
+
+    `items` is empty while `status` is `pending`. The client uploads, gets a
+    `sourceId` back immediately, and polls this shape until the rows appear —
+    a vision call takes far too long to hold an HTTP request open for.
+    """
+
+    source_id: int
+    status: ImportStatus
+    items: list[DetectedItem] = []
+    detail: str | None = None
+
+
+class ConfirmImportRequest(BaseModel):
+    """The rows the user kept after correcting the extraction."""
+
+    items: list[DetectedItem]
+
+
 # -- writes ----------------------------------------------------------------
 
 
