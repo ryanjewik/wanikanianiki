@@ -190,6 +190,21 @@ duplicate row with its own divergent schedule. A set's page counts come from its
 sources' own statuses rather than a progress field, so "5 pages, 2 still reading"
 cannot drift.
 
+### Checking extraction against real pages
+
+Every test injects a fake vision client, which proves the pipeline handles the
+shapes but says nothing about whether the model reads a sideways photo with
+show-through. `scripts/extract_page.py` is the other half:
+
+```bash
+.venv/Scripts/python scripts/extract_page.py ../vocab_samples/*.jpg
+```
+
+It reads `.env` like everything else, writes nothing to the database, and
+prints the rows an import would produce plus the wall-clock time each page
+took — which is the number `VISION_TIMEOUT_SECONDS` is otherwise only guessing
+at. It warns when the slowest page gets within 2× of that timeout.
+
 ## Deployment — Lambda + serverless Postgres
 
 The app is plain ASGI with no hosting-specific code in it. `uvicorn` runs it
