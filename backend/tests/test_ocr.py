@@ -316,6 +316,42 @@ async def test_a_timeout_says_what_to_do_about_it():
         await extract_page(PNG, "image/png", settings=settings(), client=client)
 
 
+def test_a_workspace_id_is_sent_only_when_configured():
+    """An identity-linked key can act in several workspaces.
+
+    The API refuses to guess which and returns a 400 naming this header. A
+    workspace-scoped key needs no header, and sending an empty one would be
+    worse than sending none.
+    """
+    from app.services.ocr import _client
+
+    with_id = _client(settings(anthropic_workspace_id="wrkspc_abc"))
+    headers = {k.lower(): v for k, v in with_id.default_headers.items()}
+    assert headers["anthropic-workspace-id"] == "wrkspc_abc"
+
+    without = _client(settings())
+    assert "anthropic-workspace-id" not in {k.lower() for k in without.default_headers}
+
+
+async def test_a_missing_workspace_id_says_how_to_fix_it():
+    """A setup problem, reported as one.
+
+    The generic 400 message reads as "the image was rejected", which sends the
+    reader to look at their photograph instead of their .env.
+    """
+    client = fake_client(
+        error=anthropic.BadRequestError(
+            "anthropic-workspace-id is required when authenticating with an "
+            "identity-linked API key",
+            response=_response(400),
+            body=None,
+        )
+    )
+
+    with pytest.raises(ExtractionFailed, match="ANTHROPIC_WORKSPACE_ID"):
+        await extract_page(PNG, "image/png", settings=settings(), client=client)
+
+
 def test_the_vision_client_is_bounded():
     """The SDK default is ten minutes, which on Lambda is billed waiting.
 

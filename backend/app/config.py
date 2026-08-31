@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # with a 503 rather than silently accepted and never processed.
     anthropic_api_key: SecretStr | None = None
 
+    # Required when the key above is identity-linked rather than bound to a
+    # single workspace: such a key can act in several, so the API refuses to
+    # guess which one and returns a 400 naming this header. Find the id in the
+    # Anthropic console URL — platform.claude.com/workspaces/<id>/...
+    # Harmless to leave unset for a workspace-scoped key.
+    anthropic_workspace_id: str | None = None
+
     # Pinned deliberately, the same way `wanikani_revision` is — an extraction
     # prompt is tuned against a model, and a silent upgrade re-tunes it.
     vision_model: str = "claude-opus-5"

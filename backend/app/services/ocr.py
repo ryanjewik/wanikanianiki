@@ -175,12 +175,17 @@ def _client(settings: Settings) -> anthropic.AsyncAnthropic:
         raise VisionUnavailable(
             "ANTHROPIC_API_KEY is not configured, so photo import is disabled."
         )
+    headers = {}
+    if settings.anthropic_workspace_id:
+        headers["anthropic-workspace-id"] = settings.anthropic_workspace_id
+
     return anthropic.AsyncAnthropic(
         api_key=settings.anthropic_api_key.get_secret_value(),
         # Bounded on purpose — see `vision_timeout_seconds`. The SDK's default
         # is ten minutes, which on Lambda is ten minutes of billed waiting and
         # long past the point the client has stopped watching.
         timeout=settings.vision_timeout_seconds,
+        default_headers=headers or None,
     )
 
 
@@ -232,8 +237,16 @@ async def extract_page(
     except anthropic.RateLimitError as exc:
         raise ExtractionFailed("Rate limited while reading the page. Try again shortly.") from exc
     except anthropic.BadRequestError as exc:
-        # Usually an image too large, or a media type the API will not take.
-        raise ExtractionFailed(f"The image was rejected: {exc.message}") from exc
+        message = str(getattr(exc, "message", exc))
+        if "anthropic-workspace-id" in message:
+            raise ExtractionFailed(
+                "This API key is identity-linked, so the request has to name a "
+                "workspace. Set ANTHROPIC_WORKSPACE_ID in backend/.env — the id "
+                "is in the Anthropic console URL, "
+                "platform.claude.com/workspaces/<id>/..."
+            ) from exc
+        # Otherwise usually an image too large, or a media type it will not take.
+        raise ExtractionFailed(f"The image was rejected: {message}") from exc
     except anthropic.APITimeoutError as exc:
         raise ExtractionFailed(
             "Reading the page took too long. Try a tighter crop of just the "
