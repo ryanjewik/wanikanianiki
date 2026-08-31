@@ -12,8 +12,15 @@ warm server-side connections so the per-request cost stays small.
 **Under a long-lived container** (Fargate, App Runner, uvicorn locally), a real
 pool is correct and `NullPool` would be wasteful.
 
-`create_engine_for_environment` picks based on where it is actually running, so
-neither deployment needs a code change.
+Prepared statements are a separate axis, and it is the *connection URL* that
+decides them, not the runtime: a transaction-mode pooler hands each transaction
+whichever server-side session is free, so a statement prepared on one lands on
+another and Postgres reports it does not exist. That is true of uvicorn on a
+laptop pointed at the pooler just as much as of Lambda, which is why the two
+questions are answered separately below.
+
+`create_engine_for_environment` picks both, so neither deployment needs a code
+change.
 """
 
 from __future__ import annotations
@@ -21,6 +28,8 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
+from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -38,18 +47,67 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+# Ports and host markers that mean "a transaction-mode pooler is in front of
+# you". Supabase splits the two modes by port on the same host — 6543 is
+# transaction mode, 5432 on that host is session mode, which holds one
+# server-side session for the life of the client connection and so is safe for
+# prepared statements. Neon marks its pooler in the hostname instead. The
+# `pgbouncer=true` query flag is the convention several ORMs settled on.
+_TRANSACTION_POOLER_PORTS = frozenset({6543})
+_TRANSACTION_POOLER_HOST_MARKERS = ("-pooler.",)
+
+
+def uses_transaction_pooler(url: str) -> bool:
+    """Whether `url` points at a pooler that reassigns sessions per transaction.
+
+    Deliberately narrow. A false positive only costs the prepared-statement
+    cache, but a false negative is a hard runtime failure the first time a
+    statement is reused, so the markers here are ones that unambiguously mean
+    transaction mode rather than anything pooler-shaped.
+    """
+    parts = urlsplit(url)
+    if parts.port in _TRANSACTION_POOLER_PORTS:
+        return True
+    host = (parts.hostname or "").lower()
+    if any(marker in host for marker in _TRANSACTION_POOLER_HOST_MARKERS):
+        return True
+    return "pgbouncer=true" in (parts.query or "").lower()
+
+
+def _pooler_connect_args() -> dict[str, object]:
+    """The three settings a transaction-mode pooler needs. All three matter.
+
+    `statement_cache_size` turns off asyncpg's own cache and
+    `prepared_statement_cache_size` turns off the one SQLAlchemy's asyncpg
+    adapter keeps on top of it — disabling either alone still leaves the other
+    handing a stale statement to a fresh session.
+
+    `prepared_statement_name_func` covers the remaining case: asyncpg names
+    statements in numeric order, so two client connections independently
+    prepare `__asyncpg_stmt_1__`, and through a pooler both can land on one
+    server-side session where the second name is already taken. Uniqueness per
+    statement removes the collision.
+    """
+    return {
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
+    }
+
+
 def create_engine_for_environment(settings: Settings) -> AsyncEngine:
     if not settings.has_database:
         raise RuntimeError("DATABASE_URL is not configured")
+
+    connect_args: dict[str, object] = {}
+    if uses_transaction_pooler(settings.database_url):
+        connect_args = _pooler_connect_args()
 
     if settings.is_lambda:
         return create_async_engine(
             settings.database_url,
             poolclass=NullPool,
-            # Statement caching breaks through a transaction-mode pooler
-            # (PgBouncer, Neon's pooler): the cached plan may land on a
-            # different server-side session than the one that prepared it.
-            connect_args={"statement_cache_size": 0},
+            connect_args=connect_args,
             echo=False,
         )
 
@@ -60,6 +118,7 @@ def create_engine_for_environment(settings: Settings) -> AsyncEngine:
         # Recycle below any idle timeout the provider enforces.
         pool_recycle=280,
         pool_pre_ping=True,
+        connect_args=connect_args,
         echo=False,
     )
 
