@@ -144,6 +144,27 @@ async def test_the_particle_travels_with_the_card(ctx):
     assert card.usage_context == "〜が"
 
 
+async def test_a_word_repeated_in_one_batch_is_inserted_once(ctx):
+    """The client sends back what the user confirmed, not what we marked.
+
+    A page listing つまり twice must not become two words with two schedules.
+    """
+    _, session, user = ctx
+    repeated = [
+        DetectedItem(key="0:つまり", kanji_furigana="つまり",
+                     furigana_only="つまり", english="in other words"),
+        DetectedItem(key="9:つまり", kanji_furigana="つまり",
+                     furigana_only="つまり", english=""),
+    ]
+
+    created = await repo.create_flashcards(session, repeated, user_id=user.id)
+    await session.commit()
+
+    assert len(created) == 1
+    # One word, one pair of skills — not two of each.
+    assert len(await repo.get_due_flashcards(session, user.id)) == 2
+
+
 async def test_importing_the_same_word_twice_does_not_duplicate_it(ctx):
     _, session, user = ctx
     await repo.create_flashcards(session, PAGE, user_id=user.id)

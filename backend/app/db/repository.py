@@ -542,7 +542,20 @@ async def create_flashcards(
         return []
 
     existing = await get_known_written_forms(session)
-    fresh = [i for i in items if i.kanji_furigana not in existing]
+
+    # Deduplicate the batch itself, not just against the deck. The review
+    # screen marks repeats, but it sends back whatever the user confirmed, and
+    # a page that lists つまり twice would otherwise insert two rows for one
+    # word — each with its own SRS state, so the schedules would diverge and
+    # neither would be the word's real progress.
+    fresh: list[DetectedItem] = []
+    seen: set[str] = set()
+    for item in items:
+        if item.kanji_furigana in existing or item.kanji_furigana in seen:
+            continue
+        seen.add(item.kanji_furigana)
+        fresh.append(item)
+
     if not fresh:
         return []
 

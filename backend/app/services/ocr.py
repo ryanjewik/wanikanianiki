@@ -266,10 +266,14 @@ async def extract_page(
     if page is None:  # pragma: no cover - parse() populates this or raises
         raise ExtractionFailed("The extraction service returned no rows.")
 
-    return [_to_detected(row, jlpt_level) for row in page.rows]
+    return [
+        _to_detected(row, jlpt_level, index) for index, row in enumerate(page.rows)
+    ]
 
 
-def _to_detected(row: ExtractedRow, jlpt_level: int | None) -> DetectedItem:
+def _to_detected(
+    row: ExtractedRow, jlpt_level: int | None, index: int = 0
+) -> DetectedItem:
     ambiguous = row.ambiguous and len(row.reading_choices) > 1
 
     # Example-sentence lists print the word alone. The entry is still wanted —
@@ -285,9 +289,12 @@ def _to_detected(row: ExtractedRow, jlpt_level: int | None) -> DetectedItem:
         note = None
 
     return DetectedItem(
-        # Stable within a page, so the review screen can key a list on it and
-        # survive re-renders without the row losing its edits.
-        key=f"{row.kanji_furigana}:{row.furigana_only}",
+        # Unique within the page, and stable across re-renders. The position
+        # is in it because a word can legitimately appear twice on one page —
+        # つまり is printed in both the word list and the sentence list — and
+        # keying on the text alone made the review screen toggle both rows at
+        # once.
+        key=f"{index}:{row.kanji_furigana}",
         kanji_furigana=row.kanji_furigana,
         furigana_only=row.furigana_only,
         english=row.english,
@@ -304,18 +311,53 @@ def _to_detected(row: ExtractedRow, jlpt_level: int | None) -> DetectedItem:
 
 
 def mark_duplicates(items: list[DetectedItem], existing: set[str]) -> list[DetectedItem]:
-    """Flag rows already in the deck, keyed on the written form.
+    """Flag rows already in the deck, and repeats within the page itself.
 
     Matching on `kanji_furigana` rather than the reading is deliberate: the
     same word photographed twice should collapse, but two different words that
     happen to share a reading (橋 and 箸) must not.
+
+    A page really can list a word twice — a 単語リスト and a 覚える単語 section
+    on one spread both carry つまり, one with its meaning and one without. Only
+    the fullest of those is worth importing, so the others are marked rather
+    than left looking like separate words to add.
     """
+    best = _fullest_by_word(items)
+
     for item in items:
         if item.kanji_furigana in existing:
             item.status = "duplicate"
             item.selected = False
             item.note = "Already in your deck."
+        elif best.get(item.kanji_furigana) is not item:
+            item.status = "duplicate"
+            item.selected = False
+            item.note = "Listed twice on this page."
     return items
+
+
+def _fullest_by_word(items: list[DetectedItem]) -> dict[str, DetectedItem]:
+    """The row to keep for each written form.
+
+    Prefers the one carrying the most — a meaning first, since a row without
+    one imports a card with a blank back, then a reading. Where a word appears
+    in a word list and again in a sentence list, this is what keeps the glossed
+    copy rather than whichever the model happened to return first.
+    """
+    best: dict[str, DetectedItem] = {}
+    for item in items:
+        current = best.get(item.kanji_furigana)
+        if current is None or _completeness(item) > _completeness(current):
+            best[item.kanji_furigana] = item
+    return best
+
+
+def _completeness(item: DetectedItem) -> tuple[int, int, int]:
+    return (
+        1 if item.english.strip() else 0,
+        1 if item.furigana_only.strip() else 0,
+        1 if item.usage_context else 0,
+    )
 
 
 async def process_source(session, source_id: int, *, settings=None, client=None) -> None:

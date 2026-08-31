@@ -142,6 +142,48 @@ async def test_ambiguous_needs_more_than_one_candidate():
     assert item.selected is True
 
 
+async def test_a_word_listed_twice_on_one_page_keeps_the_glossed_copy():
+    """Taken from a real page.
+
+    A spread carrying both a 単語リスト and a 覚える単語 section lists つまり
+    twice — once with its meaning, once bare. Importing both would put two rows
+    in the deck for one word, each with its own SRS state, so neither would be
+    that word's real progress.
+    """
+    client = fake_client([
+        ExtractedRow(kanji_furigana="つまり", furigana_only="つまり",
+                     english="in other words", ambiguous=False),
+        ExtractedRow(kanji_furigana="つまり", furigana_only="つまり",
+                     english="", ambiguous=False),
+    ])
+
+    items = await extract_page(PNG, "image/png", settings=settings(), client=client)
+    marked = mark_duplicates(items, existing=set())
+
+    glossed = next(i for i in marked if i.english)
+    bare = next(i for i in marked if not i.english)
+
+    assert glossed.status == "ok" and glossed.selected is True
+    assert bare.status == "duplicate" and bare.selected is False
+    assert "twice on this page" in bare.note
+
+
+async def test_repeated_rows_get_distinct_keys():
+    """The review screen keys its list on this.
+
+    Two rows sharing a key made toggling one toggle the other.
+    """
+    client = fake_client([
+        ExtractedRow(kanji_furigana="つまり", furigana_only="つまり",
+                     english="in other words", ambiguous=False),
+        ExtractedRow(kanji_furigana="つまり", furigana_only="つまり",
+                     english="", ambiguous=False),
+    ])
+
+    items = await extract_page(PNG, "image/png", settings=settings(), client=client)
+    assert len({i.key for i in items}) == len(items)
+
+
 def test_duplicates_match_on_the_written_form():
     """橋 and 箸 read the same and are different words.
 
