@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import glob
 import mimetypes
 import sys
 import time
@@ -29,6 +30,26 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.config import get_settings  # noqa: E402
 from app.services.ocr import ExtractionFailed, VisionUnavailable, extract_page  # noqa: E402
 from app.services.storage import SUPPORTED_MEDIA_TYPES  # noqa: E402
+
+
+def _expand(patterns: list[str]) -> list[Path]:
+    """Expand wildcards here rather than relying on the shell.
+
+    A Unix shell expands `*.jpg` before the program is started; PowerShell and
+    cmd hand the literal string through instead, so the same command line that
+    works on macOS reports one nonexistent file on Windows. Doing it here means
+    one usage example is correct everywhere.
+    """
+    paths: list[Path] = []
+    for pattern in patterns:
+        if any(char in pattern for char in "*?["):
+            matched = sorted(glob.glob(pattern))
+            if not matched:
+                print(f"!! {pattern} matched no files")
+            paths.extend(Path(m) for m in matched)
+        else:
+            paths.append(Path(pattern))
+    return paths
 
 
 def _media_type(path: Path) -> str:
@@ -107,12 +128,17 @@ async def run(paths: list[Path], jlpt: int | None) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("images", nargs="+", type=Path)
+    parser.add_argument("images", nargs="+")
     parser.add_argument(
         "--jlpt", type=int, default=None, help="tier to stamp on every row"
     )
     args = parser.parse_args()
-    return asyncio.run(run(args.images, args.jlpt))
+
+    paths = _expand(args.images)
+    if not paths:
+        print("No images to read.", file=sys.stderr)
+        return 2
+    return asyncio.run(run(paths, args.jlpt))
 
 
 if __name__ == "__main__":
