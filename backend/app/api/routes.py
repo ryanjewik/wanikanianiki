@@ -33,15 +33,20 @@ from app.schemas import (
     Assignment,
     ConfirmImportRequest,
     DashboardSummary,
+    Flashcard,
+    FlashcardAnswer,
+    FlashcardOutcome,
     ReviewRequest,
     ReviewResult,
     Subject,
     SyncResult,
     VocabItem,
+    VocabSet,
+    VocabSetCreate,
     VocabSourceResult,
 )
 from app.services import ocr as ocr_service
-from app.services import storage
+from app.services import srs, storage
 from app.services import sync as sync_service
 from app.wanikani.client import WaniKaniClient, WaniKaniError, WaniKaniValidationError
 from app.wanikani.mapping import (
@@ -339,6 +344,8 @@ async def upload_vocab_source(
     image: UploadFile = File(...),
     jlpt_level: int | None = Form(None),
     label: str | None = Form(None),
+    set_id: int | None = Form(None),
+    position: int = Form(0),
     settings: Settings = Depends(settings_dep),
     session: AsyncSession = Depends(db_session),
 ) -> VocabSourceResult:
@@ -386,8 +393,18 @@ async def upload_vocab_source(
             },
         )
 
+    if set_id is not None and await repo.get_vocab_set(session, set_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown set"
+        )
+
     source = await repo.create_vocab_source(
-        session, user_id=user.id, jlpt_level=jlpt_level, label=label
+        session,
+        user_id=user.id,
+        jlpt_level=jlpt_level,
+        label=label,
+        set_id=set_id,
+        position=position,
     )
     source_id = source.id
 
@@ -463,13 +480,163 @@ async def confirm_vocab_source(
     if source is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown source")
 
+    user = await repo.get_default_user(session)
     keep = [item for item in payload.items if item.selected and item.status != "duplicate"]
-    created = await repo.insert_vocab_items(session, keep, source_image_id=source_id)
+    created = await repo.create_flashcards(
+        session,
+        keep,
+        user_id=user.id,
+        source_image_id=source_id,
+        # Words inherit the set the page was photographed into, so a five-page
+        # import lands as one named group without the user tagging anything.
+        set_id=source.set_id,
+    )
 
     # The draft has served its purpose; holding it would leak for every import.
     ocr_service.discard_result(source_id)
     storage.discard(source_id)
     return created
+
+
+# -- sets ------------------------------------------------------------------
+
+
+@router.post(
+    "/api/vocab-sets",
+    response_model=VocabSet,
+    status_code=status.HTTP_201_CREATED,
+    tags=["import"],
+)
+async def create_vocab_set(
+    payload: VocabSetCreate,
+    session: AsyncSession = Depends(db_session),
+) -> VocabSet:
+    """Name a group before photographing into it."""
+    user = await repo.get_default_user(session)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "No user on record yet",
+                "hint": "Run POST /api/sync once so the account is known.",
+            },
+        )
+
+    if await repo.get_vocab_set_by_name(session, user_id=user.id, name=payload.name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A set called {payload.name!r} already exists",
+        )
+
+    row = await repo.create_vocab_set(
+        session, user_id=user.id, name=payload.name, description=payload.description
+    )
+    return VocabSet(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        created_at=row.created_at,
+    )
+
+
+@router.get("/api/vocab-sets", response_model=list[VocabSet], tags=["import"])
+async def list_vocab_sets(
+    session: AsyncSession = Depends(db_session),
+) -> list[VocabSet]:
+    """Sets with their word and page counts.
+
+    The page counts are what make a multi-page import legible while it runs —
+    "5 pages, 2 still reading" — and they come from the sources' own statuses
+    rather than a progress field that could drift out of step.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        return []
+    return await repo.list_vocab_sets(session, user.id)
+
+
+# -- studying --------------------------------------------------------------
+
+
+@router.get("/api/flashcards/due", response_model=list[Flashcard], tags=["study"])
+async def get_due_flashcards(
+    limit: int = Query(100, ge=1, le=500),
+    session: AsyncSession = Depends(db_session),
+) -> list[Flashcard]:
+    """Imported vocabulary due now — never WaniKani items.
+
+    The two decks stay separate tracks: WaniKani's queue comes from
+    `/api/assignments` and is scheduled by WaniKani. Blending them would mean
+    one of the two schedulers overruling the other.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        return []
+    return await repo.get_due_flashcards(session, user.id, limit=limit)
+
+
+@router.post(
+    "/api/flashcards/{srs_state_id}/answer",
+    response_model=FlashcardOutcome,
+    tags=["study"],
+)
+async def answer_flashcard(
+    srs_state_id: int,
+    payload: FlashcardAnswer,
+    session: AsyncSession = Depends(db_session),
+) -> FlashcardOutcome:
+    """Grade an answer and advance the schedule.
+
+    Grading happens here rather than on the device even though the card ships
+    with its answers: the phone grades to show a result instantly, and the
+    server grades to decide what actually gets written. If they ever disagree,
+    the server's answer is the one in the deck.
+    """
+    state = await repo.get_srs_state(session, srs_state_id)
+    if state is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown card")
+
+    kinds = ("written", "reading") if state.skill_type == "production" else ("meaning",)
+    accepted = await repo.get_accepted_answers(session, state.vocab_item_id, kinds)
+
+    if payload.answer_given is not None:
+        correct = srs.matches(payload.answer_given, accepted)
+    elif payload.correct is not None:
+        correct = payload.correct
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Send either answerGiven or correct",
+        )
+
+    grade = payload.grade if payload.grade is not None else srs.grade_for(correct)
+
+    schedule = srs.next_schedule(
+        ease_factor=state.ease_factor,
+        interval_days=state.interval_days,
+        repetitions=state.repetitions,
+        lapses=state.lapses,
+        grade=grade,
+    )
+    await repo.record_vocab_review(
+        session,
+        state,
+        correct=correct,
+        grade=grade,
+        answer_given=payload.answer_given,
+        schedule=schedule,
+    )
+
+    return FlashcardOutcome(
+        correct=correct,
+        grade=grade,
+        accepted_answers=accepted,
+        due_at=schedule.due_at,
+        interval_days=schedule.interval_days,
+        repetitions=schedule.repetitions,
+        lapses=schedule.lapses,
+        ease_factor=schedule.ease_factor,
+    )
 
 
 @router.post("/api/sync", response_model=SyncResult, tags=["ops"])

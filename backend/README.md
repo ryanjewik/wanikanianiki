@@ -137,6 +137,59 @@ the written form, not the reading, so 橋 and 箸 stay distinct.
 Set `ANTHROPIC_API_KEY` to enable it; unset, uploads are refused with a `503`
 rather than accepted and never processed.
 
+## Flashcards and the SRS
+
+Confirmed rows become studiable cards in one write: the word, the answers that
+count for it, and a place in the schedule for each skill. A word with no answers
+is unanswerable and a word with no SRS state never comes up, so a partial write
+here is a silently broken card.
+
+```
+POST /api/vocab-sets            name a group first
+POST /api/vocab-sources         ?set_id=  — pages land in it
+GET  /api/vocab-sets            word and page counts, live during an import
+GET  /api/flashcards/due        imported vocabulary only
+POST /api/flashcards/{id}/answer
+```
+
+**`vocab_answers` is why "kanji or furigana, either counts" is true.** A
+textbook line like
+
+```
+相手   あいて   partner; the other person
+```
+
+is not one answer, it is four. 相手 and あいて are both right when the card asks
+for the Japanese; *either* gloss is right when it asks for the meaning. Storing
+the raw line and comparing against it marks "partner" wrong for want of a
+semicolon. `kind` (`written` / `reading` / `meaning`) is what lets one table
+serve both directions — a production card accepts `written` and `reading`, a
+recognition card accepts `meaning` — so the rule lives in the data rather than
+spread through the grader.
+
+**Two skills, two ladders.** Recognition and production are created together and
+scheduled independently, because recognising 免許 is easy long before you can
+produce it. Both are created up front rather than production being unlocked by
+recognition — gating one on the other would be reintroducing WaniKani's staging
+into a system deliberately kept apart from it.
+
+**SM-2 lives in `services/srs.py`**, as pure functions over a state record: 1
+day, 6 days, then multiplied by the card's ease. A failure resets the ladder
+rather than shortening it, and is remembered as a lapse — the algorithm knows
+the current interval but not that a word has been forgotten four times, and that
+count is what marks one worth relearning rather than rescheduling forever.
+
+Answer matching folds away what a person would never type: NFKC for width and
+composition, printed qualifiers (`決心（する）` is answered "決心"), and a leading
+article or "to". It is deliberately generous — marking "help" wrong for "to
+help" teaches nothing.
+
+**Sets** are many-to-many with words, because the same word plausibly belongs to
+a textbook lesson *and* a JLPT tier, and pinning it to one would force a
+duplicate row with its own divergent schedule. A set's page counts come from its
+sources' own statuses rather than a progress field, so "5 pages, 2 still reading"
+cannot drift.
+
 ## Deployment — Lambda + serverless Postgres
 
 The app is plain ASGI with no hosting-specific code in it. `uvicorn` runs it

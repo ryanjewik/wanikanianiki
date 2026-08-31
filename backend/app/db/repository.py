@@ -18,17 +18,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     SYNC_KEY_LAST_SYNCED,
     ReviewLog,
+    SrsState,
     StudyProgress,
     SyncMeta,
     User,
+    VocabAnswer,
     VocabItem,
+    VocabReviewLog,
+    VocabSet,
+    VocabSetItem,
     VocabSource,
 )
 from app.db.models import (
     Subject as SubjectRow,
 )
-from app.schemas import Assignment, DetectedItem, Subject
+from app.schemas import Assignment, DetectedItem, Flashcard, Subject
 from app.schemas import VocabItem as VocabItemOut
+from app.schemas import VocabSet as VocabSetOut
 
 # -- users -----------------------------------------------------------------
 
@@ -353,6 +359,8 @@ async def create_vocab_source(
     image_uri: str | None = None,
     jlpt_level: int | None = None,
     label: str | None = None,
+    set_id: int | None = None,
+    position: int = 0,
 ) -> VocabSource:
     """Record the upload before anything has been read from it.
 
@@ -365,6 +373,8 @@ async def create_vocab_source(
         image_uri=image_uri,
         jlpt_level=jlpt_level,
         label=label,
+        set_id=set_id,
+        position=position,
         status="pending",
     )
     session.add(row)
@@ -392,6 +402,334 @@ async def get_known_written_forms(session: AsyncSession) -> set[str]:
     """
     result = await session.execute(select(VocabItem.kanji_furigana))
     return set(result.scalars())
+
+
+# -- sets ------------------------------------------------------------------
+
+
+async def create_vocab_set(
+    session: AsyncSession, *, user_id: int, name: str, description: str | None = None
+) -> VocabSet:
+    row = VocabSet(user_id=user_id, name=name, description=description)
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def get_vocab_set(session: AsyncSession, set_id: int) -> VocabSet | None:
+    return await session.get(VocabSet, set_id)
+
+
+async def get_vocab_set_by_name(
+    session: AsyncSession, *, user_id: int, name: str
+) -> VocabSet | None:
+    result = await session.execute(
+        select(VocabSet).where(VocabSet.user_id == user_id, VocabSet.name == name)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_vocab_sets(session: AsyncSession, user_id: int) -> list[VocabSetOut]:
+    """Sets with their counts, in one pass.
+
+    The page counts are what make a multi-page import legible while it runs:
+    "5 pages, 2 still reading" is the honest state, and it comes from the
+    sources' own statuses rather than a progress field that could drift.
+    """
+    items = dict(
+        (
+            await session.execute(
+                select(VocabSetItem.set_id, func.count())
+                .group_by(VocabSetItem.set_id)
+            )
+        ).all()
+    )
+    pages: dict[int, dict[str, int]] = {}
+    rows = await session.execute(
+        select(VocabSource.set_id, VocabSource.status, func.count())
+        .where(VocabSource.set_id.is_not(None))
+        .group_by(VocabSource.set_id, VocabSource.status)
+    )
+    for set_id, status, count in rows.all():
+        bucket = pages.setdefault(set_id, {"total": 0, "pending": 0, "failed": 0})
+        bucket["total"] += count
+        if status == "pending":
+            bucket["pending"] += count
+        elif status == "failed":
+            bucket["failed"] += count
+
+    result = await session.execute(
+        select(VocabSet)
+        .where(VocabSet.user_id == user_id)
+        .order_by(VocabSet.created_at.desc())
+    )
+    out = []
+    for row in result.scalars():
+        page = pages.get(row.id, {"total": 0, "pending": 0, "failed": 0})
+        out.append(
+            VocabSetOut(
+                id=row.id,
+                name=row.name,
+                description=row.description,
+                created_at=row.created_at,
+                item_count=items.get(row.id, 0),
+                page_count=page["total"],
+                pages_pending=page["pending"],
+                pages_failed=page["failed"],
+            )
+        )
+    return out
+
+
+# -- flashcards ------------------------------------------------------------
+
+# Both skills are created up front rather than production being unlocked by
+# recognition. They are independent ladders by design, and gating one on the
+# other would be reintroducing WaniKani's staging into a system deliberately
+# kept separate from it.
+SKILL_TYPES = ("recognition", "production")
+
+
+def _answers_for(item: DetectedItem) -> list[VocabAnswer]:
+    """Every string that should count as right for this word.
+
+    The written form and the reading are both `written`/`reading` answers, which
+    is what makes "kanji or furigana, either is fine" true without the grader
+    knowing anything special. The meaning is split on semicolons first, because
+    "partner; the other person" is two answers and storing it whole makes the
+    second one impossible to give.
+    """
+    from app.services.srs import split_meanings
+
+    answers: list[VocabAnswer] = []
+
+    if item.kanji_furigana.strip():
+        answers.append(
+            VocabAnswer(kind="written", value=item.kanji_furigana, is_primary=True)
+        )
+    if item.furigana_only.strip() and item.furigana_only != item.kanji_furigana:
+        answers.append(
+            VocabAnswer(kind="reading", value=item.furigana_only, is_primary=True)
+        )
+
+    for index, meaning in enumerate(split_meanings(item.english)):
+        answers.append(
+            VocabAnswer(kind="meaning", value=meaning, is_primary=index == 0)
+        )
+    return answers
+
+
+async def create_flashcards(
+    session: AsyncSession,
+    items: Sequence[DetectedItem],
+    *,
+    user_id: int,
+    source_image_id: int | None = None,
+    set_id: int | None = None,
+) -> list[VocabItemOut]:
+    """Commit reviewed rows as studiable cards.
+
+    One call because the three writes are one fact: a word in the deck, the
+    answers that count for it, and a place in the schedule for each skill. A
+    word with no answers is unanswerable and a word with no SRS state never
+    comes up, so a partial write here is a silently broken card.
+
+    Skips words already in the deck rather than raising: the review screen marks
+    duplicates, but the deck can move on between extraction and confirm, and a
+    late duplicate is not worth failing an import over.
+    """
+    if not items:
+        return []
+
+    existing = await get_known_written_forms(session)
+    fresh = [i for i in items if i.kanji_furigana not in existing]
+    if not fresh:
+        return []
+
+    created: list[VocabItem] = []
+    for item in fresh:
+        row = VocabItem(
+            source="ocr_import",
+            kanji_furigana=item.kanji_furigana,
+            furigana_only=item.furigana_only,
+            english=item.english,
+            usage_context=item.usage_context,
+            jlpt_level=item.jlpt_level,
+            source_image_id=source_image_id,
+            is_user_edited=False,
+        )
+        session.add(row)
+        created.append(row)
+
+    await session.flush()
+
+    now = datetime.now(timezone.utc)
+    for row, item in zip(created, fresh, strict=True):
+        for answer in _answers_for(item):
+            answer.vocab_item_id = row.id
+            session.add(answer)
+
+        for skill in SKILL_TYPES:
+            # Due immediately: a word just imported is a word waiting to be
+            # learned, and holding it back would only need a second trigger.
+            session.add(
+                SrsState(
+                    user_id=user_id,
+                    vocab_item_id=row.id,
+                    skill_type=skill,
+                    due_at=now,
+                )
+            )
+
+        if set_id is not None:
+            session.add(VocabSetItem(set_id=set_id, vocab_item_id=row.id))
+
+    await session.flush()
+    return [_to_vocab_item(row) for row in created]
+
+
+async def get_due_flashcards(
+    session: AsyncSession, user_id: int, *, limit: int = 100, now: datetime | None = None
+) -> list[Flashcard]:
+    """Cards due, soonest first, with everything needed to study offline."""
+    now = now or datetime.now(timezone.utc)
+
+    result = await session.execute(
+        select(SrsState, VocabItem)
+        .join(VocabItem, VocabItem.id == SrsState.vocab_item_id)
+        .where(SrsState.user_id == user_id, SrsState.due_at <= now)
+        .order_by(SrsState.due_at)
+        .limit(limit)
+    )
+    rows = result.all()
+    if not rows:
+        return []
+
+    item_ids = {item.id for _, item in rows}
+    answers = await session.execute(
+        select(VocabAnswer).where(
+            VocabAnswer.vocab_item_id.in_(item_ids), VocabAnswer.accepted.is_(True)
+        )
+    )
+    by_item: dict[int, list[VocabAnswer]] = {}
+    for answer in answers.scalars():
+        by_item.setdefault(answer.vocab_item_id, []).append(answer)
+
+    return [
+        _to_flashcard(state, item, by_item.get(item.id, [])) for state, item in rows
+    ]
+
+
+def _to_flashcard(
+    state: SrsState, item: VocabItem, answers: list[VocabAnswer]
+) -> Flashcard:
+    """Assemble a card, choosing what goes on the front for this skill.
+
+    Recognition shows the Japanese and wants the meaning; production shows the
+    meaning and wants the Japanese — where *either* the written form or the
+    reading counts, which is the whole reason answers carry a kind.
+    """
+    if state.skill_type == "production":
+        prompt = item.english
+        wanted = {"written", "reading"}
+    else:
+        prompt = item.kanji_furigana
+        wanted = {"meaning"}
+
+    accepted = [a.value for a in answers if a.kind in wanted]
+
+    # A word whose reading was never printed still has its written form; a word
+    # with no meaning printed has no recognition answers at all. Fall back to
+    # the item's own field rather than shipping a card nothing can answer.
+    if not accepted:
+        accepted = [item.english] if wanted == {"meaning"} else [item.kanji_furigana]
+        accepted = [value for value in accepted if value.strip()]
+
+    return Flashcard(
+        srs_state_id=state.id,
+        vocab_item_id=item.id,
+        skill_type=state.skill_type,
+        prompt=prompt,
+        accepted_answers=accepted,
+        kanji_furigana=item.kanji_furigana,
+        furigana_only=item.furigana_only,
+        english=item.english,
+        usage_context=item.usage_context,
+        due_at=state.due_at,
+        interval_days=state.interval_days,
+        repetitions=state.repetitions,
+        lapses=state.lapses,
+        ease_factor=state.ease_factor,
+    )
+
+
+async def get_srs_state(session: AsyncSession, srs_state_id: int) -> SrsState | None:
+    return await session.get(SrsState, srs_state_id)
+
+
+async def get_accepted_answers(
+    session: AsyncSession, vocab_item_id: int, kinds: Sequence[str]
+) -> list[str]:
+    result = await session.execute(
+        select(VocabAnswer.value).where(
+            VocabAnswer.vocab_item_id == vocab_item_id,
+            VocabAnswer.kind.in_(kinds),
+            VocabAnswer.accepted.is_(True),
+        )
+    )
+    return list(result.scalars())
+
+
+async def record_vocab_review(
+    session: AsyncSession,
+    state: SrsState,
+    *,
+    correct: bool,
+    grade: int,
+    answer_given: str | None,
+    schedule,
+) -> None:
+    """Advance the schedule and append the history, together.
+
+    The log carries what was typed on purpose: when a grader marks something
+    wrong that the user is sure was right, the only way to tell a scheduling
+    problem from a matching problem is to see the actual input.
+    """
+    interval_before = state.interval_days
+
+    state.ease_factor = schedule.ease_factor
+    state.interval_days = schedule.interval_days
+    state.repetitions = schedule.repetitions
+    state.lapses = schedule.lapses
+    state.due_at = schedule.due_at
+    state.last_reviewed_at = datetime.now(timezone.utc)
+    state.reviews_total += 1
+    if correct:
+        state.reviews_correct += 1
+
+    session.add(
+        VocabReviewLog(
+            srs_state_id=state.id,
+            correct=correct,
+            grade=grade,
+            answer_given=answer_given,
+            interval_before_days=interval_before,
+            interval_after_days=schedule.interval_days,
+        )
+    )
+
+
+async def get_vocab_review_days(session: AsyncSession) -> set[date]:
+    """Days with at least one imported-vocab review.
+
+    The streak is the union of this and `get_review_days` — a day spent on your
+    own deck is still a day studied, and the dashboard should not pretend
+    otherwise once this side has any history.
+    """
+    result = await session.execute(
+        select(func.date(VocabReviewLog.created_at)).distinct()
+    )
+    return {row for row in result.scalars() if row is not None}
 
 
 async def insert_vocab_items(

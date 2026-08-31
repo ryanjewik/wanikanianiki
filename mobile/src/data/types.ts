@@ -213,6 +213,63 @@ export interface DetectedItem {
   note?: string;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Sets, flashcards and the SRS that schedules them                            */
+/* -------------------------------------------------------------------------- */
+
+/** A named group the user organises their own deck with. */
+export interface VocabSet {
+  id: number;
+  name: string;
+  description: string | null;
+  createdAt: string;
+  itemCount: number;
+  /** Pages photographed into it, and how far through reading them we are. */
+  pageCount: number;
+  pagesPending: number;
+  pagesFailed: number;
+}
+
+/**
+ * Recognition shows the Japanese and asks for the meaning; production shows the
+ * meaning and asks for the word. They schedule independently — recognising 免許
+ * is easy long before you can produce it.
+ */
+export type SkillType = 'recognition' | 'production';
+
+export interface Flashcard {
+  srsStateId: number;
+  vocabItemId: number;
+  skillType: SkillType;
+  /** What the card shows. Chosen server-side from `skillType`. */
+  prompt: string;
+  /**
+   * Every string that counts as right. Ships with the card so a session grades
+   * offline — for a production card this is the kanji *and* the reading.
+   */
+  acceptedAnswers: string[];
+  kanjiFurigana: string;
+  furiganaOnly: string;
+  english: string;
+  usageContext: string | null;
+  dueAt: string;
+  intervalDays: number;
+  repetitions: number;
+  lapses: number;
+  easeFactor: number;
+}
+
+export interface FlashcardOutcome {
+  correct: boolean;
+  grade: number;
+  acceptedAnswers: string[];
+  dueAt: string;
+  intervalDays: number;
+  repetitions: number;
+  lapses: number;
+  easeFactor: number;
+}
+
 export type StudyMode = 'notecards' | 'quiz' | 'srs';
 
 export type QuestionType =
