@@ -7,3 +7,6 @@
 .pytest_cache/
 __pycache__/
 *.py[cod]
+
+# Local Postgres used for migration checks
+*.log
