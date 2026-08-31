@@ -142,30 +142,34 @@ async def test_ambiguous_needs_more_than_one_candidate():
     assert item.selected is True
 
 
-async def test_a_word_listed_twice_on_one_page_keeps_the_glossed_copy():
-    """Taken from a real page.
+async def test_a_word_listed_twice_keeps_the_fuller_row():
+    """Both copies carry a meaning, so neither is dropped for lacking one.
 
-    A spread carrying both a 単語リスト and a 覚える単語 section lists つまり
-    twice — once with its meaning, once bare. Importing both would put two rows
-    in the deck for one word, each with its own SRS state, so neither would be
-    that word's real progress.
+    The bare repeats from a sentence list never reach here any more — they are
+    dropped at extraction. What is left is a word a spread genuinely glosses
+    twice, where one entry has more on it than the other. Importing both would
+    put two rows in the deck for one word, each with its own SRS state, so
+    neither would be that word's real progress.
     """
     client = fake_client([
-        ExtractedRow(kanji_furigana="つまり", furigana_only="つまり",
-                     english="in other words", ambiguous=False),
-        ExtractedRow(kanji_furigana="つまり", furigana_only="つまり",
-                     english="", ambiguous=False),
+        ExtractedRow(kanji_furigana="必要な", furigana_only="", english="necessary",
+                     ambiguous=False),
+        ExtractedRow(kanji_furigana="必要な", furigana_only="ひつような",
+                     english="necessary", usage_context="〜が", ambiguous=False),
     ])
 
     items = await extract_page(PNG, "image/png", settings=settings(), client=client)
     marked = mark_duplicates(items, existing=set())
 
-    glossed = next(i for i in marked if i.english)
-    bare = next(i for i in marked if not i.english)
+    kept = next(i for i in marked if i.status == "ok")
+    skipped = next(i for i in marked if i.status == "duplicate")
 
-    assert glossed.status == "ok" and glossed.selected is True
-    assert bare.status == "duplicate" and bare.selected is False
-    assert "twice on this page" in bare.note
+    # The one carrying a reading and a particle is the one worth keeping.
+    assert kept.furigana_only == "ひつような"
+    assert kept.usage_context == "〜が"
+    assert kept.selected is True
+    assert skipped.selected is False
+    assert "twice on this page" in skipped.note
 
 
 async def test_repeated_rows_get_distinct_keys():
@@ -177,11 +181,12 @@ async def test_repeated_rows_get_distinct_keys():
         ExtractedRow(kanji_furigana="つまり", furigana_only="つまり",
                      english="in other words", ambiguous=False),
         ExtractedRow(kanji_furigana="つまり", furigana_only="つまり",
-                     english="", ambiguous=False),
+                     english="in other words", ambiguous=False),
     ])
 
     items = await extract_page(PNG, "image/png", settings=settings(), client=client)
-    assert len({i.key for i in items}) == len(items)
+    assert len(items) == 2
+    assert len({i.key for i in items}) == 2
 
 
 def test_duplicates_match_on_the_written_form():
@@ -269,28 +274,39 @@ async def test_a_bracketed_particle_does_not_end_up_in_the_word():
     assert [i.usage_context for i in items] == ["〜が", "病気を"]
 
 
-async def test_a_word_with_no_printed_meaning_arrives_deselected():
-    """The 覚える単語と例文 list prints the word alone.
+async def test_an_entry_with_no_printed_meaning_is_dropped():
+    """A card with a blank back cannot be studied.
 
-    The entry is still wanted — it is usually the same word the list pages
-    gloss — but importing it silently would put a card in the deck with a blank
-    back.
+    The 覚える単語 list gives words without glosses, and it gives them because
+    the word-list pages on the same spread already carry them. Importing the
+    bare copies adds nothing and clutters the review screen.
     """
     client = fake_client([
-        ExtractedRow(
-            kanji_furigana="言葉", furigana_only="", english="", ambiguous=False,
-        )
+        ExtractedRow(kanji_furigana="免許", furigana_only="めんきょ",
+                     english="license", ambiguous=False),
+        ExtractedRow(kanji_furigana="言葉", furigana_only="", english="",
+                     ambiguous=False),
+    ])
+
+    items = await extract_page(PNG, "image/png", settings=settings(), client=client)
+
+    assert [i.kanji_furigana for i in items] == ["免許"]
+
+
+async def test_a_missing_reading_does_not_drop_an_entry():
+    """Only the meaning is load-bearing.
+
+    Plenty of words are printed without a reading — けが on the sample pages —
+    and they are perfectly studiable.
+    """
+    client = fake_client([
+        ExtractedRow(kanji_furigana="けが", furigana_only="", english="injury",
+                     ambiguous=False),
     ])
 
     (item,) = await extract_page(PNG, "image/png", settings=settings(), client=client)
-
-    assert item.kanji_furigana == "言葉"
-    assert item.selected is False
-    assert "No meaning printed" in item.note
-    # Not an ambiguous reading — a different problem, and the UI shows it
-    # differently.
-    assert item.status == "ok"
-    assert item.reading_choices is None
+    assert item.kanji_furigana == "けが"
+    assert item.selected is True
 
 
 async def test_printed_suffixes_are_kept_as_the_page_prints_them():

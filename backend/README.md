@@ -126,6 +126,13 @@ three columns apart — kanji+furigana, kana, English. Raw text extraction throw
 that structure away. The page goes to `claude-opus-5` with a schema attached and
 comes back as rows.
 
+**An entry with no printed meaning is not returned.** The 覚える単語 lists pair
+words with example sentences and give no gloss, because the word-list pages on
+the same spread already carry one. A card with a blank back cannot be studied,
+and the model is told never to fill the gap itself — an invented meaning is
+indistinguishable from a printed one once it is in a deck. A missing *reading*
+is fine; plenty of words are printed without one.
+
 **Ambiguity is flagged, not guessed.** 辛い is からい or つらい and the page
 often does not say. Those rows come back `ambiguous`, with the candidates
 listed, and arrive **deselected** — a wrong reading here goes into an SRS and

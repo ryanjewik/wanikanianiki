@@ -68,9 +68,8 @@ class ExtractedRow(BaseModel):
         description=(
             "The English meaning exactly as printed, semicolons and all: "
             "'to save; to help [vt.]'. Keep parenthesised qualifiers such as "
-            "'(polite)' or '(=すみません)'. Empty string where the page prints "
-            "no meaning, as in an example-sentence list — never your own "
-            "translation."
+            "'(polite)' or '(=すみません)'. Never your own translation — an "
+            "entry whose meaning is not printed should not be returned at all."
         )
     )
     usage_context: str = Field(
@@ -115,10 +114,17 @@ Every vocabulary entry on the page. They appear in three layouts:
    followed by a full Japanese example sentence.
 
 **In layout 3, take the word and discard the sentence.** The word is the entry; \
-the sentence is an illustration of it and is not wanted. These entries usually \
-print no reading and no English — leave both empty rather than supplying your \
-own. A blank field is honest and the reviewer can fill it; an invented meaning \
-looks identical to a printed one and gets rehearsed as fact.
+the sentence is an illustration of it and is not wanted.
+
+**Skip any entry that prints no English meaning.** Layout 3 usually gives none, \
+because it repeats words the list pages already gloss — and a card with a blank \
+back cannot be studied. Never fill the gap with your own translation: an \
+invented meaning is indistinguishable from a printed one once it is in a deck, \
+and it gets rehearsed as fact. If the meaning is not on the page, the entry is \
+not on the page.
+
+A missing *reading* is fine and the entry still counts — plenty of words are \
+printed without one.
 
 One photo often catches more than one of these layouts at once. Return the \
 entries from all of them.
@@ -266,28 +272,22 @@ async def extract_page(
     if page is None:  # pragma: no cover - parse() populates this or raises
         raise ExtractionFailed("The extraction service returned no rows.")
 
-    return [
-        _to_detected(row, jlpt_level, index) for index, row in enumerate(page.rows)
-    ]
+    # Enforced here as well as asked for in the prompt. An entry with no
+    # meaning is a card with a blank back, and the model returning one anyway
+    # is likelier than the reviewer noticing every time.
+    usable = [row for row in page.rows if row.english.strip()]
+    if dropped := len(page.rows) - len(usable):
+        logger.info(
+            "Skipped %d of %d entries with no printed meaning", dropped, len(page.rows)
+        )
+
+    return [_to_detected(row, jlpt_level, index) for index, row in enumerate(usable)]
 
 
 def _to_detected(
     row: ExtractedRow, jlpt_level: int | None, index: int = 0
 ) -> DetectedItem:
     ambiguous = row.ambiguous and len(row.reading_choices) > 1
-
-    # Example-sentence lists print the word alone. The entry is still wanted —
-    # it is usually the same word the list pages gloss — but it must not import
-    # with a blank back, so it arrives deselected and says why.
-    needs_meaning = not row.english.strip()
-
-    if ambiguous:
-        note = "Pick the reading this page means."
-    elif needs_meaning:
-        note = "No meaning printed here. Add one, or import it from the word list."
-    else:
-        note = None
-
     return DetectedItem(
         # Unique within the page, and stable across re-renders. The position
         # is in it because a word can legitimately appear twice on one page —
@@ -302,11 +302,11 @@ def _to_detected(
         # The tier the user picked at upload time cascades onto every row.
         jlpt_level=jlpt_level,
         status="ambiguous" if ambiguous else "ok",
-        # Anything needing a decision starts deselected: defaulting it on
-        # invites blind confirmation of a guess.
-        selected=not (ambiguous or needs_meaning),
+        # An ambiguous row starts deselected: it needs a decision before it is
+        # worth importing, and defaulting it on invites blind confirmation.
+        selected=not ambiguous,
         reading_choices=row.reading_choices if ambiguous else None,
-        note=note,
+        note="Pick the reading this page means." if ambiguous else None,
     )
 
 

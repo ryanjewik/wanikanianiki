@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import glob
+import logging
 import mimetypes
 import sys
 import time
@@ -69,6 +70,11 @@ async def run(paths: list[Path], jlpt: int | None) -> int:
         )
         return 2
 
+    # The service logs how many entries it skipped for having no meaning,
+    # which is the difference between "the page was read badly" and "the page
+    # was a sentence list".
+    logging.basicConfig(level=logging.INFO, format="   %(message)s")
+
     print(f"model: {settings.vision_model}   timeout: {settings.vision_timeout_seconds}s\n")
 
     slowest = 0.0
@@ -97,14 +103,10 @@ async def run(paths: list[Path], jlpt: int | None) -> int:
         slowest = max(slowest, elapsed)
 
         ambiguous = [i for i in items if i.status == "ambiguous"]
-        no_meaning = [i for i in items if not i.english.strip()]
         with_particle = [i for i in items if i.usage_context]
 
         print(f"   {len(items)} rows in {elapsed:.1f}s")
-        print(
-            f"   {len(ambiguous)} ambiguous · {len(no_meaning)} without a meaning · "
-            f"{len(with_particle)} with a particle"
-        )
+        print(f"   {len(ambiguous)} ambiguous · {len(with_particle)} with a particle")
         for item in items:
             particle = f"[{item.usage_context}]" if item.usage_context else ""
             flag = {"ambiguous": "?", "duplicate": "="}.get(item.status, " ")
