@@ -29,6 +29,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Iterable, Mapping
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -417,6 +418,24 @@ class WaniKaniClient:
 
 
 # -- helpers ---------------------------------------------------------------
+
+
+@lru_cache
+def get_client() -> WaniKaniClient:
+    """The one client for this process. Cached the way `get_settings()` is.
+
+    This has to be process-level rather than application-level, because the two
+    are not the same thing under Lambda. Mangum constructs its `LifespanCycle`
+    inside `__call__`, so a FastAPI `lifespan` that builds the client runs on
+    *every* invocation — handing each request a fresh `RateLimiter` with an
+    empty window, and so a private 60/min budget against a limit that is
+    actually per token. The limiter only limits anything if the instance
+    outlives the request, which means it has to hang off the module.
+
+    Warm invocations then share both the limiter and the httpx connection pool,
+    which is the behaviour `main.py` always intended.
+    """
+    return WaniKaniClient(get_settings())
 
 
 def _clean_params(params: Mapping[str, Any] | None) -> dict[str, Any] | None:
