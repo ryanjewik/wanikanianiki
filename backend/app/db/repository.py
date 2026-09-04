@@ -481,6 +481,24 @@ async def list_vocab_sets(session: AsyncSession, user_id: int) -> list[VocabSetO
     return out
 
 
+async def list_vocab_set_items(session: AsyncSession, set_id: int) -> list[VocabItemOut]:
+    """The words in one set, oldest membership first.
+
+    Ordered by when the word joined the set rather than by id: a set is filled
+    page by page, so membership order is the order the pages were read, which is
+    the order the textbook prints them. Sorting by `vocab_items.id` would
+    instead interleave anything that was already in the deck from another
+    import.
+    """
+    result = await session.execute(
+        select(VocabItem)
+        .join(VocabSetItem, VocabSetItem.vocab_item_id == VocabItem.id)
+        .where(VocabSetItem.set_id == set_id)
+        .order_by(VocabSetItem.added_at, VocabItem.id)
+    )
+    return [_to_vocab_item(row) for row in result.scalars()]
+
+
 # -- flashcards ------------------------------------------------------------
 
 # Both skills are created up front rather than production being unlocked by

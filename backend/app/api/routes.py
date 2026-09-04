@@ -555,6 +555,42 @@ async def list_vocab_sets(
     return await repo.list_vocab_sets(session, user.id)
 
 
+@router.get(
+    "/api/vocab-sets/{set_id}/items",
+    response_model=list[VocabItem],
+    tags=["import"],
+)
+async def list_vocab_set_items(
+    set_id: int,
+    session: AsyncSession = Depends(db_session),
+) -> list[VocabItem]:
+    """The words in one set.
+
+    Separate from the set list on purpose: that endpoint answers "what decks do
+    I have" and carries counts only, so browsing one deck does not make listing
+    all of them proportional to the size of the whole collection.
+
+    Returns the words themselves rather than cards. A word is one row here and
+    two `srs_state` rows, and a deck browser shows words; `/api/flashcards/due`
+    is the endpoint that deals in cards.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown set"
+        )
+
+    vocab_set = await repo.get_vocab_set(session, set_id)
+    # A set belonging to someone else is reported as missing rather than
+    # forbidden: which ids exist is not this caller's business either way.
+    if vocab_set is None or vocab_set.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown set"
+        )
+
+    return await repo.list_vocab_set_items(session, set_id)
+
+
 # -- studying --------------------------------------------------------------
 
 

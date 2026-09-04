@@ -281,3 +281,49 @@ async def test_extraction_failure_is_reported_not_raised(client, monkeypatch):
     assert result["status"] == "failed"
     assert "too large" in result["detail"]
     assert result["items"] == []
+
+
+async def test_set_items_lists_what_was_imported_into_the_set(client, monkeypatch):
+    """A page photographed into a set is browsable as that set's words."""
+    _stub_extraction(monkeypatch, ROWS)
+
+    set_id = (
+        await client.post("/api/vocab-sets", json={"name": "Quartet I, Lesson 1"})
+    ).json()["id"]
+
+    source_id = (
+        await client.post(
+            "/api/vocab-sources",
+            files={"image": ("p.png", PNG, "image/png")},
+            data={"set_id": str(set_id)},
+        )
+    ).json()["sourceId"]
+    items = (await client.get(f"/api/vocab-sources/{source_id}")).json()["items"]
+    for item in items:
+        item["selected"] = True
+        if item["status"] == "ambiguous":
+            item["furiganaOnly"] = "からい"
+            item["status"] = "ok"
+    await client.post(f"/api/vocab-sources/{source_id}/confirm", json={"items": items})
+
+    listed = await client.get(f"/api/vocab-sets/{set_id}/items")
+    assert listed.status_code == 200
+    assert [row["kanjiFurigana"] for row in listed.json()] == ["食べる", "辛い"]
+
+    # The set list's own count agrees with the rows the browser gets.
+    sets = (await client.get("/api/vocab-sets")).json()
+    assert next(s for s in sets if s["id"] == set_id)["itemCount"] == 2
+
+
+async def test_set_items_is_empty_for_a_set_nothing_was_imported_into(client):
+    set_id = (
+        await client.post("/api/vocab-sets", json={"name": "Empty"})
+    ).json()["id"]
+
+    listed = await client.get(f"/api/vocab-sets/{set_id}/items")
+    assert listed.status_code == 200
+    assert listed.json() == []
+
+
+async def test_set_items_404s_for_an_unknown_set(client):
+    assert (await client.get("/api/vocab-sets/9999/items")).status_code == 404
