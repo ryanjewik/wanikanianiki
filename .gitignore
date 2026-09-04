@@ -58,6 +58,8 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# generated native folders (Expo prebuild output, under mobile/)
+# generated native folders (Expo prebuild output). /android is a prebuild that
+# ran from the repo root rather than mobile/; regenerate with `npx expo prebuild`.
 /mobile/ios
 /mobile/android
+/android
