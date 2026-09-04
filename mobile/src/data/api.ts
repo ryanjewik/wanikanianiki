@@ -12,9 +12,13 @@ import Constants from 'expo-constants';
 import type {
   Assignment,
   DashboardSummary,
+  DayActivitySummary,
   DetectedItem,
   Flashcard,
   FlashcardOutcome,
+  GrammarEnrichment,
+  GrammarEntry,
+  GrammarExampleInput,
   LessonBundle,
   ReviewAnswer,
   Subject,
@@ -376,4 +380,120 @@ export function answerFlashcard(
  */
 export function fetchLessonBundle(signal?: AbortSignal): Promise<LessonBundle | null> {
   return request<LessonBundle | null>('/api/lesson-bundles/next', { signal });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Grammar                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface GrammarEntryInput {
+  pattern: string;
+  /** The day it goes on the calendar, YYYY-MM-DD, chosen by the device. */
+  learnedOn: string;
+  senseLabel?: string;
+  source?: string | null;
+  note?: string | null;
+  examples?: GrammarExampleInput[];
+}
+
+/**
+ * Log a grammar point.
+ *
+ * The pattern and a date are all this needs — `～てからでないと` is enough for a
+ * model to know the point, and everything else is either your own context or
+ * enrichment output. Re-logging one you already have reopens it rather than
+ * adding a second calendar mark.
+ */
+export function createGrammarEntry(entry: GrammarEntryInput): Promise<GrammarEntry> {
+  return request<GrammarEntry>('/api/grammar-entries', { method: 'POST', body: entry });
+}
+
+/** Points logged, newest first. The window is what a calendar month asks for. */
+export function fetchGrammarEntries(
+  range: { since?: string; until?: string } = {},
+  signal?: AbortSignal,
+): Promise<GrammarEntry[]> {
+  const query = new URLSearchParams();
+  if (range.since) query.set('since', range.since);
+  if (range.until) query.set('until', range.until);
+  const suffix = query.toString() ? `?${query}` : '';
+  return request<GrammarEntry[]>(`/api/grammar-entries${suffix}`, { signal });
+}
+
+export function fetchGrammarEntry(
+  entryId: number,
+  signal?: AbortSignal,
+): Promise<GrammarEntry> {
+  return request<GrammarEntry>(`/api/grammar-entries/${entryId}`, { signal });
+}
+
+/**
+ * Correct an entry, or accept what enrichment produced.
+ *
+ * PATCH, so absent fields stay as they are: confirming an enrichment and fixing
+ * a typo are the same call, and neither has to echo back the whole row.
+ * `examples` is the exception — sending it replaces the list, which is how a
+ * sentence gets deleted.
+ */
+export function updateGrammarEntry(
+  entryId: number,
+  changes: Partial<{
+    senseLabel: string;
+    meaning: string | null;
+    formation: string | null;
+    style: string | null;
+    jlptLevel: number | null;
+    source: string | null;
+    note: string | null;
+    learnedOn: string;
+    enriched: boolean;
+    examples: GrammarExampleInput[];
+  }>,
+): Promise<GrammarEntry> {
+  return request<GrammarEntry>(`/api/grammar-entries/${entryId}`, {
+    method: 'PATCH',
+    body: changes,
+  });
+}
+
+export function deleteGrammarEntry(entryId: number): Promise<void> {
+  return request<void>(`/api/grammar-entries/${entryId}`, { method: 'DELETE' });
+}
+
+/**
+ * Ask a model to fill the entry in, for you to check.
+ *
+ * Writes the meaning, formation, register, level and examples onto the row and
+ * leaves `enriched` false — accepting them is `updateGrammarEntry(id, {enriched:
+ * true})`. Two answers write nothing and come back as questions instead: an
+ * unrecognised pattern (likely a typo) and one with several senses where none
+ * was named. Check `applied` before showing the entry as an answer.
+ *
+ * Longer than the default timeout because the request is held open rather than
+ * polled: the server bounds it at `grammar_timeout_seconds`.
+ */
+export function enrichGrammarEntry(entryId: number): Promise<GrammarEnrichment> {
+  return request<GrammarEnrichment>(`/api/grammar-entries/${entryId}/enrich`, {
+    method: 'POST',
+    timeoutMs: 75_000,
+  });
+}
+
+/**
+ * What happened on each day — the calendar's source.
+ *
+ * Richer than the streak on purpose. The streak needs one bit per day and takes
+ * it from answered cards; this also carries the days you only logged grammar,
+ * which show on the calendar without counting.
+ */
+export function fetchActivity(
+  since?: string,
+  signal?: AbortSignal,
+): Promise<DayActivitySummary[]> {
+  const query = new URLSearchParams();
+  if (since) query.set('since', since);
+  const tz = deviceTimeZone();
+  if (tz) query.set('tz', tz);
+  const suffix = query.toString() ? `?${query}` : '';
+  return request<DayActivitySummary[]>(`/api/activity${suffix}`, { signal });
 }

@@ -73,6 +73,16 @@ class Settings(BaseSettings):
     # minutes of billed idle.
     vision_timeout_seconds: float = 120.0
 
+    # Grammar enrichment. Pinned for the same reason `vision_model` is: the
+    # prompt is tuned against a model and a silent upgrade re-tunes it.
+    grammar_model: str = "claude-opus-5"
+
+    # Shorter than the vision window because the work is smaller — one pattern
+    # in, a short structured answer out, no image to read. The request is held
+    # open rather than polled (see `services/grammar.py`), so this is also how
+    # long a phone can be left waiting.
+    grammar_timeout_seconds: float = 60.0
+
     # --- Database -----------------------------------------------------------
     # Neon/Supabase style URL. Empty means "no database configured": the app
     # still serves every read-only WaniKani-backed route, it just cannot cache.
@@ -116,8 +126,13 @@ class Settings(BaseSettings):
         return bool(self.database_url)
 
     @property
-    def has_vision(self) -> bool:
+    def has_anthropic(self) -> bool:
+        """One key serves photo import and grammar enrichment alike."""
         return self.anthropic_api_key is not None
+
+    @property
+    def has_vision(self) -> bool:
+        return self.has_anthropic
 
     @property
     def migration_url(self) -> str:

@@ -446,3 +446,24 @@ class DayActivitySummary(CamelModel):
     @property
     def studied(self) -> bool:
         return self.reviews > 0 or self.vocab_reviews > 0
+
+
+class GrammarEnrichment(CamelModel):
+    """What came back from asking a model about a pattern.
+
+    Wraps the entry rather than extending it, because two of these are advice
+    about the request rather than facts about the point: whether the pattern was
+    recognised at all, and which sense was meant. Neither belongs in a column —
+    they are answered once, by the person looking at this screen, and the answer
+    is a corrected `pattern` or a filled-in `senseLabel`.
+
+    `applied` is false when nothing was written. The entry comes back untouched
+    and the client has a question to ask rather than a result to show.
+    """
+
+    entry: GrammarEntry
+    applied: bool
+    #: The pattern was not recognised — likely a typo. Nothing was written.
+    unrecognised: bool = False
+    #: The pattern has several senses and none was named. Nothing was written.
+    other_senses: list[str] = []

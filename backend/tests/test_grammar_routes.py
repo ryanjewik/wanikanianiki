@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from types import SimpleNamespace
 
 import httpx2 as httpx
 import pytest
@@ -18,6 +19,7 @@ from app.config import Settings, get_settings
 from app.db import repository as repo
 from app.db.models import Base
 from app.main import create_app
+from app.services import grammar as grammar_service
 from app.wanikani.mapping import build_streak
 
 RAW_URL = os.environ.get("TEST_DATABASE_URL", "")
@@ -276,3 +278,192 @@ async def test_a_logged_day_shows_on_the_calendar_but_is_not_a_study_day(ctx):
     vocab_days = await repo.get_vocab_review_days(session, user.timezone)
     assert date(2026, 9, 3) not in review_days | vocab_days
     assert build_streak(review_days | vocab_days, today=date(2026, 9, 3)).days == 0
+
+
+# -- enrichment ------------------------------------------------------------
+
+
+class FakeMessages:
+    """Only the vendor call is replaced; the rest of the path runs for real."""
+
+    def __init__(self, result, stop_reason="end_turn", raises=None):
+        self._result = result
+        self._stop_reason = stop_reason
+        self._raises = raises
+        self.calls: list[dict] = []
+
+    async def parse(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._raises is not None:
+            raise self._raises
+        return SimpleNamespace(
+            stop_reason=self._stop_reason, parsed_output=self._result
+        )
+
+
+def _stub(monkeypatch, result, **kwargs):
+    fake = FakeMessages(result, **kwargs)
+    monkeypatch.setattr(
+        grammar_service, "_client", lambda settings: SimpleNamespace(messages=fake)
+    )
+    return fake
+
+
+def _enriched(**overrides):
+    payload = {
+        "unrecognised": False,
+        "other_senses": [],
+        "meaning": "unless/until you first do X, you cannot Y",
+        "formation": "Vて + からでないと + negative",
+        "style": "plain",
+        "jlpt_level": 3,
+        "examples": [
+            {"japanese": "手を洗ってからでないと食べられない。",
+             "english": "You can't eat until you've washed your hands."},
+            {"japanese": "予約してからでないと入れませんか。",
+             "english": "Can't we get in without booking first?"},
+        ],
+    }
+    payload.update(overrides)
+    return grammar_service.EnrichedGrammar(**payload)
+
+
+async def _log(client, **overrides):
+    body = {"pattern": POINT, "learnedOn": "2026-09-03"}
+    body.update(overrides)
+    return (await client.post("/api/grammar-entries", json=body)).json()["id"]
+
+
+async def test_enrichment_fills_the_row_but_does_not_confirm_it(ctx, monkeypatch):
+    """The model writes the answer; only a person may call it checked."""
+    client, _, _ = ctx
+    _stub(monkeypatch, _enriched())
+    entry_id = await _log(client)
+
+    response = await client.post(f"/api/grammar-entries/{entry_id}/enrich")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["applied"] is True
+
+    entry = body["entry"]
+    assert entry["meaning"] == "unless/until you first do X, you cannot Y"
+    assert entry["formation"] == "Vて + からでないと + negative"
+    assert entry["jlptLevel"] == 3
+    assert len(entry["examples"]) == 2
+    # The whole point: generated content is not confirmed content.
+    assert entry["enriched"] is False
+
+
+async def test_an_unrecognised_pattern_writes_nothing(ctx, monkeypatch):
+    """A typo must not come back as a confident explanation."""
+    client, _, _ = ctx
+    _stub(monkeypatch, _enriched(unrecognised=True, meaning="", examples=[]))
+    entry_id = await _log(client, pattern="～てからでないとX")
+
+    body = (await client.post(f"/api/grammar-entries/{entry_id}/enrich")).json()
+    assert body["unrecognised"] is True
+    assert body["applied"] is False
+    assert body["entry"]["meaning"] is None
+    assert body["entry"]["examples"] == []
+
+
+async def test_an_ambiguous_pattern_asks_instead_of_choosing(ctx, monkeypatch):
+    """ものだ is four points; picking one silently is the failure to avoid."""
+    client, _, _ = ctx
+    senses = ["general truth", "nostalgic recollection", "strong advice", "exclamation"]
+    _stub(monkeypatch, _enriched(other_senses=senses, meaning="", examples=[]))
+    entry_id = await _log(client, pattern="～ものだ")
+
+    body = (await client.post(f"/api/grammar-entries/{entry_id}/enrich")).json()
+    assert body["otherSenses"] == senses
+    assert body["applied"] is False
+    assert body["entry"]["meaning"] is None
+
+
+async def test_a_named_sense_is_passed_through_to_the_model(ctx, monkeypatch):
+    """Having answered which sense, the user should not be asked again."""
+    client, _, _ = ctx
+    fake = _stub(monkeypatch, _enriched())
+    entry_id = await _log(client, pattern="～ものだ", senseLabel="strong advice")
+
+    await client.post(f"/api/grammar-entries/{entry_id}/enrich")
+    prompt = fake.calls[0]["messages"][0]["content"]
+    assert "strong advice" in prompt
+    assert "～ものだ" in prompt
+
+
+async def test_the_learners_own_sentence_reaches_the_prompt_and_survives(ctx, monkeypatch):
+    """It is the authority on sense and register, and it is not ours to replace."""
+    client, _, _ = ctx
+    fake = _stub(monkeypatch, _enriched())
+    mine = "先生に聞いてからでないと決められません。"
+    entry_id = await _log(
+        client,
+        examples=[{"japanese": mine, "isUserSupplied": True}],
+        note="the negative trips me up",
+        source="Quartet II, L5",
+    )
+
+    body = (await client.post(f"/api/grammar-entries/{entry_id}/enrich")).json()
+
+    prompt = fake.calls[0]["messages"][0]["content"]
+    assert mine in prompt
+    assert "the negative trips me up" in prompt
+    assert "Quartet II, L5" in prompt
+
+    japanese = [e["japanese"] for e in body["entry"]["examples"]]
+    assert mine in japanese
+    assert len(japanese) == 3  # theirs plus the two generated
+    assert japanese[0] == mine  # and it still sorts first
+
+
+async def test_re_enriching_replaces_generated_sentences_but_not_yours(ctx, monkeypatch):
+    """Otherwise every re-run stacks up near-duplicates of the last one."""
+    client, _, _ = ctx
+    mine = "先生に聞いてからでないと決められません。"
+    entry_id = await _log(client, examples=[{"japanese": mine, "isUserSupplied": True}])
+
+    _stub(monkeypatch, _enriched())
+    await client.post(f"/api/grammar-entries/{entry_id}/enrich")
+
+    _stub(monkeypatch, _enriched(examples=[
+        {"japanese": "別の文。", "english": "A different sentence."}
+    ]))
+    body = (await client.post(f"/api/grammar-entries/{entry_id}/enrich")).json()
+
+    japanese = [e["japanese"] for e in body["entry"]["examples"]]
+    assert japanese == [mine, "別の文。"]
+
+
+async def test_confirming_after_enrichment_is_the_ordinary_patch(ctx, monkeypatch):
+    """Enrich then accept — the two halves of the reviewed-before-trusted rule."""
+    client, _, _ = ctx
+    _stub(monkeypatch, _enriched())
+    entry_id = await _log(client)
+
+    await client.post(f"/api/grammar-entries/{entry_id}/enrich")
+    confirmed = await client.patch(
+        f"/api/grammar-entries/{entry_id}", json={"enriched": True}
+    )
+
+    body = confirmed.json()
+    assert body["enriched"] is True
+    # Confirming did not disturb what enrichment wrote.
+    assert body["formation"] == "Vて + からでないと + negative"
+
+
+async def test_a_refusal_is_reported_not_swallowed(ctx, monkeypatch):
+    """HTTP 200 with no parsed output; reading it first would raise something opaque."""
+    client, _, _ = ctx
+    _stub(monkeypatch, None, stop_reason="refusal")
+    entry_id = await _log(client)
+
+    response = await client.post(f"/api/grammar-entries/{entry_id}/enrich")
+    assert response.status_code == 502
+
+
+async def test_enriching_an_unknown_entry_is_a_404(ctx, monkeypatch):
+    client, _, _ = ctx
+    _stub(monkeypatch, _enriched())
+    assert (await client.post("/api/grammar-entries/9999/enrich")).status_code == 404

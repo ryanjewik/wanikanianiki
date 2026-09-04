@@ -327,3 +327,79 @@ export interface PendingWrite {
   createdAt: string;
   syncedAt: string | null;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Grammar                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface GrammarExample {
+  id: number;
+  japanese: string;
+  english: string | null;
+  /** Copied out of the actual lesson rather than generated. Sorts first. */
+  isUserSupplied: boolean;
+}
+
+/**
+ * A grammar point, on the day it was learned.
+ *
+ * Most of this is enrichment output. You type `pattern` and, when it helps,
+ * `source`, `note` and one real example; the rest is filled in and is not
+ * trusted until `enriched` says a human looked at it.
+ *
+ * Logging one puts a mark on the calendar and never touches the streak.
+ */
+export interface GrammarEntry {
+  id: number;
+  pattern: string;
+  /** Empty when the pattern has one sense, which is the common case. */
+  senseLabel: string;
+  meaning: string | null;
+  formation: string | null;
+  /** Register: plain / polite / written / conversational. */
+  style: string | null;
+  jlptLevel: number | null;
+  source: string | null;
+  note: string | null;
+  learnedOn: string;
+  enriched: boolean;
+  examples: GrammarExample[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GrammarExampleInput {
+  japanese: string;
+  english?: string | null;
+  isUserSupplied?: boolean;
+}
+
+/**
+ * What came back from asking a model about a pattern.
+ *
+ * `applied` is false when nothing was written, and then the two flags say why:
+ * the pattern was not recognised, or it has several senses and none was named.
+ * Both are questions for the user rather than results to show — the answer is a
+ * corrected pattern or a chosen sense, not a retry.
+ */
+export interface GrammarEnrichment {
+  entry: GrammarEntry;
+  applied: boolean;
+  unrecognised: boolean;
+  otherSenses: string[];
+}
+
+/**
+ * One square on the calendar.
+ *
+ * Distinct from `DayActivity` above, which is the streak strip's one-bit-per-day
+ * shape. This is the richer view: `grammarLogged` is deliberately not part of
+ * what counts as studying, so a day you only logged a pattern appears on the
+ * calendar without extending the streak.
+ */
+export interface DayActivitySummary {
+  day: string;
+  reviews: number;
+  vocabReviews: number;
+  grammarLogged: number;
+}

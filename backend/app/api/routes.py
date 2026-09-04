@@ -38,6 +38,7 @@ from app.schemas import (
     Flashcard,
     FlashcardAnswer,
     FlashcardOutcome,
+    GrammarEnrichment,
     GrammarEntry,
     GrammarEntryCreate,
     GrammarEntryUpdate,
@@ -50,6 +51,7 @@ from app.schemas import (
     VocabSetCreate,
     VocabSourceResult,
 )
+from app.services import grammar as grammar_service
 from app.services import ocr as ocr_service
 from app.services import srs, storage
 from app.services import sync as sync_service
@@ -815,6 +817,64 @@ async def delete_grammar_entry(
             status_code=status.HTTP_404_NOT_FOUND, detail="Unknown grammar entry"
         )
     await repo.delete_grammar_entry(session, row)
+
+
+@router.post(
+    "/api/grammar-entries/{entry_id}/enrich",
+    response_model=GrammarEnrichment,
+    tags=["grammar"],
+)
+async def enrich_grammar_entry(
+    entry_id: int,
+    session: AsyncSession = Depends(db_session),
+) -> GrammarEnrichment:
+    """Fill in what a model knows about the pattern, for a human to confirm.
+
+    Writes the meaning, formation, register, level and example sentences onto
+    the row and leaves `enriched` false — accepting them is the PATCH that sets
+    it. Two answers write nothing and come back as questions instead: a pattern
+    that was not recognised, and one with several senses where none was named.
+    Half an explanation on the row would be shown as though it were an answer.
+
+    Held open rather than polled. This is one short structured call, not a
+    vision read of a photograph — see `services/grammar.py`.
+    """
+    user = await _require_user(session)
+    entry = await repo.get_grammar_entry(session, entry_id, user.id)
+    if entry is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown grammar entry"
+        )
+
+    own = next((e for e in entry.examples if e.is_user_supplied), None)
+
+    try:
+        result = await grammar_service.enrich(
+            entry.pattern,
+            sense_label=entry.sense_label,
+            source=entry.source,
+            note=entry.note,
+            user_example=own.japanese if own else None,
+        )
+    except grammar_service.EnrichmentUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except grammar_service.EnrichmentFailed as exc:
+        # 502, not 500: the failure is upstream, and the message was written to
+        # be shown to the person who pressed the button.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    applied = repo.apply_grammar_enrichment(entry, result)
+    if applied:
+        entry = await repo.reload_grammar_entry(session, entry)
+
+    return GrammarEnrichment(
+        entry=GrammarEntry.model_validate(entry),
+        applied=applied,
+        unrecognised=result.unrecognised,
+        other_senses=result.other_senses,
+    )
 
 
 @router.get(

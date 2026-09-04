@@ -896,7 +896,7 @@ async def create_grammar_entry(
             existing.note = payload.note
         _add_examples(existing, payload.examples)
         await session.flush()
-        return await _reload_grammar_entry(session, existing)
+        return await reload_grammar_entry(session, existing)
 
     row = GrammarEntryRow(
         user_id=user_id,
@@ -909,10 +909,10 @@ async def create_grammar_entry(
     _add_examples(row, payload.examples)
     session.add(row)
     await session.flush()
-    return await _reload_grammar_entry(session, row)
+    return await reload_grammar_entry(session, row)
 
 
-async def _reload_grammar_entry(
+async def reload_grammar_entry(
     session: AsyncSession, entry: GrammarEntryRow
 ) -> GrammarEntryRow:
     """Re-read the row with its sentences attached.
@@ -1030,12 +1030,45 @@ async def update_grammar_entry(
         _add_examples(entry, [GrammarExampleInput(**item) for item in examples])
 
     await session.flush()
-    return await _reload_grammar_entry(session, entry)
+    return await reload_grammar_entry(session, entry)
 
 
 async def delete_grammar_entry(session: AsyncSession, entry: GrammarEntryRow) -> None:
     await session.delete(entry)
     await session.flush()
+
+
+def apply_grammar_enrichment(entry: GrammarEntryRow, result: Any) -> bool:
+    """Write an enrichment onto a row. Returns whether anything was written.
+
+    Deliberately does **not** set `enriched`. That flag means a person looked at
+    this, and only the confirming PATCH is entitled to set it.
+
+    Nothing is written for an unrecognised pattern or an unresolved sense: half
+    an explanation is worse than none, because the review screen would show it
+    as though it were an answer.
+    """
+    if result.unrecognised or result.other_senses:
+        return False
+
+    entry.meaning = result.meaning or None
+    entry.formation = result.formation or None
+    entry.style = result.style or None
+    entry.jlpt_level = result.jlpt_level
+
+    # The learner's own sentences are the point of the field and survive; the
+    # generated ones are replaced, so re-enriching does not stack up
+    # near-duplicates of what it produced last time.
+    entry.examples[:] = [e for e in entry.examples if e.is_user_supplied]
+    for example in result.examples:
+        entry.examples.append(
+            GrammarExampleRow(
+                japanese=example.japanese,
+                english=example.english,
+                is_user_supplied=False,
+            )
+        )
+    return True
 
 
 async def get_grammar_days(
