@@ -169,6 +169,12 @@ export interface VocabItem {
   /** e.g. たべる */
   furiganaOnly: string;
   english: string;
+  /**
+   * The particle or object the textbook prints the word with — "〜が" for
+   * [〜が]苦手な. Sent by the server as `usageContext`; the grader folds it away
+   * so it is display-only, never part of an accepted answer.
+   */
+  usageContext: string | null;
   sourceImageId: number | null;
   isUserEdited: boolean;
   jlptLevel: number | null;

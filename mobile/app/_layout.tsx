@@ -79,6 +79,8 @@ export default function RootLayout() {
           {/* The summary ends a session, so it should not slide back into it. */}
           <Stack.Screen name="session-summary" options={{ animation: 'fade' }} />
           <Stack.Screen name="item/[id]" />
+          <Stack.Screen name="sets/index" />
+          <Stack.Screen name="sets/[id]" />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

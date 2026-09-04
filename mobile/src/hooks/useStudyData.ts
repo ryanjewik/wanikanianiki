@@ -19,6 +19,8 @@ import type {
   ReviewAnswer,
   StudyItem,
   Subject,
+  VocabItem,
+  VocabSet,
 } from '@/data/types';
 
 interface AsyncState<T> {
@@ -222,6 +224,29 @@ export function useDueFlashcards(limit = 100) {
     if (!api.isBackendConfigured) return [];
     return api.fetchDueFlashcards(limit);
   }, [limit]);
+}
+
+/**
+ * The user's named sets.
+ *
+ * No mirror and no fixtures, for the same reason as `useDueFlashcards`: sets
+ * are something you made, and inventing sample ones would put decks on the
+ * screen that nobody created. An empty list is the honest state before the
+ * first import, and the screen says so rather than pretending.
+ */
+export function useVocabSets() {
+  return useAsync<VocabSet[]>(async () => {
+    if (!api.isBackendConfigured) return [];
+    return api.fetchVocabSets();
+  }, []);
+}
+
+/** The words in one set. `null` while no set is selected. */
+export function useVocabSetItems(setId: number | null) {
+  return useAsync<VocabItem[]>(async () => {
+    if (setId === null || !api.isBackendConfigured) return [];
+    return api.fetchVocabSetItems(setId);
+  }, [setId]);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -153,7 +153,7 @@ export default function StudyScreen() {
               label="Notecards"
               tone="vocabulary"
               size="small"
-              onPress={() => router.push('/import')}
+              onPress={() => router.push('/sets')}
               style={styles.deckButton}
             />
             <ChunkyButton

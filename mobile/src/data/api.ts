@@ -281,6 +281,18 @@ export function createVocabSet(name: string, description?: string): Promise<Voca
 }
 
 /**
+ * The words in one set.
+ *
+ * Words, not cards: a word is one row here and two `srs_state` rows, so a deck
+ * browser asks for this and a study session asks `fetchDueFlashcards`. Browsing
+ * a set deliberately shows everything in it, including what is not due — that
+ * is the difference between reading a deck and being quizzed on it.
+ */
+export function fetchVocabSetItems(setId: number, signal?: AbortSignal): Promise<VocabItem[]> {
+  return request<VocabItem[]>(`/api/vocab-sets/${setId}/items`, { signal });
+}
+
+/**
  * Uploads several pages into one set, one after another.
  *
  * Sequential rather than parallel on purpose: each page is a vision call, and
