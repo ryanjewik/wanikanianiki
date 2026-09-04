@@ -15,7 +15,15 @@ import * as ImagePicker from 'expo-image-picker';
 import * as React from 'react';
 import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { CheckMark, EmptyDeckArt } from '@/components/icons';
+import {
+  AmbiguityBanner,
+  ExtractionReview,
+  ambiguousItems,
+  resolveReading as resolveReadingIn,
+  selectedItems,
+  toggleItem,
+} from '@/components/ExtractionReview';
+import { EmptyDeckArt } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
   Card,
@@ -29,7 +37,6 @@ import { DETECTED_ITEMS, DETECTED_TOTAL, IMPORT_PAGE_LABEL } from '@/data/fixtur
 import type { DetectedItem, StudyMode } from '@/data/types';
 import {
   colors,
-  jp,
   radius,
   spacing,
   subjectPalette,
@@ -45,6 +52,12 @@ export default function ImportScreen() {
   /** Set once the upload is accepted; the confirm call is keyed on it. */
   const [sourceId, setSourceId] = React.useState<number | null>(null);
   const [tier, setTier] = React.useState<number | null>(3);
+  /**
+   * True when the rows below are the bundled sample rather than a real
+   * extraction. `DETECTED_TOTAL` counts the rows that sample stands in for, so
+   * it is only meaningful on this path — a real page reports its own total.
+   */
+  const [sampled, setSampled] = React.useState(false);
   const [mode, setMode] = React.useState<StudyMode>('notecards');
   const [busy, setBusy] = React.useState(false);
 
@@ -98,13 +111,16 @@ export default function ImportScreen() {
             return;
           }
           setItems(result.items);
+          setSampled(false);
         } else {
           // No ingestion service configured — show the sample extraction so the
           // review flow below is still exercisable.
           setItems(DETECTED_ITEMS);
+          setSampled(true);
         }
       } catch {
         setItems(DETECTED_ITEMS);
+        setSampled(true);
       } finally {
         setBusy(false);
       }
@@ -113,27 +129,15 @@ export default function ImportScreen() {
   );
 
   const toggle = React.useCallback((key: string) => {
-    setItems((rest) =>
-      rest?.map((item) =>
-        item.key === key && item.status !== 'duplicate'
-          ? { ...item, selected: !item.selected }
-          : item,
-      ) ?? null,
-    );
+    setItems((rest) => (rest ? toggleItem(rest, key) : null));
   }, []);
 
   const resolveReading = React.useCallback((key: string, reading: string) => {
-    setItems((rest) =>
-      rest?.map((item) =>
-        item.key === key
-          ? { ...item, furiganaOnly: reading, status: 'ok', selected: true, note: undefined }
-          : item,
-      ) ?? null,
-    );
+    setItems((rest) => (rest ? resolveReadingIn(rest, key, reading) : null));
   }, []);
 
-  const selected = items?.filter((item) => item.selected) ?? [];
-  const ambiguous = items?.filter((item) => item.status === 'ambiguous') ?? [];
+  const selected = items ? selectedItems(items) : [];
+  const ambiguous = items ? ambiguousItems(items) : [];
 
   return (
     <View style={styles.screen}>
@@ -213,40 +217,15 @@ export default function ImportScreen() {
               </View>
             </Card>
 
-            {ambiguous.length > 0 ? (
-              <View style={styles.warningBanner}>
-                <View style={styles.warningBadge}>
-                  <Text style={styles.warningBadgeText}>!</Text>
-                </View>
-                <Text style={styles.warningText}>
-                  {ambiguous.length === 1 ? 'One reading looked' : `${ambiguous.length} readings looked`}{' '}
-                  ambiguous. Pick the right one before importing.
-                </Text>
-              </View>
-            ) : null}
+            <AmbiguityBanner count={ambiguous.length} />
 
             {items ? (
-              <Card variant="bordered">
-                <SectionHeading
-                  title="Detected items"
-                  trailing={`${selected.length} of ${DETECTED_TOTAL} selected`}
-                  trailingColor={colors.vocabulary}
-                />
-                <View>
-                  {items.map((item, index) => (
-                    <DetectedRow
-                      key={item.key}
-                      item={item}
-                      isLast={index === items.length - 1}
-                      onToggle={() => toggle(item.key)}
-                      onResolve={(reading) => resolveReading(item.key, reading)}
-                    />
-                  ))}
-                </View>
-                {items.length < DETECTED_TOTAL ? (
-                  <Text style={styles.showAll}>Show all {DETECTED_TOTAL} ›</Text>
-                ) : null}
-              </Card>
+              <ExtractionReview
+                items={items}
+                total={sampled ? DETECTED_TOTAL : undefined}
+                onToggle={toggle}
+                onResolve={resolveReading}
+              />
             ) : null}
 
             <Card variant="bordered">
@@ -315,87 +294,6 @@ export default function ImportScreen() {
               setSourceId(null);
             }}
           />
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
-
-function DetectedRow({
-  item,
-  isLast,
-  onToggle,
-  onResolve,
-}: {
-  item: DetectedItem;
-  isLast: boolean;
-  onToggle: () => void;
-  onResolve: (reading: string) => void;
-}) {
-  const duplicate = item.status === 'duplicate';
-  const ambiguous = item.status === 'ambiguous';
-
-  return (
-    <View>
-      <Pressable onPress={onToggle} disabled={duplicate}>
-        <View
-          style={[
-            styles.detectedRow,
-            !isLast && styles.rowDivider,
-            ambiguous && styles.detectedRowWarning,
-          ]}
-        >
-          <View
-            style={[
-              styles.checkbox,
-              item.selected && !ambiguous && styles.checkboxChecked,
-              ambiguous && styles.checkboxWarning,
-              duplicate && styles.checkboxEmpty,
-            ]}
-          >
-            {ambiguous ? (
-              <Text style={styles.checkboxWarningText}>?</Text>
-            ) : item.selected ? (
-              <CheckMark size={14} />
-            ) : null}
-          </View>
-
-          <Text style={[styles.detectedWord, duplicate && styles.mutedText]}>
-            {item.kanjiFurigana}
-          </Text>
-
-          <View style={styles.detectedBody}>
-            <Text style={[styles.detectedEnglish, duplicate && styles.mutedText]}>
-              {item.english}
-            </Text>
-            <Text style={[styles.detectedReading, ambiguous && styles.warningReading]}>
-              {item.note ?? item.furiganaOnly}
-            </Text>
-          </View>
-
-          {duplicate ? (
-            <Text style={styles.detectedTrailing}>Skipped</Text>
-          ) : ambiguous ? (
-            <Text style={styles.fixLink}>Fix ›</Text>
-          ) : item.jlptLevel ? (
-            <View style={styles.jlptChip}>
-              <Text style={styles.jlptChipText}>N{item.jlptLevel}</Text>
-            </View>
-          ) : null}
-        </View>
-      </Pressable>
-
-      {ambiguous && item.readingChoices ? (
-        <View style={styles.choiceRow}>
-          {item.readingChoices.map((choice) => (
-            <Pressable key={choice} onPress={() => onResolve(choice)}>
-              <View style={styles.choiceChip}>
-                <Text style={styles.choiceText}>{choice}</Text>
-              </View>
-            </Pressable>
-          ))}
         </View>
       ) : null}
     </View>
@@ -518,146 +416,6 @@ const styles = StyleSheet.create({
   scanActions: {
     flexDirection: 'row',
     gap: 7,
-  },
-
-  warningBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    backgroundColor: colors.warningTint,
-    borderWidth: 1,
-    borderColor: colors.warningBorder,
-    borderRadius: radius.card,
-    paddingVertical: 11,
-    paddingHorizontal: 13,
-  },
-  warningBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 8,
-    backgroundColor: colors.warning,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  warningBadgeText: {
-    fontFamily: typeScale.title.fontFamily,
-    fontSize: 13,
-    color: colors.onSolid,
-  },
-  warningText: {
-    flex: 1,
-    ...typeScale.caption,
-    color: colors.warningInkDeep,
-    lineHeight: 18,
-  },
-
-  detectedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-    paddingVertical: 9,
-  },
-  detectedRowWarning: {
-    backgroundColor: colors.warningRow,
-  },
-  rowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: radius.chip,
-    borderWidth: 1.5,
-    borderColor: colors.outline,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: colors.vocabulary,
-    borderColor: colors.vocabulary,
-  },
-  checkboxWarning: {
-    borderColor: colors.warning,
-  },
-  checkboxEmpty: {
-    borderColor: colors.outline,
-  },
-  checkboxWarningText: {
-    fontFamily: typeScale.title.fontFamily,
-    fontSize: 11,
-    color: colors.warning,
-  },
-  detectedWord: {
-    ...jp.row,
-    color: colors.ink,
-    width: 56,
-  },
-  detectedBody: {
-    flex: 1,
-    gap: 1,
-  },
-  detectedEnglish: {
-    ...typeScale.body,
-    fontFamily: typeScale.section.fontFamily,
-    color: colors.ink,
-  },
-  detectedReading: {
-    ...typeScale.meta,
-    fontFamily: typeScale.caption.fontFamily,
-    color: colors.inkFaint,
-  },
-  warningReading: {
-    fontFamily: typeScale.meta.fontFamily,
-    color: colors.warningInk,
-  },
-  mutedText: {
-    color: colors.inkFaint,
-  },
-  detectedTrailing: {
-    ...typeScale.meta,
-    color: colors.inkFaint,
-  },
-  fixLink: {
-    ...typeScale.meta,
-    color: colors.warning,
-  },
-  jlptChip: {
-    backgroundColor: colors.vocabularyTint,
-    borderRadius: radius.chip,
-    paddingVertical: 2,
-    paddingHorizontal: 7,
-  },
-  jlptChipText: {
-    fontFamily: typeScale.meta.fontFamily,
-    fontSize: 9.5,
-    color: colors.vocabulary,
-  },
-
-  choiceRow: {
-    flexDirection: 'row',
-    gap: 7,
-    paddingBottom: 10,
-    paddingLeft: 31,
-  },
-  choiceChip: {
-    borderWidth: 1.5,
-    borderColor: colors.warning,
-    backgroundColor: colors.warningTint,
-    borderRadius: radius.tile,
-    paddingVertical: 5,
-    paddingHorizontal: 12,
-  },
-  choiceText: {
-    ...jp.chipSmall,
-    fontSize: 15,
-    color: colors.warningInk,
-  },
-
-  showAll: {
-    marginTop: 11,
-    ...typeScale.captionBold,
-    color: colors.inkSoft,
   },
 
   modeRow: {
