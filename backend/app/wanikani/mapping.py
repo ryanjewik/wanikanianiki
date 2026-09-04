@@ -215,6 +215,13 @@ def build_streak(review_days: set[object], today: object | None = None) -> Strea
 
     `review_days` is a set of `date` objects. Today counts as "not yet done"
     rather than breaking the streak — the strip renders it as an outline.
+
+    `today` should be the caller's *local* date — `services.dates.today_in()`
+    computes it. The days in `review_days` are bucketed by the user's zone, so a
+    "today" taken from the server's clock would be compared against a calendar
+    it does not share: near midnight that reads the strip off by a day. UTC
+    remains the fallback only because a caller that passes nothing has no zone
+    to offer either.
     """
     from datetime import date as date_cls
 

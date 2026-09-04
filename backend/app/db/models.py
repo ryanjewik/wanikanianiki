@@ -110,6 +110,16 @@ class User(Base):
         Boolean, default=False, server_default=text("false")
     )
 
+    # IANA zone name, e.g. "America/Los_Angeles". Decides where one study day
+    # ends and the next begins, so the streak counts the days the user actually
+    # studied rather than the days UTC says they did. Reported by the client,
+    # which knows its own zone; "UTC" both as Python default and server default
+    # because an unset zone has an unambiguous correct value — it is exactly the
+    # behaviour every existing row already had.
+    timezone: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="UTC", server_default=text("'UTC'")
+    )
+
     # NOTE: the token is NOT stored here. It lives in the environment, injected
     # from Secrets Manager. This column exists in the design notes for a
     # multi-user build; adding it means encrypting at rest and is deliberately

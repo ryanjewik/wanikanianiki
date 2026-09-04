@@ -48,6 +48,7 @@ from app.schemas import (
 from app.services import ocr as ocr_service
 from app.services import srs, storage
 from app.services import sync as sync_service
+from app.services.dates import timezone_name, today_in
 from app.wanikani.client import WaniKaniClient, WaniKaniError, WaniKaniValidationError
 from app.wanikani.mapping import (
     build_level_progress,
@@ -90,6 +91,10 @@ async def health(
 
 @router.get("/api/dashboard", response_model=DashboardSummary, tags=["read"])
 async def get_dashboard(
+    tz: str | None = Query(
+        None,
+        description="IANA zone name from the device, e.g. America/Los_Angeles.",
+    ),
     client: WaniKaniClient = Depends(wanikani_client),
     session: AsyncSession | None = Depends(optional_db_session),
 ) -> DashboardSummary:
@@ -97,6 +102,11 @@ async def get_dashboard(
 
     Lesson and review counts come from `/summary` rather than by paging
     `/assignments` — it is one request and it is precomputed upstream.
+
+    `tz` decides where the study day starts. The phone reports it rather than
+    the user configuring it anywhere, because the phone already knows and a
+    settings screen nobody visits is a setting that stays wrong. An unrecognised
+    or absent value leaves whatever the account already had.
     """
     summary = await client.get_summary()
     user_summary = parse_user(await client.get_user())
@@ -113,9 +123,14 @@ async def get_dashboard(
     #     including still-locked ones, because that is the denominator in
     #     "9 / 18 kanji".
     if session is not None and (user := await repo.get_default_user(session)) is not None:
+        zone = await repo.adopt_timezone(session, user, tz)
+
         assignments = await repo.get_assignments(session, user.id)
         level_subjects = await repo.get_subjects_by_level(session, user_summary.level)
-        review_days = await repo.get_review_days(session)
+        # Both sides of the union share one zone, and the streak counts back
+        # from that same calendar's today.
+        review_days = await repo.get_review_days(session, zone)
+        review_days |= await repo.get_vocab_review_days(session, zone)
         last_synced_at = await repo.get_last_synced_at(session)
 
         # The cache only holds this level's content once a backfill has run.
@@ -132,6 +147,7 @@ async def get_dashboard(
         # Without a database there is no review log, so no streak to derive.
         review_days = set()
         last_synced_at = None
+        zone = timezone_name(tz)
 
     level_progressions = await client.get_level_progressions()
 
@@ -139,7 +155,7 @@ async def get_dashboard(
         user=user_summary,
         lesson_count=lesson_count,
         review_count=review_count,
-        streak=build_streak(review_days),
+        streak=build_streak(review_days, today_in(zone)),
         level_progress=build_level_progress(
             user_summary.level, assignments, level_subjects, level_progressions
         ),

@@ -103,9 +103,30 @@ function safeParse(text: string): unknown {
 /* Reads                                                                       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The device's IANA zone name, or null when the runtime cannot say.
+ *
+ * The server decides where a study day ends from this, so the phone reporting
+ * it is what keeps an evening session on the evening it happened rather than on
+ * UTC's tomorrow. Reported rather than configured: the device already knows,
+ * and it re-reports on every dashboard load, so changing zones fixes itself.
+ *
+ * Guarded because `Intl` is not guaranteed on every JS engine build. Sending
+ * nothing is safe — the server keeps whatever zone the account already had.
+ */
+export function deviceTimeZone(): string | null {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Everything the dashboard needs, precomputed server-side from Postgres. */
 export function fetchDashboard(signal?: AbortSignal): Promise<DashboardSummary> {
-  return request<DashboardSummary>('/api/dashboard', { signal });
+  const tz = deviceTimeZone();
+  const query = tz ? `?tz=${encodeURIComponent(tz)}` : '';
+  return request<DashboardSummary>(`/api/dashboard${query}`, { signal });
 }
 
 /**

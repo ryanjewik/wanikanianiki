@@ -35,6 +35,7 @@ from app.db.models import (
 from app.schemas import Assignment, DetectedItem, Flashcard, Subject
 from app.schemas import VocabItem as VocabItemOut
 from app.schemas import VocabSet as VocabSetOut
+from app.services.dates import DEFAULT_TIMEZONE, is_valid_timezone, timezone_name
 
 # -- users -----------------------------------------------------------------
 
@@ -301,25 +302,51 @@ async def log_review(
     )
 
 
-async def get_review_days(session: AsyncSession, limit_days: int = 400) -> set[date]:
-    """Distinct dates with at least one answered review — the streak source.
+async def adopt_timezone(session: AsyncSession, user: User, reported: str | None) -> str:
+    """Take the device's zone when it offers a usable one; return the zone to use.
 
-    Grouped in SQL rather than pulling every row, since this is called on every
-    dashboard load and the log grows without bound.
+    Reported on every dashboard load rather than configured in a settings screen,
+    so moving between zones corrects itself. A missing or unrecognised value
+    leaves the stored zone alone — the client that cannot name its zone should
+    not be able to reset one that was already right.
     """
-    result = await session.execute(
-        select(func.date(ReviewLog.created_at))
-        .group_by(func.date(ReviewLog.created_at))
-        .order_by(func.date(ReviewLog.created_at).desc())
-        .limit(limit_days)
-    )
+    if is_valid_timezone(reported) and reported != user.timezone:
+        user.timezone = str(reported)
+        await session.flush()
+    return user.timezone
+
+
+def _as_dates(values: Iterable[object]) -> set[date]:
+    """Postgres hands back `date`; SQLite hands back an ISO string. Accept both."""
     days: set[date] = set()
-    for value in result.scalars():
+    for value in values:
         if isinstance(value, date):
             days.add(value)
         elif isinstance(value, str):
             days.add(date.fromisoformat(value))
     return days
+
+
+async def get_review_days(
+    session: AsyncSession, tz: str = DEFAULT_TIMEZONE, limit_days: int = 400
+) -> set[date]:
+    """Distinct dates with at least one answered review — the streak source.
+
+    Bucketed in the user's own zone, not the server's: `created_at` is a
+    `timestamptz`, and which calendar day it falls on depends entirely on where
+    you were standing. See `services/dates.py`.
+
+    Grouped in SQL rather than pulling every row, since this is called on every
+    dashboard load and the log grows without bound.
+    """
+    local_day = func.date(func.timezone(timezone_name(tz), ReviewLog.created_at))
+    result = await session.execute(
+        select(local_day)
+        .group_by(local_day)
+        .order_by(local_day.desc())
+        .limit(limit_days)
+    )
+    return _as_dates(result.scalars())
 
 
 # -- sync cursors ----------------------------------------------------------
@@ -750,17 +777,20 @@ async def record_vocab_review(
     )
 
 
-async def get_vocab_review_days(session: AsyncSession) -> set[date]:
+async def get_vocab_review_days(
+    session: AsyncSession, tz: str = DEFAULT_TIMEZONE
+) -> set[date]:
     """Days with at least one imported-vocab review.
 
     The streak is the union of this and `get_review_days` — a day spent on your
     own deck is still a day studied, and the dashboard should not pretend
-    otherwise once this side has any history.
+    otherwise once this side has any history. Bucketed in the same zone as that
+    one, since a union of days measured against two different midnights would be
+    worse than either alone.
     """
-    result = await session.execute(
-        select(func.date(VocabReviewLog.created_at)).distinct()
-    )
-    return {row for row in result.scalars() if row is not None}
+    local_day = func.date(func.timezone(timezone_name(tz), VocabReviewLog.created_at))
+    result = await session.execute(select(local_day).distinct())
+    return _as_dates(result.scalars())
 
 
 async def insert_vocab_items(
