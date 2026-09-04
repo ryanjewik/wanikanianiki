@@ -11,10 +11,10 @@ side needs no mapping layer.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
 # WaniKani has four subject types. The app's design system defines a colour for
@@ -345,3 +345,104 @@ class SyncResult(CamelModel):
     subjects_updated: int
     last_synced_at: datetime | None = None
     detail: str | None = None
+
+
+# -- grammar ---------------------------------------------------------------
+
+
+class GrammarExample(CamelModel):
+    """A sentence showing the pattern in use."""
+
+    id: int
+    japanese: str
+    english: str | None = None
+    #: Copied out of the actual lesson, rather than generated. Sorts first.
+    is_user_supplied: bool = False
+
+
+class GrammarExampleInput(CamelModel):
+    japanese: str
+    english: str | None = None
+    is_user_supplied: bool = True
+
+
+class GrammarEntry(CamelModel):
+    """A grammar point, on the day it was learned.
+
+    Most of this is enrichment output. The user types `pattern` and, when it
+    helps, `source`, `note` and one real example; the rest is filled in for them
+    and is not trusted until `enriched` says a human looked at it.
+    """
+
+    id: int
+    pattern: str
+    #: Empty when the pattern has only one sense, which is the common case.
+    sense_label: str = ""
+    meaning: str | None = None
+    formation: str | None = None
+    #: plain / polite / written / conversational
+    style: str | None = None
+    jlpt_level: int | None = None
+    source: str | None = None
+    note: str | None = None
+    learned_on: date
+    enriched: bool = False
+    examples: list[GrammarExample] = []
+    created_at: datetime
+    updated_at: datetime
+
+
+class GrammarEntryCreate(CamelModel):
+    """What logging a point actually requires: the pattern, and a day.
+
+    `learned_on` comes from the device rather than the server clock. The phone
+    knows which day it is for the person holding it; the server would have to
+    infer it from a zone, and that inference is exactly what
+    `services/dates.py` exists to get right for rows the server writes itself.
+    """
+
+    pattern: str = Field(min_length=1, max_length=128)
+    sense_label: str = Field("", max_length=64)
+    learned_on: date
+    source: str | None = Field(None, max_length=128)
+    note: str | None = None
+    examples: list[GrammarExampleInput] = []
+
+
+class GrammarEntryUpdate(CamelModel):
+    """Corrections, and the enrichment being accepted.
+
+    Every field optional and applied only when present, so confirming an
+    enrichment and fixing a typo are the same call.
+    """
+
+    sense_label: str | None = Field(None, max_length=64)
+    meaning: str | None = None
+    formation: str | None = None
+    style: str | None = Field(None, max_length=32)
+    jlpt_level: int | None = None
+    source: str | None = Field(None, max_length=128)
+    note: str | None = None
+    learned_on: date | None = None
+    enriched: bool | None = None
+    #: When present, replaces the whole set — editing examples is a list edit.
+    examples: list[GrammarExampleInput] | None = None
+
+
+class DayActivitySummary(CamelModel):
+    """One square on the calendar.
+
+    `studied` and `logged` are deliberately separate. Answering cards is
+    studying and feeds the streak; logging a grammar point is a record of the
+    day, and a streak you could keep by typing eight characters is a streak
+    worth nothing. The calendar shows both; only one of them counts.
+    """
+
+    day: date
+    reviews: int = 0
+    vocab_reviews: int = 0
+    grammar_logged: int = 0
+
+    @property
+    def studied(self) -> bool:
+        return self.reviews > 0 or self.vocab_reviews > 0

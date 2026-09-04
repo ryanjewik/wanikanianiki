@@ -30,11 +30,13 @@ rather than a migration that has to move live rows later.
 
 from __future__ import annotations
 
+from datetime import date as dt_date
 from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -543,6 +545,145 @@ class VocabReviewLog(Base):
     )
 
     __table_args__ = (Index("ix_vocab_review_log_created_at", "created_at"),)
+
+
+class GrammarEntry(Base):
+    """A grammar point, on the day it was learned.
+
+    Replaces the Obsidian read-file the design notes describe. Grammar now lives
+    in the app: you type the pattern, the enrichment fills in the rest, and the
+    row is both the calendar entry for that day and the context a question
+    generator reads.
+
+    **Logging is not studying.** A row here puts a mark on the calendar and
+    never contributes to the streak — the streak is bound to lessons answered.
+    Typing eight characters is not practice, and a streak you can keep by typing
+    is a streak you stop believing.
+
+    Most columns are enrichment output rather than typed input. The user is
+    expected to supply `pattern` and, when it helps, `source`, `note` and one
+    real example; a model fills `meaning`, `formation`, `register` and
+    `jlpt_level`, and nothing generated is trusted until `enriched` is set by a
+    human confirming it — the same rule photo import already follows.
+    """
+
+    __tablename__ = "grammar_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_grammar_entries_user_id"), nullable=False
+    )
+
+    # The pattern as it is written in a textbook index, e.g. ～てからでないと.
+    pattern: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    # Which sense, for a pattern that has several — ものだ alone is at least
+    # four different points (general truth, recollection, strong advice,
+    # exclamation), and a generator handed the bare string will pick whichever
+    # it likes rather than the one today's class covered.
+    #
+    # Empty string rather than NULL, and that is load-bearing: Postgres counts
+    # NULLs as distinct under a unique constraint, so a nullable column here
+    # would happily accept the same pattern twice with no sense on either.
+    sense_label: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", server_default=text("''")
+    )
+
+    # -- enrichment output, all optional until it has run ---------------------
+    meaning: Mapped[str | None] = mapped_column(Text)
+    # How it attaches, e.g. "Vて + からでないと + negative".
+    formation: Mapped[str | None] = mapped_column(Text)
+    # Register: plain / polite / written / conversational. Named `style`
+    # because `register` collides with a classmethod pydantic inherits, and a
+    # field shadowing it warns on every import.
+    style: Mapped[str | None] = mapped_column(String(32))
+    jlpt_level: Mapped[int | None] = mapped_column(Integer)
+
+    # -- the user's own context ----------------------------------------------
+    # Where it was met, e.g. "Quartet II, Lesson 5".
+    source: Mapped[str | None] = mapped_column(String(128))
+    note: Mapped[str | None] = mapped_column(Text)
+
+    # The day it goes on the calendar. A DATE chosen by the device, not derived
+    # from a timestamp: the device knows which day it is for the person holding
+    # it, so storing the answer avoids the zone conversion `services/dates.py`
+    # has to do for reviews, where the row is written by the server.
+    learned_on: Mapped[dt_date] = mapped_column(Date, nullable=False)
+
+    # Set once a human has looked at what the model produced. Never serve
+    # generated grammar to a question prompt before this is true.
+    enriched: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    examples: Mapped[list[GrammarExample]] = relationship(
+        back_populates="entry",
+        cascade="all, delete-orphan",
+        # List form, not a tuple-shaped string: the latter is accepted and then
+        # silently ignored, leaving insertion order.
+        order_by="[GrammarExample.is_user_supplied.desc(), GrammarExample.id]",
+    )
+
+    __table_args__ = (
+        # Logging the same point twice is a mistake, not a second study day —
+        # and the calendar would show it twice. Re-logging should reopen the
+        # existing row instead.
+        UniqueConstraint(
+            "user_id", "pattern", "sense_label", name="uq_grammar_entries_point"
+        ),
+        # The calendar reads a month at a time for one user.
+        Index("ix_grammar_entries_user_day", "user_id", "learned_on"),
+    )
+
+
+class GrammarExample(Base):
+    """A sentence showing the pattern in use.
+
+    A table rather than an array on the entry for the same reason `vocab_answers`
+    is: the rows are shown, edited and deleted individually, and one of them —
+    the sentence copied out of the actual lesson — is worth more than the rest.
+    That one pins the sense, the conjugation and the register at once, which is
+    why `is_user_supplied` sorts it to the front rather than merely recording
+    where it came from.
+    """
+
+    __tablename__ = "grammar_examples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    grammar_entry_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "grammar_entries.id",
+            ondelete="CASCADE",
+            name="fk_grammar_examples_entry_id",
+        ),
+        nullable=False,
+    )
+
+    japanese: Mapped[str] = mapped_column(Text, nullable=False)
+    english: Mapped[str | None] = mapped_column(Text)
+
+    # Yours, from class, versus the model's. Display order depends on it.
+    is_user_supplied: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    entry: Mapped[GrammarEntry] = relationship(back_populates="examples")
+
+    __table_args__ = (Index("ix_grammar_examples_entry", "grammar_entry_id"),)
 
 
 SYNC_KEY_ASSIGNMENTS = "assignments_updated_after"

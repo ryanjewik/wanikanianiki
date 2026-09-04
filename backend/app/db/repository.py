@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     SYNC_KEY_LAST_SYNCED,
@@ -30,9 +31,22 @@ from app.db.models import (
     VocabSource,
 )
 from app.db.models import (
+    GrammarEntry as GrammarEntryRow,
+)
+from app.db.models import (
+    GrammarExample as GrammarExampleRow,
+)
+from app.db.models import (
     Subject as SubjectRow,
 )
-from app.schemas import Assignment, DetectedItem, Flashcard, Subject
+from app.schemas import (
+    Assignment,
+    DetectedItem,
+    Flashcard,
+    GrammarEntryCreate,
+    GrammarExampleInput,
+    Subject,
+)
 from app.schemas import VocabItem as VocabItemOut
 from app.schemas import VocabSet as VocabSetOut
 from app.services.dates import DEFAULT_TIMEZONE, is_valid_timezone, timezone_name
@@ -855,6 +869,194 @@ def _to_vocab_item(row: VocabItem) -> VocabItemOut:
         jlpt_level=row.jlpt_level,
         updated_at=row.updated_at,
     )
+
+
+# -- grammar ---------------------------------------------------------------
+
+
+async def create_grammar_entry(
+    session: AsyncSession, *, user_id: int, payload: GrammarEntryCreate
+) -> GrammarEntryRow:
+    """Log a point. Re-logging one you already have reopens it rather than duplicating.
+
+    A pattern is a thing you learned once; meeting it again is not a second
+    entry, and two rows would put two marks on the calendar for one point. The
+    later `learned_on` wins only if it is earlier — the day you first met it is
+    the day worth remembering — and any examples come along.
+    """
+    existing = await get_grammar_entry_by_point(
+        session, user_id=user_id, pattern=payload.pattern, sense_label=payload.sense_label
+    )
+    if existing is not None:
+        if payload.learned_on < existing.learned_on:
+            existing.learned_on = payload.learned_on
+        if payload.source:
+            existing.source = payload.source
+        if payload.note:
+            existing.note = payload.note
+        _add_examples(existing, payload.examples)
+        await session.flush()
+        return await _reload_grammar_entry(session, existing)
+
+    row = GrammarEntryRow(
+        user_id=user_id,
+        pattern=payload.pattern,
+        sense_label=payload.sense_label,
+        learned_on=payload.learned_on,
+        source=payload.source,
+        note=payload.note,
+    )
+    _add_examples(row, payload.examples)
+    session.add(row)
+    await session.flush()
+    return await _reload_grammar_entry(session, row)
+
+
+async def _reload_grammar_entry(
+    session: AsyncSession, entry: GrammarEntryRow
+) -> GrammarEntryRow:
+    """Re-read the row with its sentences attached.
+
+    A row that was just written has an unloaded `examples` collection, and the
+    response model reads it — which under asyncio is a lazy load with no
+    greenlet to run in, i.e. a 500 rather than a slow query. Eager-loading here
+    means every path out of this module hands back something serialisable.
+
+    The expire is what makes the relationship's `order_by` apply. Without it the
+    identity map hands back the collection exactly as it was appended, so the
+    sentence from class sorts wherever it happened to be added rather than
+    first — correct on a later read and wrong in the response to the write that
+    created it.
+    """
+    session.expire(entry, ["examples"])
+    result = await session.execute(
+        select(GrammarEntryRow)
+        .options(selectinload(GrammarEntryRow.examples))
+        .where(GrammarEntryRow.id == entry.id)
+    )
+    return result.scalar_one()
+
+
+def _add_examples(entry: GrammarEntryRow, examples: Sequence[Any]) -> None:
+    """Append sentences, skipping ones already on the entry verbatim."""
+    seen = {example.japanese for example in entry.examples}
+    for example in examples:
+        if example.japanese in seen:
+            continue
+        seen.add(example.japanese)
+        entry.examples.append(
+            GrammarExampleRow(
+                japanese=example.japanese,
+                english=example.english,
+                is_user_supplied=example.is_user_supplied,
+            )
+        )
+
+
+async def get_grammar_entry(
+    session: AsyncSession, entry_id: int, user_id: int
+) -> GrammarEntryRow | None:
+    """One entry with its sentences. Scoped by user, so another's id reads as missing."""
+    result = await session.execute(
+        select(GrammarEntryRow)
+        .options(selectinload(GrammarEntryRow.examples))
+        .where(GrammarEntryRow.id == entry_id, GrammarEntryRow.user_id == user_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_grammar_entry_by_point(
+    session: AsyncSession, *, user_id: int, pattern: str, sense_label: str = ""
+) -> GrammarEntryRow | None:
+    result = await session.execute(
+        select(GrammarEntryRow)
+        .options(selectinload(GrammarEntryRow.examples))
+        .where(
+            GrammarEntryRow.user_id == user_id,
+            GrammarEntryRow.pattern == pattern,
+            GrammarEntryRow.sense_label == sense_label,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_grammar_entries(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    since: date | None = None,
+    until: date | None = None,
+) -> list[GrammarEntryRow]:
+    """Entries newest first, optionally bounded to a window.
+
+    The window is what the calendar asks for — a month at a time — and both ends
+    are inclusive, because a caller asking for a month means both its edges.
+    """
+    statement = (
+        select(GrammarEntryRow)
+        .options(selectinload(GrammarEntryRow.examples))
+        .where(GrammarEntryRow.user_id == user_id)
+    )
+    if since is not None:
+        statement = statement.where(GrammarEntryRow.learned_on >= since)
+    if until is not None:
+        statement = statement.where(GrammarEntryRow.learned_on <= until)
+
+    result = await session.execute(
+        statement.order_by(GrammarEntryRow.learned_on.desc(), GrammarEntryRow.id.desc())
+    )
+    return list(result.scalars())
+
+
+async def update_grammar_entry(
+    session: AsyncSession, entry: GrammarEntryRow, payload: Any
+) -> GrammarEntryRow:
+    """Apply the fields that were sent, leave the rest alone.
+
+    Confirming an enrichment and fixing a typo are the same call, so absent
+    means "unchanged" rather than "clear it" — `exclude_unset` is what draws
+    that line, and without it every PATCH would blank whatever it omitted.
+    """
+    changes = payload.model_dump(exclude_unset=True)
+    examples = changes.pop("examples", None)
+
+    for field, value in changes.items():
+        setattr(entry, field, value)
+
+    if examples is not None:
+        # A list edit replaces the list; deletes need to be expressible.
+        entry.examples.clear()
+        await session.flush()
+        _add_examples(entry, [GrammarExampleInput(**item) for item in examples])
+
+    await session.flush()
+    return await _reload_grammar_entry(session, entry)
+
+
+async def delete_grammar_entry(session: AsyncSession, entry: GrammarEntryRow) -> None:
+    await session.delete(entry)
+    await session.flush()
+
+
+async def get_grammar_days(
+    session: AsyncSession, user_id: int, *, since: date | None = None
+) -> dict[date, int]:
+    """How many points were logged per day.
+
+    Never folded into the streak. Logging is a record of the day, not study —
+    see `GrammarEntry`'s own docstring — so this feeds the calendar only, and
+    the streak keeps taking its days from the two review logs.
+    """
+    statement = (
+        select(GrammarEntryRow.learned_on, func.count())
+        .where(GrammarEntryRow.user_id == user_id)
+        .group_by(GrammarEntryRow.learned_on)
+    )
+    if since is not None:
+        statement = statement.where(GrammarEntryRow.learned_on >= since)
+
+    result = await session.execute(statement)
+    return {day: count for day, count in result.all() if day is not None}
 
 
 async def table_counts(session: AsyncSession) -> dict[str, Any]:

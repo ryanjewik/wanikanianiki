@@ -11,7 +11,7 @@ is enough to run the whole read side locally.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import (
     APIRouter,
@@ -29,13 +29,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import db_session, optional_db_session, settings_dep, wanikani_client
 from app.config import Settings
 from app.db import repository as repo
+from app.db.models import User
 from app.schemas import (
     Assignment,
     ConfirmImportRequest,
     DashboardSummary,
+    DayActivitySummary,
     Flashcard,
     FlashcardAnswer,
     FlashcardOutcome,
+    GrammarEntry,
+    GrammarEntryCreate,
+    GrammarEntryUpdate,
     ReviewRequest,
     ReviewResult,
     Subject,
@@ -63,6 +68,25 @@ from app.wanikani.mapping import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _require_user(session: AsyncSession) -> User:
+    """The account, or a 409 saying how to create one.
+
+    409 rather than 404: the request is fine, the server just has no account on
+    record yet, and the fix is a sync rather than a different URL. Same answer
+    `POST /api/vocab-sets` gives for the same reason.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "No user on record yet",
+                "hint": "Run POST /api/sync once so the account is known.",
+            },
+        )
+    return user
 
 
 @router.get("/health", tags=["ops"])
@@ -689,6 +713,153 @@ async def answer_flashcard(
         lapses=schedule.lapses,
         ease_factor=schedule.ease_factor,
     )
+
+
+# -- grammar ---------------------------------------------------------------
+
+
+@router.post(
+    "/api/grammar-entries",
+    response_model=GrammarEntry,
+    status_code=status.HTTP_201_CREATED,
+    tags=["grammar"],
+)
+async def create_grammar_entry(
+    payload: GrammarEntryCreate,
+    session: AsyncSession = Depends(db_session),
+) -> GrammarEntry:
+    """Log a grammar point.
+
+    The pattern is all that is required — `～てからでないと` is enough for a model
+    to know the point, and asking for a meaning you would have to look up defeats
+    the purpose of logging it in the first place. Everything else is either your
+    own context or enrichment output.
+
+    Logging is not studying: this puts a mark on the calendar and never touches
+    the streak.
+    """
+    user = await _require_user(session)
+    row = await repo.create_grammar_entry(session, user_id=user.id, payload=payload)
+    return GrammarEntry.model_validate(row)
+
+
+@router.get(
+    "/api/grammar-entries", response_model=list[GrammarEntry], tags=["grammar"]
+)
+async def list_grammar_entries(
+    since: date | None = Query(None, description="Inclusive lower bound on learnedOn."),
+    until: date | None = Query(None, description="Inclusive upper bound on learnedOn."),
+    session: AsyncSession = Depends(db_session),
+) -> list[GrammarEntry]:
+    """Points you have logged, newest first, optionally within a window."""
+    user = await repo.get_default_user(session)
+    if user is None:
+        return []
+    rows = await repo.list_grammar_entries(session, user.id, since=since, until=until)
+    return [GrammarEntry.model_validate(row) for row in rows]
+
+
+@router.get(
+    "/api/grammar-entries/{entry_id}", response_model=GrammarEntry, tags=["grammar"]
+)
+async def get_grammar_entry(
+    entry_id: int,
+    session: AsyncSession = Depends(db_session),
+) -> GrammarEntry:
+    user = await _require_user(session)
+    row = await repo.get_grammar_entry(session, entry_id, user.id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown grammar entry"
+        )
+    return GrammarEntry.model_validate(row)
+
+
+@router.patch(
+    "/api/grammar-entries/{entry_id}", response_model=GrammarEntry, tags=["grammar"]
+)
+async def update_grammar_entry(
+    entry_id: int,
+    payload: GrammarEntryUpdate,
+    session: AsyncSession = Depends(db_session),
+) -> GrammarEntry:
+    """Correct an entry, or accept what the enrichment produced.
+
+    PATCH rather than PUT because the two uses are the same shape: absent fields
+    stay as they are, so confirming an enrichment does not require echoing back
+    every column you did not touch.
+    """
+    user = await _require_user(session)
+    row = await repo.get_grammar_entry(session, entry_id, user.id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown grammar entry"
+        )
+    updated = await repo.update_grammar_entry(session, row, payload)
+    return GrammarEntry.model_validate(updated)
+
+
+@router.delete(
+    "/api/grammar-entries/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["grammar"],
+)
+async def delete_grammar_entry(
+    entry_id: int,
+    session: AsyncSession = Depends(db_session),
+) -> None:
+    user = await _require_user(session)
+    row = await repo.get_grammar_entry(session, entry_id, user.id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown grammar entry"
+        )
+    await repo.delete_grammar_entry(session, row)
+
+
+@router.get(
+    "/api/activity", response_model=list[DayActivitySummary], tags=["read"]
+)
+async def get_activity(
+    since: date | None = Query(None, description="Inclusive lower bound."),
+    tz: str | None = Query(None, description="IANA zone name from the device."),
+    session: AsyncSession = Depends(db_session),
+) -> list[DayActivitySummary]:
+    """What happened on each day — the calendar's source.
+
+    Deliberately richer than the streak. The streak needs one bit per day and
+    gets it from the review logs; the calendar wants to show that you logged
+    ～てからでないと on a day you answered nothing, without that day counting.
+    Keeping them separate here is what stops a logged day quietly becoming a
+    studied one later.
+
+    Review days are bucketed in the user's zone; grammar days are not, because
+    `learned_on` is already the date the device chose.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        return []
+
+    zone = await repo.adopt_timezone(session, user, tz)
+    review_days = await repo.get_review_days(session, zone)
+    vocab_days = await repo.get_vocab_review_days(session, zone)
+    grammar_days = await repo.get_grammar_days(session, user.id, since=since)
+
+    days = review_days | vocab_days | set(grammar_days)
+    if since is not None:
+        days = {day for day in days if day >= since}
+
+    return [
+        DayActivitySummary(
+            day=day,
+            # One row per day is what the calendar draws; the exact counts are
+            # a later refinement, and a bool dressed up as a count would lie.
+            reviews=1 if day in review_days else 0,
+            vocab_reviews=1 if day in vocab_days else 0,
+            grammar_logged=grammar_days.get(day, 0),
+        )
+        for day in sorted(days)
+    ]
 
 
 @router.post("/api/sync", response_model=SyncResult, tags=["ops"])

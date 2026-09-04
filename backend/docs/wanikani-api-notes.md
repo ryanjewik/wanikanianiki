@@ -403,7 +403,24 @@ fill-in-the-blank, sentence construction) on top of it.
   verifier sub-agent, and the Obsidian connector. A distinct service from
   the core API server since it's doing LLM calls, not plain CRUD.
 
-### Obsidian connector
+### Obsidian connector — superseded
+
+> **Not built, and not going to be.** Grammar lives in the app instead: see
+> `grammar_entries` / `grammar_examples` (migration `d44cf9719b8e`) and the
+> `/api/grammar-entries` endpoints. You type the pattern — `～てからでないと` is
+> enough for a model to know the point — and enrichment fills in the meaning,
+> formation, register and examples for you to confirm.
+>
+> Two things carried over from the design below: grammar is optional context
+> for question generation, never required, and nothing generated is served
+> before a human confirms it (`grammar_entries.enriched`). Two things did not:
+> the write-back into a vault, and the whole-file read. What replaces them is a
+> daily log whose days appear on the calendar and **never** count toward the
+> streak — logging a pattern is a record of the day, not practice of it. The
+> streak stays bound to lessons answered.
+>
+> The rest of this section is kept for the reasoning, not as a plan.
+
 
 Unlike the read-only assumption in earlier drafts, this connector is
 read/write and user-configured, not automatic:
