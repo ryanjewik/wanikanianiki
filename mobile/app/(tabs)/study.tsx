@@ -166,6 +166,31 @@ export default function StudyScreen() {
             />
           </View>
         </Card>
+
+        <Overline style={styles.trackLabel}>Grammar</Overline>
+
+        <Card variant="bordered">
+          <SectionHeading
+            title="Points you have logged"
+            trailing="Open ›"
+            trailingColor={colors.radical}
+            onPressTrailing={() => router.push('/grammar')}
+          />
+          <Text style={styles.trackBlurb}>
+            Type the pattern the moment it comes up in class and fill it in later. Logging is
+            deliberately not studying — a point you write down shows on the calendar without
+            touching your streak.
+          </Text>
+          <View style={styles.deckActions}>
+            <ChunkyButton
+              label="Log a point"
+              tone="radical"
+              size="small"
+              onPress={() => router.push('/grammar')}
+              style={styles.deckButton}
+            />
+          </View>
+        </Card>
       </ScrollView>
     </View>
   );

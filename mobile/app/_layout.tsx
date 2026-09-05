@@ -81,6 +81,8 @@ export default function RootLayout() {
           <Stack.Screen name="item/[id]" />
           <Stack.Screen name="sets/index" />
           <Stack.Screen name="sets/[id]" />
+          <Stack.Screen name="grammar/index" />
+          <Stack.Screen name="grammar/[id]" />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

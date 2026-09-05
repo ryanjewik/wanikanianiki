@@ -16,6 +16,7 @@ import type {
   Assignment,
   DashboardSummary,
   Flashcard,
+  GrammarEntry,
   ReviewAnswer,
   StudyItem,
   Subject,
@@ -247,6 +248,34 @@ export function useVocabSetItems(setId: number | null) {
     if (setId === null || !api.isBackendConfigured) return [];
     return api.fetchVocabSetItems(setId);
   }, [setId]);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Grammar                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Points you have logged, newest first.
+ *
+ * No mirror and no fixtures, for the same reason as `useVocabSets`: a logged
+ * grammar point is something you wrote down, and inventing sample ones would
+ * put patterns on the calendar nobody studied. An empty list is the honest
+ * state before the first one.
+ */
+export function useGrammarEntries(range: { since?: string; until?: string } = {}) {
+  const { since, until } = range;
+  return useAsync<GrammarEntry[]>(async () => {
+    if (!api.isBackendConfigured) return [];
+    return api.fetchGrammarEntries({ since, until });
+  }, [since, until]);
+}
+
+/** One point. `null` while none is selected. */
+export function useGrammarEntry(entryId: number | null) {
+  return useAsync<GrammarEntry | null>(async () => {
+    if (entryId === null || !api.isBackendConfigured) return null;
+    return api.fetchGrammarEntry(entryId);
+  }, [entryId]);
 }
 
 /* -------------------------------------------------------------------------- */
