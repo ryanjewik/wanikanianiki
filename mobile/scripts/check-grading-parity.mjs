@@ -11,6 +11,7 @@
  * Exits non-zero on the first disagreement, naming the input.
  */
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -61,11 +62,41 @@ pairs.push(['partner', ['partner', 'the other person']]);
 pairs.push(['the other person', ['partner', 'the other person']]);
 pairs.push(['nonsense', ['partner', 'the other person']]);
 
+/**
+ * The venv interpreter, which is not in the same place on every platform:
+ * POSIX puts it in `bin/python`, Windows in `Scripts/python.exe`. Hardcoding
+ * the POSIX path meant this check silently refused to run on Windows — on the
+ * one script the grading hazard depends on being runnable.
+ */
+const venvPython = () => {
+  const candidates =
+    process.platform === 'win32'
+      ? ['.venv/Scripts/python.exe', '.venv/bin/python']
+      : ['.venv/bin/python', '.venv/Scripts/python.exe'];
+  for (const candidate of candidates) {
+    const full = path.join(backend, candidate);
+    if (existsSync(full)) return full;
+  }
+  throw new Error(
+    `No virtualenv interpreter under ${backend}. Create it, then re-run: the ` +
+      'Python grader is half of what this script compares.',
+  );
+};
+
 const python = JSON.parse(
   execFileSync(
-    path.join(backend, '.venv/bin/python'),
+    venvPython(),
     ['-c', PY],
-    { input: JSON.stringify({ corpus: CORPUS, pairs }), encoding: 'utf8' },
+    {
+      input: JSON.stringify({ corpus: CORPUS, pairs }),
+      encoding: 'utf8',
+      // Node writes the payload as UTF-8, but Python picks its stdio encoding
+      // from the locale — cp1252 on a default Windows install, which mangles
+      // every wave dash and fullwidth letter in the corpus and reports the
+      // damage as grader drift. The corpus is almost entirely non-ASCII, so
+      // this is not a detail.
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    },
   ),
 );
 
