@@ -39,9 +39,10 @@ from __future__ import annotations
 import logging
 
 import anthropic
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.config import Settings, get_settings
+from app.db.models import STYLE_MAX_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -107,10 +108,29 @@ class EnrichedGrammar(BaseModel):
     style: str = Field(
         default="",
         description=(
-            "Register, a few words at most: 'plain', 'polite', 'written', "
-            "'conversational', 'formal written'. Empty if it is neutral."
+            f"Register as a short label, at most a handful of words and never "
+            f"more than {STYLE_MAX_LENGTH} characters: 'plain', 'polite', "
+            f"'written', 'conversational', 'formal written'. Empty if it is "
+            f"neutral. This is a label, not a note — qualifications about when "
+            f"the register shifts belong in `formation`, not here."
         ),
     )
+
+    @field_validator("style", mode="before")
+    @classmethod
+    def _clamp_style(cls, value: object) -> object:
+        """Trim an over-long register rather than rejecting the whole answer.
+
+        Asking for a short label does not guarantee one, and everything else in
+        the response is still worth keeping when the model editorialises in this
+        one field. Rejecting would throw away a good meaning and two good
+        example sentences over a register string.
+        """
+        if isinstance(value, str) and len(value) > STYLE_MAX_LENGTH:
+            logger.info("Register clamped from %d characters", len(value))
+            return value[:STYLE_MAX_LENGTH].rstrip()
+        return value
+
     jlpt_level: int | None = Field(
         default=None,
         description=(

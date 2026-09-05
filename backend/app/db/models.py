@@ -547,6 +547,13 @@ class VocabReviewLog(Base):
     __table_args__ = (Index("ix_vocab_review_log_created_at", "created_at"),)
 
 
+#: Register is a short phrase, not a word — real answers measured 27, 31 and 54
+#: characters, so the old 32 sat inside the range rather than above it. The
+#: prompt names this limit and `services/grammar.py` clamps to it; the column
+#: width is the backstop.
+STYLE_MAX_LENGTH = 128
+
+
 class GrammarEntry(Base):
     """A grammar point, on the day it was learned.
 
@@ -596,7 +603,7 @@ class GrammarEntry(Base):
     # Register: plain / polite / written / conversational. Named `style`
     # because `register` collides with a classmethod pydantic inherits, and a
     # field shadowing it warns on every import.
-    style: Mapped[str | None] = mapped_column(String(32))
+    style: Mapped[str | None] = mapped_column(String(STYLE_MAX_LENGTH))
     jlpt_level: Mapped[int | None] = mapped_column(Integer)
 
     # -- the user's own context ----------------------------------------------
