@@ -50,11 +50,15 @@ async def sync_all(session: AsyncSession, client: WaniKaniClient) -> SyncResult:
         subscription_active=user_summary.subscription_active,
     )
 
-    # 2. Assignments, incrementally.
+    # 2. Assignments, incrementally. Fetched here but *not* written yet:
+    #    `study_progress.subject_id` is a foreign key, so every subject an
+    #    assignment names has to exist first. Writing assignments before step 3
+    #    works on an account whose subjects were already backfilled and fails
+    #    outright on an empty database, which is the one case a new deployment
+    #    is guaranteed to hit.
     assignments_cursor = await repo.get_sync_meta(session, SYNC_KEY_ASSIGNMENTS)
     raw_assignments = await client.get_assignments(updated_after=assignments_cursor)
     assignments = [parse_assignment(r) for r in raw_assignments]
-    assignments_written = await repo.upsert_assignments(session, user.id, assignments)
 
     # 3. Content for anything we now have an assignment for but no subject row.
     #    Subjects are pulled by id rather than by `updated_after` because a
@@ -77,7 +81,10 @@ async def sync_all(session: AsyncSession, client: WaniKaniClient) -> SyncResult:
                 session, parsed, updated_at=_coerce_datetimes(updated_at)
             )
 
-    # 4. Advance cursors only now that everything above succeeded.
+    # 4. Now the referents exist, the assignments can land.
+    assignments_written = await repo.upsert_assignments(session, user.id, assignments)
+
+    # 5. Advance cursors only now that everything above succeeded.
     finished_at = datetime.now(timezone.utc)
     await repo.set_sync_meta(session, SYNC_KEY_ASSIGNMENTS, started_at.isoformat())
     await repo.set_sync_meta(session, SYNC_KEY_LAST_SYNCED, finished_at.isoformat())
