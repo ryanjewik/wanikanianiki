@@ -19,6 +19,10 @@ dependencies = [
     "anthropic>=1.0",
     # FastAPI needs this to accept the multipart upload from the phone.
     "python-multipart>=0.0.9",
+    # `zoneinfo` reads the *system* tz database, which Windows has none of and
+    # slim containers strip. Without this, services/dates.py raises on every
+    # zone lookup including its own ZoneInfo("UTC") fallback.
+    "tzdata>=2024.2",
 ]
 
 [project.optional-dependencies]
