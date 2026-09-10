@@ -693,6 +693,174 @@ class GrammarExample(Base):
     __table_args__ = (Index("ix_grammar_examples_entry", "grammar_entry_id"),)
 
 
+QUESTION_TYPES = (
+    "multiple_choice",
+    "fill_in_blank",
+    "sentence_construction",
+    "recall",
+)
+
+
+class Question(Base):
+    """One generated practice question, and whether it may be served.
+
+    First-class, and separate from both vocab items and bundles: the same
+    question is worth reusing in a later bundle, and a bundle is only an
+    ordering over questions that already exist.
+
+    **`verified` is the safety interlock, not a status field.** A generator
+    writes drafts; a verifier sub-agent reads each one back and flips this. A
+    question that has not been through the verifier is never served — a wrong
+    answer key here is worse than no question at all, because the SRS will
+    rehearse the mistake and the user will believe it.
+
+    `payload` shape varies by `type`, which is why it is JSONB rather than
+    columns: a multiple-choice question has choices and an index, a
+    construction question has tiles and an order, and modelling the union in
+    SQL would mean six nullable columns that are wrong five at a time.
+    """
+
+    __tablename__ = "questions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_questions_user_id"), nullable=False
+    )
+
+    # One of QUESTION_TYPES. Not an enum type: adding a question kind should be
+    # a deploy, not a migration with a lock on it.
+    type: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    # Optional context the question was built around. Null means it tests
+    # vocabulary alone, which is the normal case for a user with no grammar
+    # logged — grammar is context for generation, never a requirement.
+    grammar_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("grammar_entries.id", name="fk_questions_grammar_entry_id",
+                   ondelete="SET NULL"),
+    )
+
+    # Set by the verifier, never by the generator. See the class docstring.
+    verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    # Why the verifier rejected it, when it did. Kept rather than deleted: a
+    # pattern in these is the only signal that a generation prompt has drifted.
+    verifier_note: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    items: Mapped[list[QuestionVocabItem]] = relationship(
+        back_populates="question", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        Index("ix_questions_user_verified", "user_id", "verified"),
+    )
+
+
+class QuestionVocabItem(Base):
+    """Which words a question tests.
+
+    A real foreign key rather than the `int[]` the design notes sketched, and
+    the reason is the SRS: answering a question writes `srs_state` for every
+    item it tested, so a dangling id here is a write that silently goes
+    nowhere. The array cannot be constrained; this can.
+    """
+
+    __tablename__ = "question_vocab_items"
+
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "questions.id", name="fk_question_vocab_items_question_id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    vocab_item_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "vocab_items.id", name="fk_question_vocab_items_vocab_item_id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+
+    question: Mapped[Question] = relationship(back_populates="items")
+
+
+class LessonBundle(Base):
+    """A pregenerated set of questions, and the unit that goes offline.
+
+    Bundles exist rather than serving loose questions because the phone has to
+    be able to take a whole session with it. Mirroring individual questions
+    would mean deciding on the device which ones make a coherent lesson, which
+    is the generator's job and needs the SRS picture the server has.
+
+    `consumed` is set when a bundle is handed out, not when it is finished. A
+    session that is started and abandoned still burned its questions; handing
+    the same bundle out twice would show the user a lesson they just did.
+    """
+
+    __tablename__ = "lesson_bundles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_lesson_bundles_user_id"), nullable=False
+    )
+
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    consumed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    questions: Mapped[list[LessonBundleQuestion]] = relationship(
+        back_populates="bundle",
+        cascade="all, delete-orphan",
+        order_by="LessonBundleQuestion.position",
+    )
+
+    __table_args__ = (
+        # The cron's only query: how many are waiting for this user.
+        Index("ix_lesson_bundles_user_consumed", "user_id", "consumed"),
+    )
+
+
+class LessonBundleQuestion(Base):
+    """A question's place in a bundle.
+
+    `position` is stored rather than implied, because the generator chooses an
+    order — review items first, newly learned seasoned through — and a set with
+    no order would throw that away.
+    """
+
+    __tablename__ = "lesson_bundle_questions"
+
+    bundle_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "lesson_bundles.id", name="fk_lesson_bundle_questions_bundle_id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    question_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "questions.id", name="fk_lesson_bundle_questions_question_id",
+            ondelete="CASCADE",
+        ),
+        primary_key=True,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    bundle: Mapped[LessonBundle] = relationship(back_populates="questions")
+    question: Mapped[Question] = relationship()
+
+
 SYNC_KEY_ASSIGNMENTS = "assignments_updated_after"
 SYNC_KEY_SUBJECTS = "subjects_updated_after"
 SYNC_KEY_LAST_SYNCED = "last_synced_at"

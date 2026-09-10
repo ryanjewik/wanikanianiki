@@ -20,6 +20,7 @@ import type {
   DayActivitySummary,
   Flashcard,
   GrammarEntry,
+  LessonBundle,
   LevelItem,
   ReviewAnswer,
   SessionSummary,
@@ -500,5 +501,33 @@ export function useActivityStrip() {
     }
 
     return strip;
+  }, []);
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* Generated lessons                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The next pregenerated bundle, claimed from the queue.
+ *
+ * `null` is a normal answer, not an error — the cron tops the queue up twice a
+ * day and a user who has worked through everything is simply early.
+ *
+ * **Asking consumes it**, so this deliberately does not reload on focus: a
+ * remount would burn a second bundle and show a lesson the user never asked
+ * for. The screen holds what it got.
+ */
+export function useLessonBundle() {
+  return useAsync<LessonBundle | null>(async () => {
+    if (!api.isBackendConfigured) return null;
+    try {
+      return await api.fetchLessonBundle();
+    } catch {
+      // Offline, or nothing generated. Either way there is no lesson to show,
+      // and the screen says so rather than failing.
+      return null;
+    }
   }, []);
 }

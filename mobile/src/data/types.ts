@@ -311,13 +311,28 @@ export type QuestionType =
   | 'sentence_construction'
   | 'recall';
 
+/**
+ * What a question actually carries. One shape with optional halves rather than
+ * a union: `type` already says which half is populated, and narrowing a union
+ * at every render site buys nothing a single check does not.
+ */
+export interface QuestionPayload {
+  prompt: string;
+  /** The answer key. Present because the phone shows a verdict immediately;
+   *  the server regrades regardless and its verdict is what the deck records. */
+  answer: string;
+  /** multiple_choice only — exactly four. */
+  choices?: string[];
+  /** sentence_construction only — joined in order they reproduce `answer`. */
+  tiles?: string[];
+}
+
 export interface Question {
   id: number;
   type: QuestionType;
-  /** Shape varies by `type`; narrow on it before reading. */
-  payload: unknown;
+  payload: QuestionPayload;
   vocabItemIds: number[];
-  grammarTopic: string | null;
+  grammarEntryId: number | null;
   /** The verifier sub-agent must flip this before a question is servable. */
   verified: boolean;
   createdAt: string;
@@ -325,9 +340,18 @@ export interface Question {
 
 export interface LessonBundle {
   id: number;
-  questionIds: number[];
   generatedAt: string;
-  consumed: boolean;
+  /** Already ordered — the generator chose the order and the server preserves it. */
+  questions: Question[];
+}
+
+/** What answering a generated question changed. */
+export interface QuestionOutcome {
+  correct: boolean;
+  grade: number;
+  expectedAnswer: string;
+  /** SRS rows moved. Two per word, so one question about two words moves four. */
+  schedulesAdvanced: number;
 }
 
 /* -------------------------------------------------------------------------- */

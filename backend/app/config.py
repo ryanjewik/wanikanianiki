@@ -83,6 +83,41 @@ class Settings(BaseSettings):
     # long a phone can be left waiting.
     grammar_timeout_seconds: float = 60.0
 
+    # --- Lesson generation ---------------------------------------------------
+    # Pinned like the others: a generation prompt is tuned against a model.
+    lesson_model: str = "claude-opus-5"
+
+    # The verifier runs on a cheaper model deliberately. Writing a good question
+    # is a judgement call; checking one against retrieved rows is a much easier
+    # task, and it runs once per question where generation runs once per bundle
+    # — so this is the call whose cost actually scales.
+    verifier_model: str = "claude-sonnet-5"
+
+    # Rejected drafts are fed back to the generator once. A second pass is
+    # where a batch recovers the questions a first pass fumbled; a third
+    # reliably argues itself in circles, so there is no setting above 1.
+    lesson_retry_passes: int = 1
+
+    # No single word may carry more than this share of one bundle. A batch that
+    # drills 免許 six times is not a lesson, and the generator cannot see the
+    # batch as a whole to notice.
+    lesson_max_repeats_per_word: int = 2
+
+    # Generation and verification are separate calls, both structured, neither
+    # with a person waiting on it — this runs on a schedule. Generous, because
+    # the cost of a timeout here is a bundle that is simply not there yet.
+    lesson_timeout_seconds: float = 180.0
+
+    # The cron tops up when fewer than this many unconsumed bundles remain.
+    # Five is roughly a week of sessions at the rate one person studies, so a
+    # twice-daily check has ample room to keep ahead of consumption.
+    lesson_bundle_low_water: int = 5
+
+    # Bundles made per top-up run, and questions in each. Small on purpose: an
+    # abandoned bundle is wasted generation, and the queue refills twice a day.
+    lesson_bundles_per_run: int = 3
+    lesson_questions_per_bundle: int = 8
+
     # --- Database -----------------------------------------------------------
     # Neon/Supabase style URL. Empty means "no database configured": the app
     # still serves every read-only WaniKani-backed route, it just cannot cache.

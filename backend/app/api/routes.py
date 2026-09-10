@@ -31,6 +31,7 @@ from app.config import Settings
 from app.db import repository as repo
 from app.db.models import User
 from app.schemas import (
+    AgentContext,
     Assignment,
     ConfirmImportRequest,
     DashboardSummary,
@@ -42,6 +43,8 @@ from app.schemas import (
     GrammarEntry,
     GrammarEntryCreate,
     GrammarEntryUpdate,
+    QuestionAnswer,
+    QuestionOutcome,
     ReviewRequest,
     ReviewResult,
     Subject,
@@ -51,6 +54,8 @@ from app.schemas import (
     VocabSetCreate,
     VocabSourceResult,
 )
+from app.schemas import LessonBundle as LessonBundleOut
+from app.schemas import Question as QuestionOut
 from app.services import grammar as grammar_service
 from app.services import ocr as ocr_service
 from app.services import srs, storage
@@ -987,3 +992,172 @@ def _parse_ids(raw: str | None) -> list[int]:
                 detail=f"Invalid subject id: {part!r}",
             ) from exc
     return out
+
+
+# -- generated lessons -----------------------------------------------------
+
+
+@router.get(
+    "/api/lesson-bundles/next",
+    response_model=LessonBundleOut | None,
+    tags=["study"],
+)
+async def get_next_lesson_bundle(
+    session: AsyncSession = Depends(db_session),
+) -> LessonBundleOut | None:
+    """The next pregenerated session, or null when the queue is empty.
+
+    Null is a normal answer, not an error: the cron tops the queue up twice a
+    day, and a user who has just worked through everything is simply early. The
+    client shows "nothing generated yet" rather than a failure.
+
+    **Asking consumes it.** The bundle is marked spent on the way out, so a
+    client that drops the response does not get the same lesson again. That is
+    the deliberate trade — showing a lesson twice is worse than losing one,
+    because the second showing is indistinguishable from the generator having
+    repeated itself.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        return None
+
+    claimed = await repo.claim_next_bundle(session, user.id)
+    if claimed is None:
+        return None
+
+    bundle, questions = claimed
+    return LessonBundleOut(
+        id=bundle.id,
+        generated_at=bundle.generated_at,
+        questions=[
+            QuestionOut(
+                id=q.id,
+                type=q.type,
+                payload=q.payload,
+                vocab_item_ids=[i.vocab_item_id for i in q.items],
+                grammar_entry_id=q.grammar_entry_id,
+            )
+            for q in questions
+        ],
+    )
+
+
+@router.get(
+    "/api/agent-context/newly-learned",
+    response_model=AgentContext,
+    tags=["read"],
+)
+async def get_agent_context(
+    session: AsyncSession = Depends(db_session),
+) -> AgentContext:
+    """What the generator is allowed to see.
+
+    A narrow, read-only projection rather than access to `study_progress` and
+    `subjects` themselves — the generator needs what was recently learned and
+    what is due, not years of burned items, and a prompt is a bad place to
+    discover you handed over the whole table.
+
+    Exposed as a route mainly so the feed can be inspected: the scheduled run
+    calls the repository directly rather than looping back through HTTP.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        return AgentContext()
+
+    pools = await repo.get_generation_pools(session, user.id)
+    grammar = await repo.list_confirmed_grammar(session, user.id)
+
+    return AgentContext(
+        review=[VocabItem.model_validate(i) for i in pools["review"]],
+        new=[VocabItem.model_validate(i) for i in pools["new"]],
+        continuing=[VocabItem.model_validate(i) for i in pools["continuing"]],
+        grammar=[GrammarEntry.model_validate(e) for e in grammar],
+    )
+
+
+@router.post(
+    "/api/lesson-bundles/questions/{question_id}/answer",
+    response_model=QuestionOutcome,
+    tags=["study"],
+)
+async def answer_question(
+    question_id: int,
+    payload: QuestionAnswer,
+    session: AsyncSession = Depends(db_session),
+) -> QuestionOutcome:
+    """Grade a generated question and advance the words it tested.
+
+    Graded here, not on the device, for the same reason flashcards are: the
+    phone grades to show a result instantly, the server grades to decide what
+    is written, and where they disagree the server wins.
+
+    **Every word the question tested advances**, which is what makes a
+    generated lesson count as practice rather than a quiz. One question about
+    three words moves three schedules — the question is the exercise, the words
+    are what is being learned.
+
+    **A WaniKani-sourced word advances nothing.** Its schedule belongs to
+    WaniKani and is moved only by a real WaniKani review; writing local SM-2 for
+    it would be reimplementing the scheduling the design refuses to reimplement,
+    and would leave two systems disagreeing about when the word is next due.
+    Such a word can still be asked about — that is practice, and the response
+    counts it as `practiceOnlyWords` so the app can say so plainly instead of
+    reporting a no-op as progress.
+    """
+    question = await repo.get_question(session, question_id)
+    if question is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Unknown question"
+        )
+
+    # A question that never passed the verifier must not be answerable — it was
+    # stored for the drift signal in its rejection note, not to be served.
+    if not question.verified:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That question was never verified and cannot be answered",
+        )
+
+    expected = str(question.payload.get("answer", ""))
+    correct = srs.matches(payload.answer_given, [expected]) if expected else False
+
+    grade = srs.grade_for(correct)
+    advanced = 0
+    practice_only = 0
+
+    for link in question.items:
+        states, unscheduled = await repo.schedulable_states(
+            session, question.user_id, link.vocab_item_id
+        )
+        if unscheduled:
+            # A WaniKani word, or one never confirmed into the deck. Answering
+            # is still practice; it just moves nothing here, and the response
+            # says so rather than reporting a silent no-op as success.
+            practice_only += 1
+            continue
+
+        for state in states:
+            schedule = srs.next_schedule(
+                ease_factor=state.ease_factor,
+                interval_days=state.interval_days,
+                repetitions=state.repetitions,
+                lapses=state.lapses,
+                grade=grade,
+            )
+            await repo.record_vocab_review(
+                session,
+                state,
+                correct=correct,
+                grade=grade,
+                answer_given=payload.answer_given,
+                schedule=schedule,
+            )
+            advanced += 1
+
+    return QuestionOutcome(
+        correct=correct,
+        grade=grade,
+        expected_answer=expected,
+        schedules_advanced=advanced,
+        practice_only_words=practice_only,
+    )

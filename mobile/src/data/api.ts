@@ -20,6 +20,7 @@ import type {
   GrammarEntry,
   GrammarExampleInput,
   LessonBundle,
+  QuestionOutcome,
   ReviewAnswer,
   Subject,
   VocabItem,
@@ -380,6 +381,22 @@ export function answerFlashcard(
  */
 export function fetchLessonBundle(signal?: AbortSignal): Promise<LessonBundle | null> {
   return request<LessonBundle | null>('/api/lesson-bundles/next', { signal });
+}
+
+/**
+ * Answer one generated question.
+ *
+ * Sends the typed string, never the phone's verdict — the server regrades and
+ * advances every word the question tested, exactly as `answerFlashcard` does.
+ */
+export function answerQuestion(
+  questionId: number,
+  answerGiven: string,
+): Promise<QuestionOutcome> {
+  return request<QuestionOutcome>(
+    `/api/lesson-bundles/questions/${questionId}/answer`,
+    { method: 'POST', body: { answerGiven } },
+  );
 }
 
 /* -------------------------------------------------------------------------- */

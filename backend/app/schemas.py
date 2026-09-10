@@ -467,3 +467,71 @@ class GrammarEnrichment(CamelModel):
     unrecognised: bool = False
     #: The pattern has several senses and none was named. Nothing was written.
     other_senses: list[str] = []
+
+
+class Question(CamelModel):
+    """One question, as the app receives it.
+
+    `verifierNote` is deliberately absent: it is the verifier talking to us
+    about a rejection, and a rejected question never reaches a client anyway.
+    """
+
+    id: int
+    type: str
+    #: Shape varies by `type` — narrow on it before reading.
+    payload: dict
+    vocab_item_ids: list[int] = []
+    grammar_entry_id: int | None = None
+
+
+class LessonBundle(CamelModel):
+    """A pregenerated session.
+
+    Handed out once. Asking for the next bundle marks this one consumed, so a
+    client that drops it does not get it again — see `claim_next_bundle`.
+    """
+
+    id: int
+    generated_at: datetime
+    questions: list[Question]
+
+
+class AgentContext(CamelModel):
+    """The narrow feed a generator reads instead of the raw tables.
+
+    Three pools, kept apart. A merged list lets whichever is largest dominate
+    the lesson, which right after an import is always the new one.
+    """
+
+    review: list[VocabItem] = []
+    new: list[VocabItem] = []
+    continuing: list[VocabItem] = []
+    grammar: list[GrammarEntry] = []
+
+
+class QuestionAnswer(CamelModel):
+    """One answered generated question.
+
+    The typed string goes up, not a verdict: the server regrades it, exactly as
+    it does for flashcards, and its answer is what the deck records.
+    """
+
+    answer_given: str
+
+
+class QuestionOutcome(CamelModel):
+    """What answering changed.
+
+    `schedulesAdvanced` counts SRS rows moved, not words — every word carries
+    two (recognition and production), so one question about two words advances
+    four. Surfaced because "this counted for something" is the only feedback
+    that distinguishes a lesson from a quiz.
+    """
+
+    correct: bool
+    grade: int
+    expected_answer: str
+    schedules_advanced: int
+    #: Words the question tested that carry no local schedule — WaniKani-sourced
+    #: ones, whose stage only WaniKani may move. Practice, not progress.
+    practice_only_words: int = 0

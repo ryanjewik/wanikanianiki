@@ -226,6 +226,7 @@ Two functions off one artifact:
 | `app.lambda_handler.handler` | Function URL / API Gateway HTTP API | The HTTP API. |
 | `app.lambda_handler.sync_handler` | EventBridge, every 15–60 min | **Reserved concurrency 1.** |
 | `app.lambda_handler.ocr_handler` | SQS | Minutes, not seconds. Blocked on durable image storage — see below. |
+| `app.lambda_handler.lessons_handler` | EventBridge, twice a day | **Reserved concurrency 1.** Generates lesson bundles — see below. |
 
 ### Keep Lambda out of a VPC
 
@@ -246,6 +247,49 @@ Use the provider's **pooler** endpoint. Under Lambda the engine uses `NullPool`
 is what keeps the per-request connection cost small. Statement caching is also
 disabled there, because a transaction-mode pooler can land a cached plan on a
 different server-side session than prepared it.
+
+### Scheduling the lesson top-up
+
+`lessons_handler` keeps the generated-lesson queue stocked. It checks first and
+usually stops there: if `lesson_bundle_low_water` (5) bundles are already
+waiting, the run costs one `COUNT` and no model calls. Below that it generates
+`lesson_bundles_per_run` (3) bundles of `lesson_questions_per_bundle` (8), each
+question verified before it is bundled.
+
+**Twice a day is the intended cadence.** The queue drains at the speed a person
+studies, which is slow, and generation is the most expensive thing this system
+does. There is no benefit to checking hourly.
+
+```bash
+aws events put-rule --name kanji-lessons-topup   --schedule-expression 'cron(0 7,19 * * ? *)'
+
+aws events put-targets --rule kanji-lessons-topup   --targets 'Id=1,Arn=<lessons-function-arn>'
+
+aws lambda add-permission --function-name <lessons-function>   --statement-id events-invoke --action lambda:InvokeFunction   --principal events.amazonaws.com --source-arn <rule-arn>
+
+# The line that matters most:
+aws lambda put-function-concurrency --function-name <lessons-function>   --reserved-concurrent-executions 1
+```
+
+**Reserved concurrency 1, for a different reason than the sync worker.** Sync is
+bounded by WaniKani's per-token budget. This is bounded by arithmetic: two
+overlapping runs both read the same "below the low-water mark" and both
+generate, doubling the bill and the queue. Nothing else in the design prevents
+that — the check and the write are not one transaction.
+
+Give the function a timeout above `lesson_timeout_seconds` (180s) with room for
+several sequential calls; 900s is the safe ceiling. It needs `ANTHROPIC_API_KEY`
+and `DATABASE_URL`, and nothing WaniKani-related.
+
+There is deliberately no Terraform or SAM here yet, matching the rest of this
+section. When IaC lands, this becomes a rule, a target, a permission and a
+concurrency setting — nothing that needs rethinking.
+
+To run one pass by hand, locally:
+
+```bash
+.venv/Scripts/python -c "from app.lambda_handler import lessons_handler; print(lessons_handler({}, None))"
+```
 
 ### Why concurrency 1 on the sync worker
 

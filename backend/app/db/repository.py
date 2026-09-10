@@ -7,17 +7,22 @@ converges to the same rows instead of duplicating them.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterable, Sequence
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     SYNC_KEY_LAST_SYNCED,
+    LessonBundle,
+    LessonBundleQuestion,
+    Question,
+    QuestionVocabItem,
     ReviewLog,
     SrsState,
     StudyProgress,
@@ -1102,3 +1107,439 @@ async def table_counts(session: AsyncSession) -> dict[str, Any]:
         "study_progress": progress or 0,
         "vocab_items": vocab or 0,
     }
+
+
+# -- lessons ---------------------------------------------------------------
+# Generated practice: the pools a generator reads, and the bundles it writes.
+
+
+async def count_unconsumed_bundles(session: AsyncSession, user_id: int) -> int:
+    """How many bundles are waiting. The only question the cron asks first."""
+    result = await session.execute(
+        select(func.count())
+        .select_from(LessonBundle)
+        .where(LessonBundle.user_id == user_id, LessonBundle.consumed.is_(False))
+    )
+    return int(result.scalar_one())
+
+
+async def project_wanikani_vocabulary(session: AsyncSession, user_id: int) -> int:
+    """Give newly-learned WaniKani words a `vocab_items` row.
+
+    `vocab_items` is the unifying table every generated question points at, but
+    sync writes `subjects` and `study_progress` and stops there — so without
+    this step a user who has never imported a photo has no words a question
+    could reference at all.
+
+    Only vocabulary is projected. A radical is not a word, and a kanji on its
+    own is WaniKani's unit of study rather than something to build a sentence
+    from.
+
+    Idempotent on `wanikani_subject_id`, which is unique for exactly this.
+    Returns how many rows were newly created.
+    """
+    started = (
+        select(SubjectRow)
+        .join(StudyProgress, StudyProgress.subject_id == SubjectRow.subject_id)
+        .where(
+            StudyProgress.user_id == user_id,
+            StudyProgress.started_at.is_not(None),
+            SubjectRow.type.in_(("vocabulary", "kana_vocabulary")),
+        )
+    )
+    subjects = (await session.execute(started)).scalars().unique().all()
+    if not subjects:
+        return 0
+
+    existing = await session.execute(
+        select(VocabItem.wanikani_subject_id).where(
+            VocabItem.wanikani_subject_id.in_([s.subject_id for s in subjects])
+        )
+    )
+    already = {row for row in existing.scalars() if row is not None}
+
+    created = 0
+    for subject in subjects:
+        if subject.subject_id in already or not subject.characters:
+            continue
+
+        readings = [
+            r.get("reading", "") for r in (subject.readings or []) if r.get("reading")
+        ]
+        meanings = [
+            m.get("meaning", "")
+            for m in (subject.meanings or [])
+            if m.get("accepted_answer", True) and m.get("meaning")
+        ]
+
+        session.add(
+            VocabItem(
+                source="wanikani",
+                wanikani_subject_id=subject.subject_id,
+                kanji_furigana=subject.characters,
+                furigana_only=readings[0] if readings else "",
+                english="; ".join(meanings),
+                jlpt_level=subject.jlpt_level,
+            )
+        )
+        created += 1
+
+    await session.flush()
+    return created
+
+
+async def get_generation_pools(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    new_within_days: int = 14,
+    limit_per_pool: int = 20,
+    now: datetime | None = None,
+) -> dict[str, list[VocabItem]]:
+    """The three pools a bundle draws from, kept apart on purpose.
+
+    *Review* is what is due and should be the bulk of a session. *New* is what
+    was just learned, which seasons the batch rather than filling it.
+    *Continuing* is started but not mastered, so exposure does not stop the
+    moment something is no longer new.
+
+    Handing a generator one merged list would let whichever pool happens to be
+    largest dominate the lesson — which right after an import is always "new".
+
+    **Every pool is two queries, because the two origins schedule differently.**
+    A WaniKani word's due date is WaniKani's (`study_progress.available_at`); an
+    imported word's is this app's own SM-2 (`srs_state.due_at`). That split is
+    deliberate and documented — the two systems must never disagree about the
+    same word — but it means a pool built on `srs_state` alone silently contains
+    only imported vocabulary. For a WaniKani-only user that is every pool empty
+    except "new", which is exactly the imbalance the three pools exist to stop.
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=new_within_days)
+
+    def _imported(*conditions):
+        return (
+            select(VocabItem)
+            .join(SrsState, SrsState.vocab_item_id == VocabItem.id)
+            .where(SrsState.user_id == user_id, *conditions)
+        )
+
+    def _wanikani(*conditions):
+        return (
+            select(VocabItem)
+            .join(
+                StudyProgress,
+                StudyProgress.subject_id == VocabItem.wanikani_subject_id,
+            )
+            .where(StudyProgress.user_id == user_id, *conditions)
+        )
+
+    due_imported = await session.execute(
+        _imported(SrsState.due_at <= now).order_by(SrsState.due_at).limit(limit_per_pool)
+    )
+    due_wanikani = await session.execute(
+        _wanikani(
+            StudyProgress.available_at.is_not(None),
+            StudyProgress.available_at <= now,
+        )
+        .order_by(StudyProgress.available_at)
+        .limit(limit_per_pool)
+    )
+
+    fresh_wanikani = await session.execute(
+        _wanikani(
+            StudyProgress.started_at.is_not(None),
+            StudyProgress.started_at >= cutoff,
+        )
+        .order_by(StudyProgress.started_at.desc())
+        .limit(limit_per_pool)
+    )
+    # An imported word is new when its schedule is: `create_flashcards` writes
+    # both SRS rows at confirmation, so an untouched row is a word just added.
+    fresh_imported = await session.execute(
+        _imported(
+            VocabItem.wanikani_subject_id.is_(None),
+            SrsState.repetitions == 0,
+            SrsState.due_at >= cutoff,
+        )
+        .order_by(SrsState.due_at.desc())
+        .limit(limit_per_pool)
+    )
+
+    continuing_imported = await session.execute(
+        _imported(SrsState.due_at > now, SrsState.repetitions > 0)
+        .order_by(SrsState.due_at)
+        .limit(limit_per_pool)
+    )
+    # Started but not yet passed is WaniKani's own definition of mid-progress,
+    # and it needs no stage arithmetic here to say so.
+    continuing_wanikani = await session.execute(
+        _wanikani(
+            StudyProgress.started_at.is_not(None),
+            StudyProgress.passed_at.is_(None),
+        )
+        .order_by(StudyProgress.started_at.desc())
+        .limit(limit_per_pool)
+    )
+
+    return {
+        "review": _merge_pools(
+            due_imported.scalars().unique(),
+            due_wanikani.scalars().unique(),
+            limit=limit_per_pool,
+        ),
+        "new": _merge_pools(
+            fresh_wanikani.scalars().unique(),
+            fresh_imported.scalars().unique(),
+            limit=limit_per_pool,
+        ),
+        "continuing": _merge_pools(
+            continuing_imported.scalars().unique(),
+            continuing_wanikani.scalars().unique(),
+            limit=limit_per_pool,
+        ),
+    }
+
+
+async def create_question(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    question_type: str,
+    payload: dict,
+    vocab_item_ids: list[int],
+    grammar_entry_id: int | None = None,
+) -> Question:
+    """Write one draft. `verified` stays false until the verifier says so."""
+    question = Question(
+        user_id=user_id,
+        type=question_type,
+        payload=payload,
+        grammar_entry_id=grammar_entry_id,
+    )
+    session.add(question)
+    await session.flush()
+
+    for item_id in dict.fromkeys(vocab_item_ids):
+        session.add(QuestionVocabItem(question_id=question.id, vocab_item_id=item_id))
+
+    await session.flush()
+    return question
+
+
+async def mark_question_verified(
+    session: AsyncSession, question: Question, *, ok: bool, note: str | None = None
+) -> None:
+    """The verifier's verdict.
+
+    A rejection keeps its reason rather than the row being deleted — a run of
+    similar notes is the only warning that a generation prompt has drifted.
+    """
+    question.verified = ok
+    question.verifier_note = note
+    await session.flush()
+
+
+async def create_bundle(
+    session: AsyncSession, user_id: int, question_ids: list[int]
+) -> LessonBundle:
+    """Assemble a bundle in the order given. Order is the generator's choice."""
+    bundle = LessonBundle(user_id=user_id)
+    session.add(bundle)
+    await session.flush()
+
+    for position, question_id in enumerate(question_ids):
+        session.add(
+            LessonBundleQuestion(
+                bundle_id=bundle.id, question_id=question_id, position=position
+            )
+        )
+
+    await session.flush()
+    return bundle
+
+
+async def claim_next_bundle(
+    session: AsyncSession, user_id: int
+) -> tuple[LessonBundle, list[Question]] | None:
+    """Hand out the oldest unconsumed bundle, and mark it spent.
+
+    Marked on handing out rather than on finishing: a session started and
+    abandoned still burned its questions, and serving the same bundle twice
+    would show a lesson the user just did.
+
+    `skip_locked` so two phones asking at once get different bundles instead of
+    one of them blocking.
+    """
+    result = await session.execute(
+        select(LessonBundle)
+        .where(LessonBundle.user_id == user_id, LessonBundle.consumed.is_(False))
+        .order_by(LessonBundle.generated_at)
+        .limit(1)
+        .with_for_update(skip_locked=True)
+    )
+    bundle = result.scalar_one_or_none()
+    if bundle is None:
+        return None
+
+    rows = await session.execute(
+        select(Question)
+        .join(LessonBundleQuestion, LessonBundleQuestion.question_id == Question.id)
+        .where(LessonBundleQuestion.bundle_id == bundle.id)
+        .order_by(LessonBundleQuestion.position)
+    )
+    questions = list(rows.scalars())
+
+    bundle.consumed = True
+    bundle.consumed_at = datetime.now(timezone.utc)
+    await session.flush()
+
+    return bundle, questions
+
+
+async def list_confirmed_grammar(
+    session: AsyncSession, user_id: int, *, limit: int = 20
+) -> list[GrammarEntryRow]:
+    """Grammar a generator may build questions around.
+
+    Confirmed only. `enriched` means a human read the model's gloss and
+    accepted it — generating questions from an unconfirmed entry would put a
+    fabricated grammar point into a deck by way of a second model, which is
+    exactly the loop the enrichment rule exists to break.
+
+    Newest first: what was logged this week is what a lesson should reinforce.
+    """
+    result = await session.execute(
+        select(GrammarEntryRow)
+        .options(selectinload(GrammarEntryRow.examples))
+        .where(
+            GrammarEntryRow.user_id == user_id,
+            GrammarEntryRow.enriched.is_(True),
+        )
+        .order_by(GrammarEntryRow.learned_on.desc(), GrammarEntryRow.id.desc())
+        .limit(limit)
+    )
+    return list(result.scalars())
+
+
+def _merge_pools(*sources, limit: int) -> list[VocabItem]:
+    """Interleave pools from different origins, de-duplicated, newest first.
+
+    Interleaved rather than concatenated: taking the first `limit` of
+    WaniKani-then-imported would let a heavy sync crowd out every photographed
+    word, which is the same "one origin dominates" failure the three pools
+    exist to prevent, one level down.
+    """
+    lists = [list(source) for source in sources]
+    seen: set[int] = set()
+    merged: list[VocabItem] = []
+
+    for row in itertools.chain.from_iterable(itertools.zip_longest(*lists)):
+        if row is None or row.id in seen:
+            continue
+        seen.add(row.id)
+        merged.append(row)
+        if len(merged) >= limit:
+            break
+
+    return merged
+
+
+async def find_words(
+    session: AsyncSession, written_form: str, *, limit: int = 5
+) -> list[str]:
+    """What the deck knows about one word, as lines a verifier can read.
+
+    Matches the written form *or* the reading, because a verifier checking a
+    distractor has only the string the generator wrote and no way to know which
+    of the two it is.
+
+    Returns formatted lines rather than rows on purpose: this feeds a model, and
+    handing it ORM objects to stringify would let the shape of the prompt drift
+    every time a column is added.
+    """
+    needle = written_form.strip()
+    if not needle:
+        return []
+
+    result = await session.execute(
+        select(VocabItem)
+        .where(
+            or_(
+                VocabItem.kanji_furigana == needle,
+                VocabItem.furigana_only == needle,
+            )
+        )
+        .limit(limit)
+    )
+    items = list(result.scalars())
+    if not items:
+        return []
+
+    answers = await session.execute(
+        select(VocabAnswer).where(
+            VocabAnswer.vocab_item_id.in_([i.id for i in items]),
+            VocabAnswer.accepted.is_(True),
+        )
+    )
+    by_item: dict[int, list[VocabAnswer]] = {}
+    for answer in answers.scalars():
+        by_item.setdefault(answer.vocab_item_id, []).append(answer)
+
+    lines: list[str] = []
+    for item in items:
+        accepted = by_item.get(item.id, [])
+        rendered = ", ".join(f"{a.value} ({a.kind})" for a in accepted) or "none recorded"
+        lines.append(
+            f"id={item.id} {item.kanji_furigana}"
+            f"{f' ({item.furigana_only})' if item.furigana_only else ''}"
+            f" — meaning: {item.english or 'none'}; accepted answers: {rendered}"
+        )
+    return lines
+
+
+async def get_question(session: AsyncSession, question_id: int) -> Question | None:
+    result = await session.execute(
+        select(Question)
+        .options(selectinload(Question.items))
+        .where(Question.id == question_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def schedulable_states(
+    session: AsyncSession, user_id: int, vocab_item_id: int
+) -> tuple[list[SrsState], bool]:
+    """The SRS rows a generated answer may advance — and whether there are none.
+
+    **A WaniKani-sourced word has no schedule here and never gets one.** Its
+    stage belongs to WaniKani, is mirrored in `study_progress`, and is advanced
+    only by a real WaniKani review. Writing local SM-2 for it would be
+    reimplementing the scheduling the design explicitly refuses to reimplement,
+    and would leave two systems with different opinions about when 免許 is next
+    due — the exact disagreement the two-track split exists to prevent.
+
+    Such a word can still be *asked about*: a generated question over WaniKani
+    vocabulary is practice, and practice that moves nothing is still practice.
+    The second return value says so, so the caller can tell the user rather
+    than silently doing nothing.
+
+    An imported word is the opposite case. Its rows already exist —
+    `create_flashcards` wrote recognition and production at confirmation — so a
+    question and a flashcard land on the same record, which is the one source
+    of truth per word that the notes ask for. Rows are never created here: a
+    word with no SRS state was never confirmed into the deck, and inventing a
+    schedule for it would put a word into rotation the user never accepted.
+    """
+    item = await session.get(VocabItem, vocab_item_id)
+    if item is None or item.wanikani_subject_id is not None:
+        return [], True
+
+    existing = await session.execute(
+        select(SrsState).where(
+            SrsState.user_id == user_id, SrsState.vocab_item_id == vocab_item_id
+        )
+    )
+    states = list(existing.scalars())
+    return states, not states
+

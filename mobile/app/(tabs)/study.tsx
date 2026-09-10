@@ -167,6 +167,22 @@ export default function StudyScreen() {
           </View>
         </Card>
 
+        <Overline style={styles.trackLabel}>Generated practice</Overline>
+        <Card variant="bordered">
+          <SectionHeading title="Written for you" />
+          <Text style={styles.trackBlurb}>
+            Questions built ahead of time from what you are actually studying —
+            multiple choice, fill-in-the-blank, sentence building. Answering one
+            advances every word it tested.
+          </Text>
+          <ChunkyButton
+            label="Start a lesson"
+            tone="kanji"
+            size="small"
+            onPress={() => router.push('/lesson-bundle')}
+          />
+        </Card>
+
         <Overline style={styles.trackLabel}>Grammar</Overline>
 
         <Card variant="bordered">

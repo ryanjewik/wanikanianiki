@@ -1,10 +1,12 @@
 """Lambda entry points.
 
-Three handlers, deployed as separate functions off the same image or zip:
+Four handlers, deployed as separate functions off the same image or zip:
 
 * `handler` — the HTTP API, behind a Function URL or API Gateway HTTP API.
 * `sync_handler` — the scheduled poll, triggered by EventBridge.
 * `ocr_handler` — page extraction, triggered by SQS.
+* `lessons_handler` — the scheduled lesson top-up, triggered by EventBridge
+  twice a day.
 
 One artifact, several entry points. Each function gets its own memory, timeout
 and concurrency, which is the only reason they are separate at all: `ocr_handler`
@@ -124,5 +126,56 @@ async def _run_ocr(source_ids: list[int]) -> dict[str, Any]:
             async with session_scope() as session:
                 await process_source(session, source_id)
         return {"ok": True, "processed": len(source_ids)}
+    finally:
+        await dispose_engine()
+
+
+def lessons_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    """EventBridge target. Keeps the generated-lesson queue stocked.
+
+    **Twice a day is the intended schedule** — `cron(0 7,19 * * ? *)` or
+    similar. Generation is the most expensive thing this system does and the
+    queue drains at the speed a person studies, which is slow. A run that finds
+    the queue full costs one COUNT and stops, so the cheap case is genuinely
+    cheap; the expensive case is bounded by `lesson_bundles_per_run`.
+
+    **Set reserved concurrency to 1**, for a different reason than the sync
+    function. Sync is limited by WaniKani's per-token budget; this is limited by
+    the fact that two overlapping runs would both read the same
+    "below the low-water mark" and both generate, quietly doubling the bill and
+    the queue.
+
+    Failures are logged and swallowed into the return value rather than raised.
+    Nobody is waiting on this: a run that fails leaves the queue where it was
+    and the next one tries again. Letting it raise would only add retry noise
+    on a schedule that is already periodic.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level)
+
+    if not settings.has_database:
+        logger.error("Lesson top-up invoked with no DATABASE_URL configured")
+        return {"ok": False, "detail": "No database configured"}
+
+    return asyncio.run(_run_lessons())
+
+
+async def _run_lessons() -> dict[str, Any]:
+    from app.db import repository as repo
+    from app.db.session import dispose_engine, session_scope
+    from app.services.lessons import top_up_bundles
+
+    try:
+        async with session_scope() as session:
+            user = await repo.get_default_user(session)
+            if user is None:
+                return {"ok": True, "skipped": True, "reason": "no user synced yet"}
+
+            result = await top_up_bundles(session, user.id)
+            return result.model_dump(mode="json", by_alias=True)
+    except Exception:
+        # Bounded blast radius: the schedule is the retry.
+        logger.exception("Lesson top-up failed")
+        return {"ok": False, "detail": "Top-up failed; see logs"}
     finally:
         await dispose_engine()

@@ -22,15 +22,21 @@ the level browser, the session summary, `/api/activity`. All four are now
 consumed. Every endpoint the client declares has a caller, with one exception
 noted below.
 
-What is left is real feature work, not plumbing. **Lesson bundles** (gap 2) are
-Part 2's whole point — AI-generated, verifier-checked practice questions,
-unbuilt on both sides, with the design already written down and worth reading
-before anything is designed fresh. The local deck mirror (gap 1) is half-built
-and blocks starting an imported-vocab session offline.
+**Lesson bundles are built.** Part 2's centrepiece — generated, verified
+practice questions — now spans four tables, a scheduled top-up, two routes and a
+screen. What it has never done is run: see the note below.
 
-**Verified working on 2026-09-09:** app runs on the Android Studio emulator
-against a local backend, `95 passed, 54 skipped` on the backend suite, and
-`npm run check:grading` agrees across 1412 checks.
+What is left is smaller than it has been at any point in this document's life.
+The local deck mirror (gap 1) is half-built and blocks starting an imported-vocab
+session offline; the rest is polish and one deployment step.
+
+**Verified on 2026-09-10:** app runs on the Android Studio emulator against a
+local backend, `114 passed, 58 skipped`, ruff clean, `npm run typecheck` clean,
+and `npm run check:grading` agrees across 1412 checks.
+
+**Not yet run: a single live generation pass.** Everything below is wired and
+the pools are populated, but no bundle exists, so the lesson screen shows
+"Nothing generated yet". The first run costs real Anthropic calls.
 
 ---
 
@@ -40,7 +46,7 @@ against a local backend, `95 passed, 54 skipped` on the backend suite, and
 
 Postgres on Supabase, SQLAlchemy 2.x async + asyncpg, Alembic for schema.
 
-**Seven migrations**, head is `a1c7e33b90f4`:
+**Eight migrations**, head is `3413a054bc88`:
 
 ```
 2da9b14da58f  initial schema
@@ -50,6 +56,7 @@ dff614418157  vocab_items.usage_context
 d44cf9719b8e  grammar entries and examples
 b71c4f9d20ae  users.timezone
 a1c7e33b90f4  widen grammar_entries.style
+3413a054bc88  questions and lesson bundles
 ```
 
 Two conventions worth not re-litigating:
@@ -115,6 +122,108 @@ every zone lookup raises, including the `ZoneInfo("UTC")` fallback inside
 `dates.py` itself. A venv created before this dependency landed fails 8 tests
 in `test_dates.py`; the fix is `pip install -e ".[dev]"`.
 
+### Generated lessons
+
+`app/services/lessons.py`, four tables, one scheduled handler and two routes.
+
+**Two prompts, not an agent framework.** There is no LangChain, no LangGraph and
+no MCP — the whole surface is `client.messages.parse(output_format=...)` plus
+the SDK's own `tool_runner`. That was a deliberate call: the graph is
+generate → gate → verify → store, and a framework would add a dependency tree to
+a Lambda artifact for a loop worth fifteen lines. The SDK covers tools, the
+loop, and MCP natively if any of that is ever wanted.
+
+**The generator writes, the verifier vetoes, and the verifier cannot edit.** A
+verifier that repairs a question is a second generator, and it talks itself into
+the draft it just read. Its only output is a verdict.
+
+**The verifier runs on `verifier_model` (Sonnet 5), the generator on
+`lesson_model` (Opus 5).** Writing a good question is judgement; checking one
+against retrieved rows is not. Verification is also the call that scales — once
+per question, where generation is once per bundle.
+
+**Nothing unverified is servable.** `questions.verified` starts false, only
+`mark_question_verified` sets it, and the answer route returns 409 for a
+question that never passed. A wrong answer key is worse than a missing question:
+the SRS rehearses the mistake until the learner believes it.
+
+**An unreachable verifier rejects.** Defaulting to "serve it" when the network
+wobbles would delete the only safeguard the module has. There is a test on it.
+
+Three layers of checking, and the split is deliberate:
+
+| Concern | Checked by | Why there |
+|---|---|---|
+| Invented vocab id, answer not among its own choices, missing `___`, tiles that do not rebuild the answer | `_structurally_sound`, in Python | Arithmetic and string equality. Free, and runs *before* any verifier call |
+| Is this one question answerable, is exactly one answer right | Sonnet 5, with `look_up_word` on multiple choice | Genuine judgement |
+| One word drilled repeatedly across a batch | `prune_for_variety`, in Python | The verifier sees one question at a time and structurally cannot detect this. It is also countable, so a model would only add cost |
+| Question-type monotony | Fed back as text on the retry pass | A judgement call about the material — some word sets genuinely do not support sentence construction |
+
+`look_up_word` reads the learner's own deck, and exists for one failure: a
+distractor that is *also* an accepted answer for the word being tested. A
+verifier working from parametric memory has to guess whether "permission" is
+acceptable for 免許; one that can read `vocab_answers` does not. It runs on
+multiple choice only — no other type has choices to be wrong about, and the tool
+loop is several round trips.
+
+**The pools are three queries times two origins.** A WaniKani word's due-ness is
+`study_progress.available_at`; an imported word's is `srs_state.due_at`. Building
+a pool on `srs_state` alone silently yields imported vocabulary only — which for
+a WaniKani-only account is every pool empty but "new", the exact imbalance the
+three pools exist to prevent. Both halves are merged interleaved, not
+concatenated, so a heavy sync cannot crowd out everything photographed.
+
+**`project_wanikani_vocabulary` exists because sync stops short.** Sync fills
+`subjects` and `study_progress`; `vocab_items` — the table every question points
+at — stays empty until this runs. Vocabulary only: a radical is not a word, and a
+kanji alone is WaniKani's unit of study.
+
+### The two study tracks, and the rule that keeps them apart
+
+**A generated question never moves a WaniKani word's schedule.** This is the
+rule most likely to be broken by a later change that looks reasonable on its own
+("answering should always advance something"), so `tests/test_track_separation.py`
+exists to make that change fail.
+
+The design notes state two rules that collide on exactly one case:
+
+- WaniKani items keep WaniKani's stage, **not reimplemented**.
+- A flashcard and a lesson question write **the same** SRS record — one source
+  of truth per word.
+
+For an imported word there is no conflict: `create_flashcards` wrote the rows and
+both paths use them. For a WaniKani word the rules pointed opposite ways, and
+there was no third option that satisfied both — WaniKani's API accepts reviews
+only for real assignments, so the answer cannot be forwarded either.
+
+**Resolved as: scheduling is separate, content is shared.** `study_progress`
+stays the sole authority for when WaniKani shows you a word, and nothing here
+writes it. A WaniKani word may still be *asked about* — that is practice — and
+`schedulable_states` returns no rows for it, with a flag saying so. The answer
+route reports that as `practiceOnlyWords` rather than passing off a no-op as
+progress.
+
+`schedulable_states` also creates nothing. A word with no SRS rows was never
+confirmed into the deck, and inventing a schedule would put a word into rotation
+the user never accepted.
+
+### Running one pass
+
+The cron checks first and usually stops: at or above `lesson_bundle_low_water`
+(5) it costs one `COUNT` and no model calls. Below it, `lesson_bundles_per_run`
+(3) bundles of `lesson_questions_per_bundle` (8). Schedule it twice a day with
+**reserved concurrency 1** — see `backend/README.md`, and note the reason
+differs from the sync worker's: the check and the write are not one transaction,
+so two overlapping runs both see "below the mark" and both generate.
+
+```bash
+.venv/Scripts/python scripts/seed_lesson_samples.py   # project vocab, add sample grammar
+.venv/Scripts/python -c "from app.lambda_handler import lessons_handler; print(lessons_handler({}, None))"
+```
+
+`seed_lesson_samples.py --remove` takes the sample grammar back out. Projected
+vocabulary is left alone — those are real words the account started.
+
 ### Deployment shape
 
 AWS Lambda behind a **Function URL** (not API Gateway), one artifact with many
@@ -129,12 +238,14 @@ pooler is handled the same way Lambda is.
 
 ### Tests
 
-`95 passed, 54 skipped` (`cd backend && .venv\Scripts\python -m pytest`).
+`114 passed, 58 skipped` (`cd backend && .venv\Scripts\python -m pytest`).
 
-**The 54 skips are not dead tests** — they are DB integration tests gated on
+**The 58 skips are not dead tests** — they are DB integration tests gated on
 `TEST_DATABASE_URL`, deliberately a different variable from `DATABASE_URL`
 because the test drops and recreates every table and must never find a real
-database by accident.
+database by accident. Four of them are `test_track_separation.py`, which exists
+to make a future "answering should always advance something" change fail
+loudly. **They have never been run** — set the variable and run them.
 
 ---
 
@@ -157,6 +268,7 @@ Expo 57 docs before writing code — Expo has changed.
 | `app/review/index.tsx` — WaniKani review | real |
 | `app/lesson/index.tsx` — WaniKani lesson | real |
 | `app/item/[id].tsx` — item detail | real, fixture fallback |
+| `app/lesson-bundle.tsx` — generated lesson | real (`useLessonBundle`) |
 | `app/session-summary.tsx` | real (`useSessionSummary`) |
 
 Notecards mode is **not** a route — it lives inside `app/sets/[id].tsx`, which
@@ -216,6 +328,14 @@ Recorded so nobody re-opens them from a stale reading:
   misses never reached WaniKani, which then derived the wrong SRS stage. Both
   halves are now tallied per subject and reported together. `QueueEntry.strikes`
   is gone — it had become write-only and shadowed the new tally's name.
+- **Lesson bundles** (2026-09-10) — Part 2's centrepiece, unbuilt on both sides
+  in every previous version of this document. Four tables, a generator and a
+  verifier, a scheduled top-up, two routes and a screen. `fetchLessonBundle` no
+  longer points at a route that does not exist. **Never run — see gap 2.**
+- **The WaniKani / generated-lesson track split** (2026-09-10) — the design
+  notes' two SRS rules collide on WaniKani-sourced words, and nothing had ever
+  written state to expose it. Resolved as scheduling separate, content shared;
+  see the section above and `tests/test_track_separation.py`.
 - **The activity strip** (2026-09-09) — `/api/activity` had no consumer. The
   dashboard's streak strip now runs on it: a fortnight instead of a week, with
   a third state for a day that logged grammar and answered nothing. That day is
@@ -242,72 +362,51 @@ finishes offline (each card carries its accepted answers, and the outbox queues
 what you type), but a session still cannot be **started** without the server.
 Finishing this is: cache on fetch, read on cache-hit, mirror the WaniKani path.
 
-### 2. Lesson bundles — the one genuinely large feature left
+### 2. Lesson generation has never actually run
 
-`fetchLessonBundle()` calls `/api/lesson-bundles/next`. **That route does not
-exist** — confirmed absent from `routes.py`, along with the `questions` and
-`lesson_bundles` tables. This is not a wiring job; it is Part 2's
-centrepiece, unbuilt on both sides.
+Everything is wired and the pools are populated (review 20, new 5, continuing 5,
+grammar 3 as of 2026-09-10) but **no bundle has ever been generated**, so the
+lesson screen shows "Nothing generated yet" and the answer path has never
+executed against a real question.
 
-**The full design is already written** — `backend/docs/wanikani-api-notes.md`,
-"Part 2: vocab capture & AI-generated lessons". Read it before designing
-anything; what follows is the shape, not a replacement for it.
+The first run costs real Anthropic calls: 3 generation calls on Opus 5 plus up
+to 24 verifications on Sonnet 5, some of those a multi-turn tool loop. Nothing
+is known about output quality until it happens. Command in "Running one pass"
+above.
 
-**What a lesson bundle is.** Not a flashcard. Flashcards are
-`vocab_items` + `srs_state` queried directly, no `questions` table involved.
-Lessons are *generated structured practice* — multiple choice, fill-in-blank,
-sentence construction, recall — built from the vocab, grammar and kanji the
-user has actually been learning. The four types are already in
-`QuestionType` (`mobile/src/data/types.ts:281`), and `Question` / `LessonBundle`
-are typed on the client with no backend behind them.
+Two things to watch on that first run, both of which the code handles but
+neither of which has been observed:
 
-**Two agents, and the split is a safety property.** A generation agent writes
-question drafts; a **verifier sub-agent** must flip `verified = true` before a
-question is servable. *Never serve an unverified question.* That comment is
-already in the type definition — `verified` exists on `Question` today. The
-orchestration service is intended as distinct from the core API: it is doing
-LLM calls, not CRUD.
+- **Rejection rate.** A high one means the generation prompt is drifting; the
+  reasons are kept in `questions.verifier_note` for exactly this.
+- **Whether the retry pass earns its keep.** It is capped at one
+  (`lesson_retry_passes`) on the theory that a second pass recovers fumbled
+  questions and a third argues in circles. That theory is untested.
 
-**It reads a narrow feed, never the raw tables.** The generator gets
-`GET /api/agent-context/newly-learned` — `study_progress` filtered to items
-passed in the last N days, joined to vocab. Not years of burned items. The same
-call folds in recent grammar entries.
+### 3. The cron is not deployed
 
-**The mix is three pools, deliberately weighted.** A bundle draws from
-*review* (items due per `srs_state` / `study_progress` — the bulk of a healthy
-session), *new* (just-learned WaniKani items and recent grammar — a seasoning,
-not the body), and *continuing* (started but not mastered). Newly learned
-content seasons the batch; it must not dominate it.
+`lessons_handler` exists and runs by hand; no EventBridge rule fires it. The
+exact commands are in `backend/README.md`, including the **reserved concurrency
+1** setting, which is not optional — the low-water check and the write are not
+one transaction, so two overlapping runs both generate.
 
-**How it meets the SRS — the part worth getting right.** Answering a word via a
-generated question and answering it via a flashcard write **the same** SRS
-record. One source of truth for "how well do I know this word", regardless of
-which mode taught it. That is why `questions.vocab_item_ids` points at
-`vocab_items` rather than at `subjects`.
+There is deliberately no Terraform or SAM in this repo yet, so this stays a
+documented procedure rather than code until IaC lands.
 
-But the two SRS systems stay separate, and a generated question inherits that
-split: a WaniKani-sourced item's due date always comes from **WaniKani's own
-stage** (mirrored, never reimplemented); everything else runs the local
-**SM-2** in `srs_state`, with recognition and production scheduled apart. A
-generated question targeting a WaniKani item must not write SM-2 state for it.
+### 4. Smaller, in the lesson system
 
-**The two tracks are never blended into one queue.** WaniKani lessons and
-AI-generated lessons are presented and reviewed independently. This is a
-product decision, not an implementation detail — do not merge the queues.
+- **No cross-run dedupe.** Two runs can produce near-identical questions;
+  nothing compares a draft against questions already stored.
+- **Rejected questions accumulate.** Kept on purpose — a run of similar
+  `verifier_note` values is the only signal a prompt has drifted — but nothing
+  ever prunes them.
+- **Verified-but-unbundled questions accumulate too.** A bundle needs two
+  survivors; a pass that yields one leaves it in the table, and no later run
+  picks it up.
+- **`practiceOnlyWords` is returned but not surfaced.** The lesson screen does
+  not yet tell the user that a WaniKani word was practice rather than progress.
 
-**Bundles are the offline unit.** Generate 3–5 at a time and mirror them the
-way `local_assignments` is mirrored — not individual questions. This is the
-same gap as item 1 and should probably be solved once, for both.
-
-**Superseded — do not build it.** The design doc's Obsidian connector is dead;
-grammar lives in the app instead (`grammar_entries` / `grammar_examples`,
-migration `d44cf9719b8e`). Two principles carried over and still hold: grammar
-is **optional** context for generation, never required — a user with no grammar
-entries still gets working vocab-only questions — and nothing generated is
-served before a human confirms it. Two did not: the vault write-back and the
-whole-file read.
-
-### 3. Smaller, still real
+### 5. Smaller, still real
 
 - **End-of-session sync trigger** — sync is manual (app open, pull to refresh).
 - **CORS** is wide open under `ENVIRONMENT=local`. Not a factor for React
@@ -378,8 +477,16 @@ cd mobile   && npm run typecheck && npm run check:grading
 
 `npm run typecheck` reports phantom errors on routes added since
 `.expo/types/router.d.ts` was last generated — `typedRoutes` is on, and that
-file regenerates when the dev server starts. Run `npx expo start` once before
-believing a route-typing error.
+file regenerates when the dev server starts. Run `npx expo start --clear` once
+before believing a route-typing error.
+
+**That generator has been seen emitting a corrupt file** — a bogus
+`/../src/data/session` route, and a directory route left as
+`/lesson-bundle/index` instead of collapsing to `/lesson-bundle`. It regenerated
+corrupt more than once. `--clear` produces a correct file, and flattening the
+screen to `app/lesson-bundle.tsx` (a plain file, like `session-summary.tsx`)
+made it stable across repeated typechecks. If a route type looks impossible,
+check that file before changing a call site.
 
 ---
 
