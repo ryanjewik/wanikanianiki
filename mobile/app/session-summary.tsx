@@ -13,8 +13,8 @@ import Svg, { Circle } from 'react-native-svg';
 import { MascotStill } from '@/components/Mascot';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, SectionHeading, TextButton } from '@/components/ui';
-import { SESSION_SUMMARY } from '@/data/fixtures';
 import { formatDueIn } from '@/data/sync';
+import { useSessionSummary } from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -27,8 +27,13 @@ import {
 
 export default function SessionSummaryScreen() {
   const router = useRouter();
-  const summary = SESSION_SUMMARY;
+  const { data: summary } = useSessionSummary();
   const names = stageVocabularies.Botanical;
+
+  // The hook syncs before it can diff the stages, so this is a real wait, not
+  // a flash — the movements are wrong until WaniKani's verdict has landed.
+  if (!summary) return <View style={styles.screen} />;
+
   const movedUp = summary.movements.reduce((total, m) => total + m.count, 0);
   const peak = Math.max(1, ...summary.movements.map((m) => m.count));
 

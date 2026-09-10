@@ -345,6 +345,29 @@ export async function getReviewQueue(limit = 100): Promise<Assignment[]> {
   return rows.map(toAssignment);
 }
 
+/**
+ * When the next review lands and how many arrive with it.
+ *
+ * "How many" means how many share that exact timestamp, not how many are due
+ * eventually — WaniKani releases a whole batch at once, and the summary's
+ * "N reviews in 4h" is a promise about that batch.
+ */
+export async function getNextReview(): Promise<{ at: string | null; count: number }> {
+  const db = await getDatabase();
+  const now = new Date().toISOString();
+  const row = await db.getFirstAsync<{ at: string | null }>(
+    `SELECT MIN(available_at) AS at FROM local_assignments WHERE available_at > ?`,
+    now,
+  );
+  if (!row?.at) return { at: null, count: 0 };
+
+  const tally = await db.getFirstAsync<{ n: number }>(
+    'SELECT COUNT(*) AS n FROM local_assignments WHERE available_at = ?',
+    row.at,
+  );
+  return { at: row.at, count: tally?.n ?? 0 };
+}
+
 export async function getAssignmentForSubject(subjectId: number): Promise<Assignment | null> {
   const db = await getDatabase();
   const row = await db.getFirstAsync<AssignmentRow>(
@@ -352,6 +375,24 @@ export async function getAssignmentForSubject(subjectId: number): Promise<Assign
     subjectId,
   );
   return row ? toAssignment(row) : null;
+}
+
+/**
+ * Assignments for a batch of subjects, keyed by subject id. One query rather
+ * than one per tile: the level browser asks about every subject on the level
+ * at once, and a missing key is meaningful — it means not yet unlocked.
+ */
+export async function getAssignmentsForSubjects(
+  subjectIds: number[],
+): Promise<Map<number, Assignment>> {
+  if (subjectIds.length === 0) return new Map();
+  const db = await getDatabase();
+  const placeholders = subjectIds.map(() => '?').join(',');
+  const rows = await db.getAllAsync<AssignmentRow>(
+    `SELECT * FROM local_assignments WHERE subject_id IN (${placeholders})`,
+    ...subjectIds,
+  );
+  return new Map(rows.map((row) => [row.subject_id, toAssignment(row)]));
 }
 
 /** Counts per display bucket, for the dashboard's item-spread chart. */

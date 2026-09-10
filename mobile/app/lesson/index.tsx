@@ -22,6 +22,7 @@ import {
   TextButton,
 } from '@/components/ui';
 import { findSubject } from '@/data/fixtures';
+import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
 import { useLessonQueue, useStudyActions } from '@/hooks/useStudyData';
 import {
@@ -45,8 +46,31 @@ export default function LessonScreen() {
   const items = React.useMemo(() => [...(queue ?? []), ...deferred], [queue, deferred]);
   const current = items[index];
 
+  const startedAt = React.useRef(Date.now());
+  /** Items actually taught — a deferred item comes back round and is not one. */
+  const taught = React.useRef<StudyItem[]>([]);
+
   const advance = React.useCallback(() => {
     if (index + 1 >= items.length) {
+      // A lesson has nothing to get wrong, so every item taught is `correct`.
+      // The movement it produces is real all the same: WaniKani takes an
+      // unlocked item to stage 1 when the lesson lands.
+      const session: SessionItem[] = taught.current.map(({ subject, assignment }) => ({
+        subjectId: subject.id,
+        characters: subject.characters ?? '?',
+        meaning: subject.meanings.find((m) => m.primary)?.meaning ?? '',
+        reading: subject.readings.find((r) => r.primary)?.reading ?? '',
+        startingStage: assignment.srsStage,
+        correct: true,
+        note: '',
+      }));
+
+      recordSession({
+        kind: 'lesson',
+        startedAt: startedAt.current,
+        finishedAt: Date.now(),
+        items: session,
+      });
       router.replace('/session-summary');
       return;
     }
@@ -54,7 +78,10 @@ export default function LessonScreen() {
   }, [index, items.length, router]);
 
   const onGotIt = React.useCallback(async () => {
-    if (current) await completeLesson(current.assignment);
+    if (current) {
+      taught.current.push(current);
+      await completeLesson(current.assignment);
+    }
     advance();
   }, [current, completeLesson, advance]);
 

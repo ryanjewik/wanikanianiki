@@ -11,13 +11,18 @@ import * as React from 'react';
 import * as api from '@/data/api';
 import * as db from '@/data/db';
 import * as fixtures from '@/data/fixtures';
+import { durationMinutes, getLastSession } from '@/data/session';
 import { syncNow, type SyncResult } from '@/data/sync';
 import type {
+  ActivityDay,
   Assignment,
   DashboardSummary,
+  DayActivitySummary,
   Flashcard,
   GrammarEntry,
+  LevelItem,
   ReviewAnswer,
+  SessionSummary,
   StudyItem,
   Subject,
   VocabItem,
@@ -153,11 +158,49 @@ export function useSubject(subjectId: number | null) {
   }, [subjectId]);
 }
 
-export function useLevelItems(level: number) {
-  return useAsync<Subject[]>(async () => {
-    const local = await db.getSubjectsByLevel(level);
-    if (local.length > 0) return local;
-    return fixtures.LEVEL_12_ITEMS.map((item) => item.subject);
+/**
+ * Derived from the assignment, because that is the only place the information
+ * lives. A missing assignment is not missing data — WaniKani creates one on
+ * unlock, so its absence *is* locked.
+ */
+function tileState(assignment: Assignment | undefined): LevelItem['state'] {
+  if (!assignment) return 'locked';
+  if (assignment.passedAt) return 'passed';
+  return 'in_progress';
+}
+
+/**
+ * Every subject on a level, each with where it stands. `null` while the level
+ * is still unknown (the dashboard supplies it).
+ *
+ * The server is asked first here, unlike most hooks, and the reason is the
+ * locked tiles: `syncNow` only caches subjects that already have assignments,
+ * so the local mirror holds what is unlocked and nothing else. Reading the
+ * cache alone would silently drop every locked item from the grid and leave a
+ * legend describing a state that never appears.
+ */
+export function useLevelItems(level: number | null) {
+  return useAsync<LevelItem[]>(async () => {
+    if (level === null) return [];
+
+    let subjects: Subject[] = [];
+    if (api.isBackendConfigured) {
+      try {
+        subjects = await api.fetchSubjectsByLevel(level);
+      } catch {
+        // Offline. Fall through to the mirror, which is missing the locked
+        // items but is still the real level as far as this device knows.
+      }
+    }
+
+    if (subjects.length === 0) subjects = await db.getSubjectsByLevel(level);
+    if (subjects.length === 0) return fixtures.LEVEL_12_ITEMS;
+
+    const assignments = await db.getAssignmentsForSubjects(subjects.map((s) => s.id));
+    return subjects.map((subject) => ({
+      subject,
+      state: tileState(assignments.get(subject.id)),
+    }));
   }, [level]);
 }
 
@@ -309,4 +352,153 @@ export function useSync() {
   }, []);
 
   return { syncing, result, pendingWrites, refresh };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Session summary                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The report for the session that just ended.
+ *
+ * Movements are a diff, not a client calculation: the session recorded the
+ * stage each item had on the way in, and WaniKani decided where it went. That
+ * decision reaches the phone through the sync below, so this syncs first and
+ * reads the mirror second. An item whose stage has not moved yet — offline, or
+ * a sync that failed — simply contributes no movement rather than a guessed one.
+ *
+ * With no recorded session (a cold deep-link into the route) this falls back to
+ * the fixture, which is what makes the screen render on a fresh clone.
+ */
+export function useSessionSummary() {
+  return useAsync<SessionSummary>(async () => {
+    const session = getLastSession();
+    if (!session || session.items.length === 0) return fixtures.SESSION_SUMMARY;
+
+    // Best effort: the answers are already queued, so a failure here costs the
+    // movements, not the data.
+    if (api.isBackendConfigured) {
+      try {
+        await syncNow();
+      } catch {
+        /* offline — fall through to whatever the mirror already holds */
+      }
+    }
+
+    const [assignments, next, pendingSync, dashboard] = await Promise.all([
+      db.getAssignmentsForSubjects(session.items.map((i) => i.subjectId)),
+      db.getNextReview(),
+      db.countPendingWrites(),
+      loadStreakDays(),
+    ]);
+
+    const tally = new Map<string, { from: number; to: number; count: number }>();
+    for (const item of session.items) {
+      const to = assignments.get(item.subjectId)?.srsStage;
+      if (to === undefined || to <= item.startingStage) continue;
+      const key = `${item.startingStage}->${to}`;
+      const entry = tally.get(key) ?? { from: item.startingStage, to, count: 0 };
+      entry.count += 1;
+      tally.set(key, entry);
+    }
+
+    const correct = session.items.filter((i) => i.correct).length;
+    const total = session.items.length;
+
+    return {
+      durationMinutes: durationMinutes(session),
+      total,
+      correct,
+      incorrect: total - correct,
+      percentageCorrect: Math.round((correct / total) * 100),
+      streakDays: dashboard,
+      movements: [...tally.values()].sort((a, b) => a.from - b.from),
+      missed: session.items
+        .filter((i) => !i.correct)
+        .map((i) => ({
+          subjectId: i.subjectId,
+          characters: i.characters,
+          meaning: i.meaning,
+          reading: i.reading,
+          note: i.note,
+        })),
+      nextReviewAt: next.at,
+      nextReviewCount: next.count,
+      pendingSync,
+    };
+  }, []);
+}
+
+/** The streak is the dashboard's to compute; this only borrows the number. */
+async function loadStreakDays(): Promise<number> {
+  if (!api.isBackendConfigured) return fixtures.DASHBOARD.streak.days;
+  try {
+    return (await api.fetchDashboard()).streak.days;
+  } catch {
+    return fixtures.DASHBOARD.streak.days;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Activity strip                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** Two weeks. Wider than this and the weekday letters stop fitting. */
+const STRIP_DAYS = 14;
+
+const WEEKDAY_INITIAL = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+/**
+ * Local calendar date, not `toISOString()`.
+ *
+ * The server buckets days in the zone the device reported, so the key has to
+ * be the device's own date. UTC would disagree with it for part of every day
+ * and slide the whole strip by one.
+ */
+function isoDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * The dashboard's streak strip, widened from a week to a fortnight and able to
+ * show a grammar-only day.
+ *
+ * Returns `null` rather than an empty strip when there is no backend to ask,
+ * which is the caller's signal to fall back to the seven days the dashboard
+ * payload already carries.
+ */
+export function useActivityStrip() {
+  return useAsync<ActivityDay[] | null>(async () => {
+    if (!api.isBackendConfigured) return null;
+
+    const first = new Date();
+    first.setDate(first.getDate() - (STRIP_DAYS - 1));
+
+    let summaries: DayActivitySummary[];
+    try {
+      summaries = await api.fetchActivity(isoDate(first));
+    } catch {
+      return null;
+    }
+
+    const byDay = new Map(summaries.map((s) => [s.day, s]));
+    const strip: ActivityDay[] = [];
+
+    for (let back = STRIP_DAYS - 1; back >= 0; back -= 1) {
+      const day = new Date();
+      day.setDate(day.getDate() - back);
+      const summary = byDay.get(isoDate(day));
+      const studied = !!summary && summary.reviews + summary.vocabReviews > 0;
+
+      strip.push({
+        label: WEEKDAY_INITIAL[day.getDay()],
+        isToday: back === 0,
+        studied,
+        grammarOnly: !studied && !!summary && summary.grammarLogged > 0,
+      });
+    }
+
+    return strip;
+  }, []);
 }

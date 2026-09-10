@@ -32,6 +32,7 @@ import {
   SessionProgressBar,
   StatTile,
 } from '@/components/ui';
+import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem } from '@/data/types';
 import { useReviewQueue, useStudyActions } from '@/hooks/useStudyData';
 import {
@@ -54,8 +55,6 @@ type Verdict = 'correct' | 'incorrect';
 interface QueueEntry {
   item: StudyItem;
   half: Half;
-  /** Incorrect attempts so far, carried into the submitted review. */
-  strikes: number;
 }
 
 export default function ReviewScreen() {
@@ -69,13 +68,18 @@ export default function ReviewScreen() {
   const [pose, setPose] = React.useState<Pose>('idle');
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as StudyItem[] });
 
+  // Kept in refs, not state: the summary reads them once on the way out, and
+  // re-rendering the card on every strike would be churn for nothing.
+  const startedAt = React.useRef(Date.now());
+  const strikes = React.useRef(new Map<number, { meaning: number; reading: number }>());
+
   // Radicals have no reading to ask for, so they contribute one card, not two.
   React.useEffect(() => {
     if (!queue || entries) return;
     setEntries(
       queue.flatMap((item) => {
         const halves: Half[] = item.subject.readings.length > 0 ? ['meaning', 'reading'] : ['meaning'];
-        return halves.map((half) => ({ item, half, strikes: 0 }));
+        return halves.map((half) => ({ item, half }));
       }),
     );
   }, [queue, entries]);
@@ -107,6 +111,13 @@ export default function ReviewScreen() {
     setVerdict(ok ? 'correct' : 'incorrect');
     setPose(ok ? 'correct' : 'wrong');
 
+    if (!ok) {
+      const id = current.item.subject.id;
+      const tally = strikes.current.get(id) ?? { meaning: 0, reading: 0 };
+      tally[current.half] += 1;
+      strikes.current.set(id, tally);
+    }
+
     if (Platform.OS !== 'web') {
       void Haptics.notificationAsync(
         ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error,
@@ -126,19 +137,26 @@ export default function ReviewScreen() {
           // Both halves clear only when this was the last card for the item.
           const itemDone = !remaining.some((e) => e.item.subject.id === current.item.subject.id);
           if (itemDone) {
+            // Both halves' strikes, from the per-subject tally — not the card
+            // that happens to be finishing. WaniKani derives the SRS stage from
+            // these two counts, so reporting only the last half answered moves
+            // the item to the wrong stage: miss the meaning twice, get the
+            // reading right last, and the meaning misses vanish.
+            const tally = strikes.current.get(current.item.subject.id);
             void submitAnswer({
               assignmentId: current.item.assignment.id,
               subjectId: current.item.subject.id,
-              incorrectMeaningAnswers: current.half === 'meaning' ? current.strikes : 0,
-              incorrectReadingAnswers: current.half === 'reading' ? current.strikes : 0,
+              incorrectMeaningAnswers: tally?.meaning ?? 0,
+              incorrectReadingAnswers: tally?.reading ?? 0,
               answeredAt: new Date().toISOString(),
             });
           }
           return remaining;
         }
 
-        // Missed: back of the queue, with the strike recorded.
-        return [...remaining, { ...current, strikes: current.strikes + 1 }];
+        // Missed: back of the queue. The strike is already recorded against
+        // the subject, which is what the submitted review reports.
+        return [...remaining, current];
       });
 
       setStats((prev) =>
@@ -155,9 +173,48 @@ export default function ReviewScreen() {
     }, 600);
   }, [answer, current, entries, grade, submitAnswer, verdict]);
 
+  /**
+   * Hands the session to the summary and leaves.
+   *
+   * Only items actually reached are reported — wrapping up early should say
+   * what was answered, not credit the rest of the queue. `startingStage` comes
+   * off the assignment the queue was already carrying, so it is true offline.
+   */
+  const finish = React.useCallback(() => {
+    const asked = (queue ?? []).filter(
+      (item) => !entries?.some((e) => e.item.subject.id === item.subject.id),
+    );
+
+    const items: SessionItem[] = asked.map(({ subject, assignment }) => {
+      const tally = strikes.current.get(subject.id);
+      const missedHalves = [
+        tally?.meaning ? `meaning ×${tally.meaning}` : null,
+        tally?.reading ? `reading ×${tally.reading}` : null,
+      ].filter(Boolean);
+
+      return {
+        subjectId: subject.id,
+        characters: subject.characters ?? '?',
+        meaning: subject.meanings.find((m) => m.primary)?.meaning ?? '',
+        reading: subject.readings.find((r) => r.primary)?.reading ?? '',
+        startingStage: assignment.srsStage,
+        correct: missedHalves.length === 0,
+        note: missedHalves.join(', '),
+      };
+    });
+
+    recordSession({
+      kind: 'review',
+      startedAt: startedAt.current,
+      finishedAt: Date.now(),
+      items,
+    });
+    router.replace('/session-summary');
+  }, [entries, queue, router]);
+
   React.useEffect(() => {
-    if (entries && entries.length === 0) router.replace('/session-summary');
-  }, [entries, router]);
+    if (entries && entries.length === 0) finish();
+  }, [entries, finish]);
 
   if (!current) return <View style={styles.screen} />;
 
@@ -286,7 +343,7 @@ export default function ReviewScreen() {
           speed={1}
           onReactionEnd={() => setPose('idle')}
         />
-        <Pressable onPress={() => router.replace('/session-summary')} hitSlop={8}>
+        <Pressable onPress={finish} hitSlop={8}>
           <Text style={styles.wrapUp}>Wrap up ›</Text>
         </Pressable>
       </View>

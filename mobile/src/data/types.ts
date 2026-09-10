@@ -66,6 +66,15 @@ export interface StudyItem {
   subject: Subject;
 }
 
+/**
+ * One tile on the level browser. `state` is the whole legend, so it is derived
+ * once here rather than recomputed per screen.
+ */
+export interface LevelItem {
+  subject: Subject;
+  state: 'passed' | 'in_progress' | 'locked';
+}
+
 export interface ReviewStatistic {
   subjectId: number;
   meaningCorrect: number;
@@ -110,6 +119,24 @@ export interface DayActivity {
   /** 0 = nothing done, 1 = a full day. Partial days render in the soft tint. */
   intensity: number;
   isToday: boolean;
+}
+
+/**
+ * One column of the dashboard's streak strip, from `/api/activity`.
+ *
+ * `studied` and `grammarOnly` are separate on purpose and must stay that way.
+ * Logging a pattern puts a mark on the strip and never extends the streak — it
+ * is a record of the day, not practice of it — so a single "intensity" number
+ * could not express the difference without lying about one of them.
+ */
+export interface ActivityDay {
+  /** Single weekday letter; the strip is too narrow for more. */
+  label: string;
+  isToday: boolean;
+  /** Something that counts happened: reviews, or imported-vocab reviews. */
+  studied: boolean;
+  /** A pattern was logged and nothing was answered. Shown, never counted. */
+  grammarOnly: boolean;
 }
 
 export interface Counted {

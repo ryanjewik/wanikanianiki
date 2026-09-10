@@ -10,10 +10,9 @@ import * as React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Card, CharTile, ProgressBar, SectionHeading, type TileState } from '@/components/ui';
-import { LEVEL_12_ITEMS } from '@/data/fixtures';
+import { Card, CharTile, ProgressBar, SectionHeading } from '@/components/ui';
 import type { SubjectType } from '@/data/types';
-import { useDashboard } from '@/hooks/useStudyData';
+import { useDashboard, useLevelItems } from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -28,6 +27,8 @@ export default function LevelBrowserScreen() {
   const { data: dashboard } = useDashboard();
 
   const level = dashboard?.levelProgress;
+  const { data: levelItems } = useLevelItems(level?.level ?? null);
+
   const groups: { type: SubjectType; title: string }[] = [
     { type: 'radical', title: 'Radicals' },
     { type: 'kanji', title: 'Kanji' },
@@ -74,7 +75,7 @@ export default function LevelBrowserScreen() {
         </Card>
 
         {groups.map((group) => {
-          const items = LEVEL_12_ITEMS.filter((item) => item.subject.type === group.type);
+          const items = (levelItems ?? []).filter((item) => item.subject.type === group.type);
           const counted = counts[group.type];
           const palette = subjectPalette[group.type];
 
@@ -100,7 +101,7 @@ export default function LevelBrowserScreen() {
                     key={subject.id}
                     characters={subject.characters ?? '?'}
                     type={subject.type}
-                    state={state as TileState}
+                    state={state}
                     size={group.type === 'vocabulary' ? 'small' : 'default'}
                     onPress={() => router.push(`/item/${subject.id}`)}
                   />

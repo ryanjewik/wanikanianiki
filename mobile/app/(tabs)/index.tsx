@@ -13,8 +13,8 @@ import { Mascot } from '@/components/Mascot';
 import { ProfileAvatar, ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, CountBadge, SectionHeading } from '@/components/ui';
 import { formatSyncedAgo } from '@/data/sync';
-import type { Counted, DayActivity, SubjectType } from '@/data/types';
-import { useDashboard, useSync } from '@/hooks/useStudyData';
+import type { ActivityDay, Counted, DayActivity, SubjectType } from '@/data/types';
+import { useActivityStrip, useDashboard, useSync } from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -29,6 +29,7 @@ import {
 export default function DashboardScreen() {
   const router = useRouter();
   const { data, reload } = useDashboard();
+  const { data: strip } = useActivityStrip();
   const { syncing, refresh } = useSync();
 
   const onRefresh = React.useCallback(async () => {
@@ -69,7 +70,7 @@ export default function DashboardScreen() {
           onPress={() => router.push('/review')}
         />
 
-        <StreakCard streak={data.streak} />
+        <StreakCard streak={data.streak} strip={strip} />
 
         <Card>
           <SectionHeading
@@ -151,7 +152,30 @@ function ActionCard({
   );
 }
 
-function StreakCard({ streak }: { streak: { days: number; best: number; week: DayActivity[] } }) {
+/**
+ * The seven days the dashboard payload carries, in the shape the strip wants.
+ * Used only when `/api/activity` could not be reached — it has no notion of a
+ * grammar-only day, so those simply read as empty.
+ */
+function fromWeek(week: DayActivity[]): ActivityDay[] {
+  return week.map((day) => ({
+    label: day.label.slice(0, 1),
+    isToday: day.isToday,
+    studied: day.intensity > 0,
+    grammarOnly: false,
+  }));
+}
+
+function StreakCard({
+  streak,
+  strip,
+}: {
+  streak: { days: number; best: number; week: DayActivity[] };
+  strip: ActivityDay[] | null;
+}) {
+  const days = strip ?? fromWeek(streak.week);
+  const anyGrammarOnly = days.some((day) => day.grammarOnly);
+
   return (
     <Card>
       <View style={styles.streakHead}>
@@ -163,27 +187,28 @@ function StreakCard({ streak }: { streak: { days: number; best: number; week: Da
       </View>
 
       <View style={styles.weekRow}>
-        {streak.week.map((day) => (
-          <View key={day.label} style={styles.dayColumn}>
+        {days.map((day, i) => (
+          <View key={i} style={styles.dayColumn}>
             <Text style={[styles.dayLabel, day.isToday && styles.dayLabelToday]}>{day.label}</Text>
             <View
               style={[
                 styles.dayBar,
-                day.isToday
-                  ? styles.dayBarToday
-                  : {
-                      backgroundColor:
-                        day.intensity >= 1
-                          ? colors.warning
-                          : day.intensity > 0
-                            ? colors.warningSoft
-                            : colors.border,
-                    },
+                day.studied
+                  ? { backgroundColor: colors.warning }
+                  : day.grammarOnly
+                    ? styles.dayBarGrammar
+                    : day.isToday
+                      ? styles.dayBarToday
+                      : { backgroundColor: colors.border },
               ]}
             />
           </View>
         ))}
       </View>
+
+      {anyGrammarOnly ? (
+        <Text style={styles.stripNote}>Outlined days logged grammar — not counted.</Text>
+      ) : null}
     </Card>
   );
 }
@@ -344,6 +369,17 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderStyle: 'dashed',
     borderColor: colors.inkDisabled,
+  },
+  /** Hollow, in the streak's own hue: present on the strip, absent from the count. */
+  dayBarGrammar: {
+    backgroundColor: colors.warningTint,
+    borderWidth: 1.5,
+    borderColor: colors.warningBorder,
+  },
+  stripNote: {
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+    marginTop: 8,
   },
 
   countRow: {
