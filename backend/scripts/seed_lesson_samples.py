@@ -8,7 +8,13 @@ stays empty until `project_wanikani_vocabulary` runs. So the vocab half of this
 script is not sample data at all: it promotes words the account has genuinely
 started into the table the generator reads.
 
-**Grammar is genuinely empty**, and that half *is* samples. Three common N4/N3
+**The imported-vocabulary track is genuinely empty**, and that half *is*
+samples: a page of eight textbook words committed through `create_flashcards`,
+the same call the confirm route uses, so they get real answers and real SRS
+state rather than rows that look right and grade wrong. Without them the quiz
+has no cards and the set browser is empty.
+
+**Grammar is genuinely empty too**, and that half is samples as well. Three common N4/N3
 patterns, written the way enrichment would leave them and marked `enriched` so
 they are eligible as generation context. They are labelled in `source` so they
 can be found and removed again.
@@ -25,13 +31,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import delete, select
 
 from app.db import repository as repo
-from app.db.models import GrammarEntry, GrammarExample
+from app.db.models import (
+    GrammarEntry,
+    GrammarExample,
+    SrsState,
+    VocabAnswer,
+    VocabItem,
+    VocabReviewLog,
+    VocabSet,
+    VocabSetItem,
+    VocabSource,
+)
 from app.db.session import dispose_engine, session_scope
+from app.schemas import DetectedItem
 
 # Stamped on every seeded row so `--remove` can find exactly these and nothing
 # a person actually logged.
@@ -73,6 +90,90 @@ SAMPLE_GRAMMAR = [
         ],
     },
 ]
+
+
+# A page the way an extraction would hand it back: three columns kept apart,
+# a couple of usage contexts, one word printed without a reading. Realistic
+# enough that the review screen, the grader and the SRS all see their real
+# shapes rather than tidy placeholder strings.
+SAMPLE_PAGE = [
+    ("免許", "めんきょ", "licence; permit", None),
+    ("働き始める", "はたらきはじめる", "to start working", None),
+    ("決心（する）", "けっしん", "determination; resolve", None),
+    ("[〜が]苦手な", "にがてな", "not good at; poor at", "〜が"),
+    ("相手", "あいて", "partner; the other person", None),
+    ("つまり", "つまり", "in other words; that is to say", None),
+    ("なおす", "なおす", "to fix; to cure", "病気を"),
+    ("結婚（する）", "けっこん", "marriage", None),
+]
+
+
+async def seed_imported_deck(session, user_id: int) -> int:
+    """Give the imported-vocabulary track something to study.
+
+    Goes through `create_flashcards`, the same call the confirm route uses, so
+    the seeded rows get the three writes a real import gets — the word, the
+    answers that count for it, and an SRS place per skill. Hand-building the
+    rows would produce a deck that looks right and grades wrong.
+
+    Without this the quiz screen has no cards, the set browser is empty, and
+    `srs_state` has no rows at all — which also means the review pool a lesson
+    draws from contains no imported words.
+    """
+    existing = await session.execute(
+        select(VocabSource).where(VocabSource.label == SEED_MARKER)
+    )
+    if existing.scalars().first() is not None:
+        return 0
+
+    source = VocabSource(
+        user_id=user_id,
+        status="processed",
+        label=SEED_MARKER,
+        jlpt_level=3,
+    )
+    session.add(source)
+    await session.flush()
+
+    vocab_set = VocabSet(user_id=user_id, name="Sample page")
+    session.add(vocab_set)
+    await session.flush()
+
+    detected = [
+        DetectedItem(
+            key=f"seed-{i}",
+            kanji_furigana=written,
+            furigana_only=reading,
+            english=english,
+            usage_context=context,
+            jlpt_level=3,
+            status="ok",
+            selected=True,
+        )
+        for i, (written, reading, english, context) in enumerate(SAMPLE_PAGE)
+    ]
+
+    created = await repo.create_flashcards(
+        session,
+        detected,
+        user_id=user_id,
+        source_image_id=source.id,
+        set_id=vocab_set.id,
+    )
+
+    # Backdate half the schedule so the quiz has something due immediately.
+    # Everything due "now" is realistic on day one but leaves nothing to test
+    # the due-card path with.
+    states = await session.execute(
+        select(SrsState).where(SrsState.user_id == user_id)
+    )
+    yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+    for index, state in enumerate(states.scalars()):
+        if index % 2 == 0:
+            state.due_at = yesterday
+
+    await session.flush()
+    return len(created)
 
 
 async def seed() -> None:
@@ -127,6 +228,9 @@ async def seed() -> None:
 
         print(f"grammar_entries: added {added} sample pattern(s)")
 
+        cards = await seed_imported_deck(session, user.id)
+        print(f"imported deck: added {cards} word(s) with answers and SRS state")
+
         pools = await repo.get_generation_pools(session, user.id)
         for name, items in pools.items():
             print(f"  pool {name}: {len(items)}")
@@ -135,9 +239,56 @@ async def seed() -> None:
 
 
 async def remove() -> None:
-    """Take the seeded grammar back out. Projected vocabulary is left alone —
-    those are real words the account started, not samples."""
+    """Take the seeded samples back out.
+
+    Removes the sample grammar and the sample imported page — everything this
+    script invented. **Projected WaniKani vocabulary is left alone**: those are
+    real words the account started, promoted into a table they belonged in, not
+    samples, and deleting them would only mean running the projection again.
+    """
     async with session_scope() as session:
+        source = await session.execute(
+            select(VocabSource).where(VocabSource.label == SEED_MARKER)
+        )
+        page = source.scalars().first()
+        if page is not None:
+            seeded = await session.execute(
+                select(VocabItem.id).where(VocabItem.source_image_id == page.id)
+            )
+            item_ids = list(seeded.scalars())
+            if item_ids:
+                # Order matters: the schedule and the answers point at the word.
+                await session.execute(
+                    delete(VocabReviewLog).where(
+                        VocabReviewLog.srs_state_id.in_(
+                            select(SrsState.id).where(
+                                SrsState.vocab_item_id.in_(item_ids)
+                            )
+                        )
+                    )
+                )
+                await session.execute(
+                    delete(SrsState).where(SrsState.vocab_item_id.in_(item_ids))
+                )
+                await session.execute(
+                    delete(VocabAnswer).where(VocabAnswer.vocab_item_id.in_(item_ids))
+                )
+                await session.execute(
+                    delete(VocabSetItem).where(VocabSetItem.vocab_item_id.in_(item_ids))
+                )
+                await session.execute(
+                    delete(VocabItem).where(VocabItem.id.in_(item_ids))
+                )
+            await session.execute(
+                delete(VocabSet).where(
+                    VocabSet.user_id == page.user_id, VocabSet.name == "Sample page"
+                )
+            )
+            await session.execute(delete(VocabSource).where(VocabSource.id == page.id))
+            print(f"Removed the sample page and {len(item_ids)} word(s).")
+        else:
+            print("No sample page to remove.")
+
         entries = await session.execute(
             select(GrammarEntry.id).where(GrammarEntry.source == SEED_MARKER)
         )

@@ -173,6 +173,10 @@ export default function ReviewScreen() {
     }, 600);
   }, [answer, current, entries, grade, submitAnswer, verdict]);
 
+  /** Stable so the mascot's animation effect is not retriggered by a new
+   *  arrow identity on every render. */
+  const onReactionEnd = React.useCallback(() => setPose('idle'), []);
+
   /**
    * Hands the session to the summary and leaves.
    *
@@ -341,7 +345,7 @@ export default function ReviewScreen() {
           pose={pose}
           size={56}
           speed={1}
-          onReactionEnd={() => setPose('idle')}
+          onReactionEnd={onReactionEnd}
         />
         <Pressable onPress={finish} hitSlop={8}>
           <Text style={styles.wrapUp}>Wrap up ›</Text>

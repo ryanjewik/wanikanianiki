@@ -75,6 +75,7 @@ export default function QuizScreen() {
   const [answer, setAnswer] = React.useState('');
   const [verdict, setVerdict] = React.useState<Verdict | null>(null);
   const [pose, setPose] = React.useState<Pose>('idle');
+  const onReactionEnd = React.useCallback(() => setPose('idle'), []);
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as Flashcard[] });
 
   React.useEffect(() => {
@@ -310,7 +311,7 @@ export default function QuizScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Mascot pose={pose} size={56} speed={1} onReactionEnd={() => setPose('idle')} />
+        <Mascot pose={pose} size={56} speed={1} onReactionEnd={onReactionEnd} />
         <Pressable onPress={() => setEntries([])} hitSlop={8}>
           <Text style={styles.wrapUp}>Wrap up ›</Text>
         </Pressable>

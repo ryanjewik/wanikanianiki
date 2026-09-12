@@ -17,6 +17,7 @@ import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { Mascot, type Pose } from '@/components/Mascot';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, Pill, SessionProgressBar } from '@/components/ui';
 import { answerQuestion } from '@/data/api';
@@ -25,6 +26,26 @@ import { useLessonBundle } from '@/hooks/useStudyData';
 import { colors, jp, radius, spacing, type as typeScale } from '@/theme/tokens';
 
 type Verdict = { correct: boolean; expected: string } | null;
+
+/**
+ * A reading printed beside the word it belongs to — `相手 (あいて)`.
+ *
+ * **The leading whitespace is load-bearing.** A textbook also prints
+ * `決心（する）` and `[〜が]苦手な`, where the bracketed kana is part of the
+ * entry rather than a pronunciation gloss; stripping those would change the
+ * word the question is asking about. The generator writes a gloss with a space
+ * in front and a qualifier without one, so that is what separates them.
+ *
+ * Deliberately narrow. Hiding a reading that is genuinely part of the answer
+ * would make a question unanswerable, which is worse than leaving one showing.
+ */
+const READING_GLOSS = /\s+[（(]\s*[ぁ-んァ-ヶー]+\s*[）)]/g;
+
+function hideReadings(text: string): string {
+  // Collapses the space the gloss left behind, so 「免許 が必要です」
+  // does not read with a gap where the reading used to be.
+  return text.replace(READING_GLOSS, '').replace(/\s{2,}/g, ' ');
+}
 
 export default function GeneratedLessonScreen() {
   const router = useRouter();
@@ -36,9 +57,19 @@ export default function GeneratedLessonScreen() {
   const [order, setOrder] = React.useState<string[]>([]);
   const [verdict, setVerdict] = React.useState<Verdict>(null);
   const [correctCount, setCorrectCount] = React.useState(0);
+  const [pose, setPose] = React.useState<Pose>('idle');
+  const [showFurigana, setShowFurigana] = React.useState(true);
 
   const questions = bundle?.questions ?? [];
   const current: Question | undefined = questions[index];
+
+  // Which question an in-flight answer belongs to. A ref, not state: it is
+  // read by a callback that must see the value at resolve time, not the one
+  // captured when the callback was created.
+  const activeId = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    activeId.current = current?.id ?? null;
+  }, [current]);
 
   // Tiles arrive in answer order, so they are shuffled once per question for
   // display. Shuffling on every render would reorder them under the user's
@@ -65,18 +96,49 @@ export default function GeneratedLessonScreen() {
     // Graded locally first so the screen reacts on the tap; the server's
     // verdict is what the deck records, and it is what replaces this.
     const expected = current.payload.answer;
+    const answeredId = current.id;
     setVerdict({ correct: given === expected, expected });
+    setPose(given === expected ? 'correct' : 'wrong');
 
     try {
-      const outcome = await answerQuestion(current.id, given);
+      const outcome = await answerQuestion(answeredId, given);
+      // The local verdict renders instantly, so the user can be two questions
+      // on by the time this lands. Writing it unconditionally marked a
+      // question answered that nobody had touched.
+      if (activeId.current !== answeredId) return;
       setVerdict({ correct: outcome.correct, expected: outcome.expectedAnswer });
+      setPose(outcome.correct ? 'correct' : 'wrong');
       if (outcome.correct) setCorrectCount((n) => n + 1);
     } catch {
       // Offline: the local verdict stands for display, but nothing was
       // recorded. Said plainly rather than pretending it counted.
+      if (activeId.current !== answeredId) return;
       setVerdict({ correct: given === expected, expected });
     }
   }, [current, submitted, answerText]);
+
+  /** Every piece of question text goes through this, so one toggle covers
+   *  the prompt, the choices and the tiles alike. */
+  const render = React.useCallback(
+    (text: string) => (showFurigana ? text : hideReadings(text)),
+    [showFurigana],
+  );
+
+  /**
+   * Leave mid-lesson.
+   *
+   * The bundle is already spent — claiming it is what consumed it — so there
+   * is nothing to hand back, and answers given so far are already recorded.
+   * Going back is therefore just navigation, not an abandon that loses work.
+   */
+  const leave = React.useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/(tabs)/study');
+  }, [router]);
+
+  /** Stable so the mascot's animation effect is not retriggered by a new
+   *  arrow identity on every render. */
+  const onReactionEnd = React.useCallback(() => setPose('idle'), []);
 
   const onNext = React.useCallback(() => {
     if (index + 1 >= questions.length) {
@@ -88,6 +150,7 @@ export default function GeneratedLessonScreen() {
     setPicked(null);
     setOrder([]);
     setVerdict(null);
+    setPose('idle');
   }, [index, questions.length, router]);
 
   if (loading) return <View style={styles.screen} />;
@@ -95,12 +158,14 @@ export default function GeneratedLessonScreen() {
   if (!bundle || questions.length === 0) {
     return (
       <View style={styles.screen}>
-        <ScreenHeader title="Generated lesson" />
+        <ScreenHeader title="Practice questions" showBack />
         <View style={styles.empty}>
           <Text style={styles.emptyTitle}>Nothing generated yet</Text>
           <Text style={styles.emptyBody}>
-            Lessons are written ahead of time, twice a day, from the words you
-            are studying. Check back after your next few reviews.
+            These are written ahead of time, twice a day, from the words you
+            are studying — not the same thing as WaniKani lessons, which are
+            always available from the study tab. Check back after your next few
+            reviews.
           </Text>
           <ChunkyButton label="Back" tone="neutral" onPress={() => router.back()} />
         </View>
@@ -113,7 +178,9 @@ export default function GeneratedLessonScreen() {
   return (
     <View style={styles.screen}>
       <ScreenHeader
-        title="Generated lesson"
+        title="Practice questions"
+        showBack
+        onBack={leave}
         trailingText={`${index + 1} / ${questions.length}`}
       />
 
@@ -125,12 +192,34 @@ export default function GeneratedLessonScreen() {
         />
 
         <Card variant="bordered">
-          <Pill
-            label={LABELS[current.type]}
-            color={colors.inkMuted}
-            background={colors.ground}
-          />
-          <Text style={styles.prompt}>{current.payload.prompt}</Text>
+          <View style={styles.promptHead}>
+            <Pill
+              label={LABELS[current.type]}
+              color={colors.inkMuted}
+              background={colors.ground}
+            />
+            <Pressable
+              onPress={() => setShowFurigana((on) => !on)}
+              hitSlop={8}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: showFurigana }}
+              accessibilityLabel="Show readings"
+            >
+              <Text style={styles.furiganaToggle}>
+                {showFurigana ? 'ふりがな ON' : 'ふりがな OFF'}
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.promptRow}>
+            <Text style={styles.prompt}>{render(current.payload.prompt)}</Text>
+            <Mascot
+              pose={pose}
+              size={52}
+              speed={0.7}
+              onReactionEnd={onReactionEnd}
+            />
+          </View>
         </Card>
 
         {current.type === 'multiple_choice' ? (
@@ -138,7 +227,7 @@ export default function GeneratedLessonScreen() {
             {(current.payload.choices ?? []).map((choice) => (
               <Choice
                 key={choice}
-                label={choice}
+                label={render(choice)}
                 selected={picked === choice}
                 revealed={submitted}
                 isAnswer={choice === verdict?.expected}
@@ -161,7 +250,7 @@ export default function GeneratedLessonScreen() {
                     onPress={() => setOrder((rest) => [...rest, tile])}
                     style={[styles.tile, used && styles.tileUsed]}
                   >
-                    <Text style={styles.tileText}>{tile}</Text>
+                    <Text style={styles.tileText}>{render(tile)}</Text>
                   </Pressable>
                 );
               })}
@@ -253,7 +342,24 @@ const styles = StyleSheet.create({
   emptyTitle: { ...typeScale.section, color: colors.ink },
   emptyBody: { ...typeScale.caption, color: colors.inkSoft, textAlign: 'center' },
 
-  prompt: { ...jp.answer, color: colors.ink, marginTop: 10 },
+  promptHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  furiganaToggle: {
+    ...typeScale.metaSmall,
+    color: colors.vocabularyInk,
+    letterSpacing: 0.3,
+  },
+  promptRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+    marginTop: 10,
+  },
+  prompt: { ...jp.answer, color: colors.ink, flex: 1 },
 
   choices: { gap: 8 },
   choice: {

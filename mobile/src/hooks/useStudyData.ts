@@ -13,6 +13,7 @@ import * as db from '@/data/db';
 import * as fixtures from '@/data/fixtures';
 import { durationMinutes, getLastSession } from '@/data/session';
 import { syncNow, type SyncResult } from '@/data/sync';
+import { stageBucket } from '@/theme/tokens';
 import type {
   ActivityDay,
   Assignment,
@@ -393,12 +394,27 @@ export function useSessionSummary() {
       loadStreakDays(),
     ]);
 
+    // Movements are reported in *display buckets*, not WaniKani's raw 0-9
+    // stage. The summary screen indexes `srsStages` and the stage vocabulary
+    // with these numbers and both are five long, so handing it a raw stage
+    // reads past the end of the array — a 7 renders as undefined and throws.
+    //
+    // Bucketing also merges correctly: raw 1->2 and raw 2->3 are both
+    // Seed -> Sprout, and the screen should show that as one row of two, not
+    // two rows of one.
     const tally = new Map<string, { from: number; to: number; count: number }>();
     for (const item of session.items) {
-      const to = assignments.get(item.subjectId)?.srsStage;
-      if (to === undefined || to <= item.startingStage) continue;
-      const key = `${item.startingStage}->${to}`;
-      const entry = tally.get(key) ?? { from: item.startingStage, to, count: 0 };
+      const rawTo = assignments.get(item.subjectId)?.srsStage;
+      if (rawTo === undefined) continue;
+
+      const from = stageBucket(item.startingStage);
+      const to = stageBucket(rawTo);
+      // A move within one bucket (raw 1 -> 2) is real progress but not a
+      // visible one, and drawing it as a bar of zero length would be a lie.
+      if (to <= from) continue;
+
+      const key = `${from}->${to}`;
+      const entry = tally.get(key) ?? { from, to, count: 0 };
       entry.count += 1;
       tally.set(key, entry);
     }

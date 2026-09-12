@@ -169,15 +169,22 @@ export default function StudyScreen() {
 
         <Overline style={styles.trackLabel}>Generated practice</Overline>
         <Card variant="bordered">
-          <SectionHeading title="Written for you" />
+          <SectionHeading title="Practice questions" />
           <Text style={styles.trackBlurb}>
-            Questions built ahead of time from what you are actually studying —
-            multiple choice, fill-in-the-blank, sentence building. Answering one
-            advances every word it tested.
+            Not WaniKani lessons. These are questions written for you ahead of
+            time — multiple choice, fill-in-the-blank, sentence building — drawn
+            from words across both decks above and any grammar you have
+            confirmed. A WaniKani lesson teaches you something new; this asks
+            you about what you have already met.
+          </Text>
+          <Text style={styles.trackBlurb}>
+            Answering advances every word the question tested, except
+            WaniKani-owned words — those stay on WaniKani&apos;s own schedule, so
+            practising them here counts as practice and nothing more.
           </Text>
           <ChunkyButton
-            label="Start a lesson"
-            tone="kanji"
+            label="Start practice questions"
+            tone="vocabulary"
             size="small"
             onPress={() => router.push('/lesson-bundle')}
           />

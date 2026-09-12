@@ -22,9 +22,9 @@ the level browser, the session summary, `/api/activity`. All four are now
 consumed. Every endpoint the client declares has a caller, with one exception
 noted below.
 
-**Lesson bundles are built.** Part 2's centrepiece — generated, verified
-practice questions — now spans four tables, a scheduled top-up, two routes and a
-screen. What it has never done is run: see the note below.
+**Lesson bundles are built and have generated real questions.** Part 2's
+centrepiece spans four tables, a scheduled top-up, two routes and a screen, and
+three bundles are sitting in the queue right now.
 
 What is left is smaller than it has been at any point in this document's life.
 The local deck mirror (gap 1) is half-built and blocks starting an imported-vocab
@@ -34,9 +34,10 @@ session offline; the rest is polish and one deployment step.
 local backend, `114 passed, 58 skipped`, ruff clean, `npm run typecheck` clean,
 and `npm run check:grading` agrees across 1412 checks.
 
-**Not yet run: a single live generation pass.** Everything below is wired and
-the pools are populated, but no bundle exists, so the lesson screen shows
-"Nothing generated yet". The first run costs real Anthropic calls.
+**Generation has now run for real** (2026-09-11): 28 drafted, 4 rejected, 3
+bundles of 8 created, in about 90 seconds. All four rejections were the failure
+the verifier exists for — an answer that is not uniquely determined. Question
+quality on the first pass was good enough to ship without prompt tuning.
 
 ---
 
@@ -362,26 +363,28 @@ finishes offline (each card carries its accepted answers, and the outbox queues
 what you type), but a session still cannot be **started** without the server.
 Finishing this is: cache on fetch, read on cache-hit, mirror the WaniKani path.
 
-### 2. Lesson generation has never actually run
+### 2. One generation pass has run; the answer path has not
 
-Everything is wired and the pools are populated (review 20, new 5, continuing 5,
-grammar 3 as of 2026-09-10) but **no bundle has ever been generated**, so the
-lesson screen shows "Nothing generated yet" and the answer path has never
-executed against a real question.
+The first live run (2026-09-11) produced **28 drafts, 4 rejected, 3 bundles** —
+13 multiple choice, 7 sentence construction, 5 fill-in-blank, 3 recall, with 8
+built around a confirmed grammar point. Roughly 90 seconds and ~30 model calls.
 
-The first run costs real Anthropic calls: 3 generation calls on Opus 5 plus up
-to 24 verifications on Sonnet 5, some of those a multi-turn tool loop. Nothing
-is known about output quality until it happens. Command in "Running one pass"
-above.
+**The rejection rate is 14%, and every rejection was on-target.** Three recall
+questions whose answer was not unique ("to start working" also admits 就業する,
+働き出す, 仕事を始める) and one multiple choice where a distractor was a real
+alternative reading (いりくち for 入り口). That last one is precisely what
+`look_up_word` was added for. No prompt tuning is indicated.
 
-Two things to watch on that first run, both of which the code handles but
-neither of which has been observed:
+What is still unexercised:
 
-- **Rejection rate.** A high one means the generation prompt is drifting; the
-  reasons are kept in `questions.verifier_note` for exactly this.
-- **Whether the retry pass earns its keep.** It is capped at one
-  (`lesson_retry_passes`) on the theory that a second pass recovers fumbled
-  questions and a third argues in circles. That theory is untested.
+- **Answering a generated question.** `POST .../questions/{id}/answer` has never
+  run against a real question, so the SRS write path and `practiceOnlyWords`
+  are untested outside unit tests.
+- **The retry pass.** Rejections did occur, so the feedback loop should have
+  fired — but nothing recorded whether the replacement drafts were better. Its
+  one-pass cap remains a theory.
+- **Cross-run behaviour.** Only one run has happened, so nothing is known about
+  duplicate questions across runs.
 
 ### 3. The cron is not deployed
 

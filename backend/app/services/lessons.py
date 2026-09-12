@@ -255,10 +255,25 @@ def _grammar_block(entries: list[GrammarEntry]) -> str:
 
 
 def _generation_prompt(
-    pools: dict[str, list[VocabItem]], grammar: list[GrammarEntry], count: int
+    pools: dict[str, list[VocabItem]],
+    grammar: list[GrammarEntry],
+    count: int,
+    feedback: list[str] | None = None,
 ) -> str:
+    blocks: list[str] = []
+    if feedback:
+        # Named as rejections rather than as rules: these are facts about the
+        # last pass, and turning them into standing instructions would let one
+        # unlucky batch permanently narrow what the generator will attempt.
+        blocks.append(
+            "The previous pass had questions rejected. Do not repeat these "
+            "mistakes, and do not rewrite the same questions:\n"
+            + "\n".join(f"  - {line}" for line in feedback)
+        )
+
     return "\n\n".join(
-        [
+        blocks
+        + [
             f"Write {count} questions.",
             _pool_block("review (due now — most of the batch)", pools.get("review", [])),
             _pool_block("new (just learned — a few only)", pools.get("new", [])),

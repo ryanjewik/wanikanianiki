@@ -25,6 +25,19 @@ import {
   type as typeScale,
 } from '@/theme/tokens';
 
+/**
+ * Movements arrive as display buckets, but clamp anyway.
+ *
+ * `srsStages` and the stage vocabulary are five long, while WaniKani's own
+ * scale runs 0-9; a raw stage leaking in here read past the end of the array
+ * and took the whole screen down with it. A summary is hard to get back to
+ * once it has been navigated away from, so this degrades to the nearest real
+ * bucket rather than crashing.
+ */
+function bucket(value: number): number {
+  return Math.max(0, Math.min(srsStages.length - 1, Math.round(value)));
+}
+
 export default function SessionSummaryScreen() {
   const router = useRouter();
   const { data: summary } = useSessionSummary();
@@ -68,14 +81,14 @@ export default function SessionSummaryScreen() {
             {summary.movements.map((movement) => (
               <View key={`${movement.from}-${movement.to}`} style={styles.movementRow}>
                 <Text style={styles.movementLabel}>
-                  {names[movement.from]} → {names[movement.to]}
+                  {names[bucket(movement.from)]} → {names[bucket(movement.to)]}
                 </Text>
                 <View style={styles.movementTrack}>
                   <View
                     style={{
                       width: `${(movement.count / peak) * 100}%`,
                       height: '100%',
-                      backgroundColor: srsStages[movement.to].color,
+                      backgroundColor: srsStages[bucket(movement.to)].color,
                     }}
                   />
                 </View>
@@ -136,7 +149,11 @@ export default function SessionSummaryScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <ChunkyButton label="Start 24 lessons" tone="kanji" onPress={() => router.replace('/lesson')} />
+        <ChunkyButton
+          label="Start WaniKani lessons"
+          tone="kanji"
+          onPress={() => router.replace('/lesson')}
+        />
         <TextButton label="Back to home" onPress={() => router.replace('/')} />
       </View>
     </View>

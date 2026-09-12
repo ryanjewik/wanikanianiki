@@ -96,6 +96,22 @@ export function Mascot({
     reactionEnd.current = onReactionEnd;
   }, [onReactionEnd]);
 
+  /**
+   * The bridge the finish worklet calls, and the reason it exists.
+   *
+   * A worklet serialises everything it closes over. Reaching into the ref from
+   * inside one captures the *ref object*, and every later
+   * `reactionEnd.current = ...` is then a write to something already
+   * serialised — which Reanimated warns about on every render, because an
+   * inline arrow prop changes identity each time.
+   *
+   * This function is stable (no deps), so it serialises once and is never
+   * mutated; the ref is only ever read back here, on the JS thread.
+   */
+  const notifyReactionEnd = React.useCallback(() => {
+    reactionEnd.current?.();
+  }, []);
+
   React.useEffect(() => {
     const durationMs = (spec.frames / (spec.fps * Math.max(0.05, speed))) * 1000;
     frame.value = 0;
@@ -106,7 +122,8 @@ export function Mascot({
         { duration: durationMs, easing: Easing.linear },
         (finished) => {
           'worklet';
-          if (finished && reactionEnd.current) runOnJS(reactionEnd.current)();
+          // Closes over the stable bridge, never the ref — see above.
+          if (finished) runOnJS(notifyReactionEnd)();
         },
       );
     } else {
@@ -118,7 +135,7 @@ export function Mascot({
     }
 
     return () => cancelAnimation(frame);
-  }, [frame, pose, spec.frames, spec.fps, spec.oneShot, speed]);
+  }, [frame, notifyReactionEnd, pose, spec.frames, spec.fps, spec.oneShot, speed]);
 
   const animatedStyle = useAnimatedStyle(() => {
     // Floor to a whole frame — a fractional offset would show two half-frames.

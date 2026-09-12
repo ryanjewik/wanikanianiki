@@ -1384,6 +1384,11 @@ async def claim_next_bundle(
 
     rows = await session.execute(
         select(Question)
+        # Eager, not lazy: the route reads `question.items` to build the
+        # response, and a lazy load there happens outside the greenlet the
+        # async session runs in — which raises rather than emitting a query.
+        # The unit tests never caught this because they never touch a database.
+        .options(selectinload(Question.items))
         .join(LessonBundleQuestion, LessonBundleQuestion.question_id == Question.id)
         .where(LessonBundleQuestion.bundle_id == bundle.id)
         .order_by(LessonBundleQuestion.position)
