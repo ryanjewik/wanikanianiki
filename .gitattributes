@@ -1,0 +1,47 @@
+# Line endings and binary handling.
+#
+# Without this file git falls back to each machine's `core.autocrlf`, which on
+# Windows is `true` — every checkout rewrites LF to CRLF and every `git add`
+# prints a wall of "LF will be replaced by CRLF" warnings. Worse, files can
+# show as modified with an empty diff, which is noise that hides real changes.
+#
+# So the repository decides instead of the machine: LF in the object store and
+# LF in the working tree, everywhere. Nothing in this project cares — Python,
+# Node, Metro and every editor in use handle LF on Windows — and it makes a
+# checkout byte-identical across platforms.
+* text=auto eol=lf
+
+# Binaries. Git's own detection is good, but being explicit means a heuristic
+# can never decide that a sprite sheet is text and corrupt it by "normalising"
+# the bytes that happen to look like line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+
+*.wav   binary
+*.mp3   binary
+*.m4a   binary
+
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+
+*.zip   binary
+*.pdf   binary
+*.keystore binary
+*.jks   binary
+
+# SVG is text and wants to stay diffable — the art pipeline regenerates these,
+# and a readable diff is how you tell a re-export from a real change.
+*.svg   text
+
+# Windows batch files are parsed by cmd.exe, which needs CRLF. Nothing here
+# tracks one today (`android/` is ignored), but a later `expo prebuild` would
+# bring `gradlew.bat` in, and a LF copy of it fails in ways that are hard to
+# read.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
