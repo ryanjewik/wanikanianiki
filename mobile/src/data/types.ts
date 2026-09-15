@@ -325,6 +325,15 @@ export interface QuestionPayload {
   choices?: string[];
   /** sentence_construction only — joined in order they reproduce `answer`. */
   tiles?: string[];
+  /**
+   * Readings for the words written in kanji, as written form → kana. Optional:
+   * questions generated before the field existed carry none, and the reader
+   * falls back to lifting any glosses written into the prompt itself.
+   *
+   * The server drops the entry for the word a question is asking for, so this
+   * can never answer its own question.
+   */
+  furigana?: Record<string, string>;
 }
 
 export interface Question {
@@ -336,6 +345,18 @@ export interface Question {
   /** The verifier sub-agent must flip this before a question is servable. */
   verified: boolean;
   createdAt: string;
+}
+
+/**
+ * How much generated practice is waiting.
+ *
+ * Read from a route that deliberately does *not* consume — asking for the next
+ * bundle in order to draw a count would spend one to display it.
+ */
+export interface LessonQueueCount {
+  bundles: number;
+  /** What the cards show: a learner counts questions, not the generator's batching. */
+  questions: number;
 }
 
 export interface LessonBundle {
@@ -352,6 +373,12 @@ export interface QuestionOutcome {
   expectedAnswer: string;
   /** SRS rows moved. Two per word, so one question about two words moves four. */
   schedulesAdvanced: number;
+  /**
+   * Words the question tested that carry no local schedule — WaniKani-sourced
+   * ones, whose stage only WaniKani may move. Practice, not progress, and the
+   * summary says so rather than reporting a no-op as advancement.
+   */
+  practiceOnlyWords: number;
 }
 
 /* -------------------------------------------------------------------------- */

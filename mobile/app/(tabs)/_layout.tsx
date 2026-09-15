@@ -10,6 +10,7 @@ import { Tabs } from 'expo-router';
 import * as React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { feedback } from '@/feedback';
 import { colors, jp, type as typeScale } from '@/theme/tokens';
 
 function TabGlyph({ glyph, focused }: { glyph: string; focused: boolean }) {
@@ -41,6 +42,7 @@ export default function TabsLayout() {
           title: 'Home',
           tabBarIcon: ({ focused }) => <TabGlyph glyph="家" focused={focused} />,
         }}
+        listeners={{ tabPress: () => feedback.select() }}
       />
       <Tabs.Screen
         name="study"
@@ -48,6 +50,7 @@ export default function TabsLayout() {
           title: 'Study',
           tabBarIcon: ({ focused }) => <TabGlyph glyph="習" focused={focused} />,
         }}
+        listeners={{ tabPress: () => feedback.select() }}
       />
       <Tabs.Screen
         name="import"
@@ -55,6 +58,7 @@ export default function TabsLayout() {
           title: 'Import',
           tabBarIcon: ({ focused }) => <TabGlyph glyph="写" focused={focused} />,
         }}
+        listeners={{ tabPress: () => feedback.select() }}
       />
       <Tabs.Screen
         name="items"
@@ -62,6 +66,7 @@ export default function TabsLayout() {
           title: 'Items',
           tabBarIcon: ({ focused }) => <TabGlyph glyph="帳" focused={focused} />,
         }}
+        listeners={{ tabPress: () => feedback.select() }}
       />
     </Tabs>
   );

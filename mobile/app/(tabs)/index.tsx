@@ -9,12 +9,13 @@ import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { Mascot } from '@/components/Mascot';
+import { Mascot, MascotBanner } from '@/components/Mascot';
+import { GrowBar, RiseIn } from '@/components/motion';
 import { ProfileAvatar, ScreenHeader } from '@/components/ScreenHeader';
-import { Card, ChunkyButton, CountBadge, SectionHeading } from '@/components/ui';
+import { Card, QueueCard, SectionHeading } from '@/components/ui';
 import { formatSyncedAgo } from '@/data/sync';
 import type { ActivityDay, Counted, DayActivity, SubjectType } from '@/data/types';
-import { useActivityStrip, useDashboard, useSync } from '@/hooks/useStudyData';
+import { useActivityStrip, useDashboard, usePracticeQueue, useSync } from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -30,6 +31,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { data, reload } = useDashboard();
   const { data: strip } = useActivityStrip();
+  const { data: practice } = usePracticeQueue();
   const { syncing, refresh } = useSync();
 
   const onRefresh = React.useCallback(async () => {
@@ -50,27 +52,68 @@ export default function DashboardScreen() {
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={syncing} onRefresh={onRefresh} />}
       >
-        <ActionCard
-          title="Today's Lessons"
-          count={data.lessonCount}
-          tone="kanji"
-          blurb="Learn something new."
-          cta="Start Lessons"
-          pose="wave"
-          onPress={() => router.push('/lesson')}
-        />
+        {/* The engraved scene, bled to the screen edges.
 
-        <ActionCard
-          title="Reviews"
-          count={data.reviewCount}
-          tone="radical"
-          blurb="Do your Reviews to unlock new Lessons."
-          cta="Start Reviews"
-          pose="walk"
-          onPress={() => router.push('/review')}
-        />
+            The rest of the app is flat colour on a light ground; this is dense
+            monochrome hatching. They do not blend, and are not meant to — the
+            band reads as a window onto the world the mascot lives in, and the
+            cards below read as the interface on top of it. Keeping it short
+            and edge-to-edge is what makes it a horizon rather than a picture
+            someone dropped into a card. */}
+        <MascotBanner variant="wide" height={76} style={styles.banner} />
 
-        <StreakCard streak={data.streak} strip={strip} />
+        {/* A short stagger, and only down the first few cards. Past about six
+            a cascade stops reading as choreography and starts reading as the
+            screen being slow to draw. */}
+        <RiseIn>
+          <QueueCard
+            title="Today's Lessons"
+            count={data.lessonCount}
+            tone="kanji"
+            blurb="Learn something new."
+            cta="Start Lessons"
+            art={<Mascot pose="wave" size={80} speed={0.7} />}
+            disabled={data.lessonCount === 0}
+            onPress={() => router.push('/lesson')}
+          />
+        </RiseIn>
+
+        <RiseIn delay={55}>
+          <QueueCard
+            title="Reviews"
+            count={data.reviewCount}
+            tone="radical"
+            blurb="Do your Reviews to unlock new Lessons."
+            cta="Start Reviews"
+            art={<Mascot pose="walk" size={80} speed={0.7} />}
+            disabled={data.reviewCount === 0}
+            onPress={() => router.push('/review')}
+          />
+        </RiseIn>
+
+        {/* The third track, and the one that was previously invisible from
+            here: generated practice had no presence on the home screen at all,
+            so the only way to find it was to already know it existed. */}
+        <RiseIn delay={110}>
+          <QueueCard
+            title="Practice Questions"
+            count={practice?.questions ?? 0}
+            tone="vocabulary"
+            blurb={
+              practice && practice.questions > 0
+                ? 'Written for you from the words you are studying.'
+                : 'Nothing written yet — these are generated twice a day.'
+            }
+            cta="Start Practice"
+            art={<Mascot pose="idle" size={80} speed={0.6} lively />}
+            disabled={!practice || practice.questions === 0}
+            onPress={() => router.push('/lesson-bundle')}
+          />
+        </RiseIn>
+
+        <RiseIn delay={165}>
+          <StreakCard streak={data.streak} strip={strip} />
+        </RiseIn>
 
         <Card>
           <SectionHeading
@@ -108,49 +151,6 @@ export default function DashboardScreen() {
 }
 
 /* -------------------------------------------------------------------------- */
-
-function ActionCard({
-  title,
-  count,
-  tone,
-  blurb,
-  cta,
-  pose,
-  onPress,
-}: {
-  title: string;
-  count: number;
-  tone: 'kanji' | 'radical';
-  blurb: string;
-  cta: string;
-  pose: 'wave' | 'walk';
-  onPress: () => void;
-}) {
-  const palette = subjectPalette[tone];
-
-  return (
-    <Card style={styles.actionCard}>
-      <View style={[styles.artSlot, { backgroundColor: palette.tint }]}>
-        <Mascot pose={pose} size={80} speed={0.7} />
-      </View>
-
-      <View style={styles.actionBody}>
-        <View style={styles.actionTitleRow}>
-          <Text style={styles.actionTitle}>{title}</Text>
-          <CountBadge count={count} color={palette.solid} />
-        </View>
-        <Text style={styles.blurb}>{blurb}</Text>
-        <ChunkyButton
-          label={cta}
-          tone="neutral"
-          size="small"
-          onPress={onPress}
-          style={styles.actionCta}
-        />
-      </View>
-    </Card>
-  );
-}
 
 /**
  * The seven days the dashboard payload carries, in the shape the strip wants.
@@ -248,12 +248,15 @@ function SpreadCard({ spread }: { spread: number[] }) {
       <SectionHeading title="Active Item Spread" trailing="Details ›" />
       <View style={styles.spreadChart}>
         {spread.map((value, index) => (
-          <View
+          <GrowBar
             key={index}
-            style={[
-              styles.spreadBar,
-              { height: `${Math.max(4, (value / peak) * 100)}%`, backgroundColor: srsStages[index].color },
-            ]}
+            vertical
+            // Floored so an empty bucket still reads as a bucket rather than
+            // vanishing from the chart.
+            fraction={Math.max(0.04, value / peak)}
+            color={srsStages[index].color}
+            delay={index * 60}
+            style={styles.spreadBar}
           />
         ))}
       </View>
@@ -281,41 +284,14 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     gap: 4,
   },
+  banner: {
+    // Cancels the page gutter so the horizon runs the full width. A scene
+    // inset by 14px on each side reads as a picture of a landscape; one that
+    // touches both edges reads as the landscape.
+    marginHorizontal: -spacing.gutter,
+    marginBottom: 2,
+  },
 
-  actionCard: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'center',
-    padding: 12,
-  },
-  artSlot: {
-    width: 80,
-    height: 80,
-    borderRadius: radius.art,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionBody: {
-    flex: 1,
-    gap: 7,
-  },
-  actionTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  actionTitle: {
-    ...typeScale.cardTitle,
-    color: colors.ink,
-  },
-  blurb: {
-    ...typeScale.caption,
-    color: colors.inkSoft,
-  },
-  actionCta: {
-    borderRadius: radius.tile,
-  },
 
   streakHead: {
     flexDirection: 'row',

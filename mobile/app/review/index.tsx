@@ -9,21 +9,15 @@
  * A missed item is not dropped — it goes to the back of the queue and is
  * retried at the end of the session.
  */
-import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import {
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { CheckMark, CorrectMark, IncorrectMark } from '@/components/icons';
 import { Mascot, type Pose } from '@/components/Mascot';
+import { useAnswerRun } from '@/components/MascotCoach';
+import { useShake } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
   Card,
@@ -33,6 +27,7 @@ import {
   StatTile,
 } from '@/components/ui';
 import { recordSession, type SessionItem } from '@/data/session';
+import { feedback } from '@/feedback';
 import type { StudyItem } from '@/data/types';
 import { useReviewQueue, useStudyActions } from '@/hooks/useStudyData';
 import {
@@ -67,6 +62,8 @@ export default function ReviewScreen() {
   const [verdict, setVerdict] = React.useState<Verdict | null>(null);
   const [pose, setPose] = React.useState<Pose>('idle');
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as StudyItem[] });
+  const { line, register } = useAnswerRun();
+  const { style: shakeStyle, shake } = useShake();
 
   // Kept in refs, not state: the summary reads them once on the way out, and
   // re-rendering the card on every strike would be churn for nothing.
@@ -118,16 +115,24 @@ export default function ReviewScreen() {
       strikes.current.set(id, tally);
     }
 
-    if (Platform.OS !== 'web') {
-      void Haptics.notificationAsync(
-        ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error,
-      );
+    if (ok) {
+      feedback.correct();
+      // A milestone chimes on top of the correct cue rather than replacing it,
+      // so a run of five still confirms the answer first.
+      if (register(true)) feedback.streak();
+    } else {
+      feedback.wrong();
+      shake();
+      register(false);
     }
 
     // The feedback mark holds for ~600ms, then the next item comes in.
     setTimeout(() => {
       setVerdict(null);
       setAnswer('');
+      // The only thing that ends the reaction now — under `holdReaction` the
+      // mascot cycles until the next card replaces it.
+      setPose('idle');
 
       setEntries((rest) => {
         if (!rest) return rest;
@@ -171,11 +176,7 @@ export default function ReviewScreen() {
             },
       );
     }, 600);
-  }, [answer, current, entries, grade, submitAnswer, verdict]);
-
-  /** Stable so the mascot's animation effect is not retriggered by a new
-   *  arrow identity on every render. */
-  const onReactionEnd = React.useCallback(() => setPose('idle'), []);
+  }, [answer, current, entries, grade, register, shake, submitAnswer, verdict]);
 
   /**
    * Hands the session to the summary and leaves.
@@ -213,6 +214,7 @@ export default function ReviewScreen() {
       finishedAt: Date.now(),
       items,
     });
+    feedback.complete();
     router.replace('/session-summary');
   }, [entries, queue, router]);
 
@@ -261,7 +263,7 @@ export default function ReviewScreen() {
           </View>
         </Card>
 
-        <View style={styles.answerRow}>
+        <Animated.View style={[styles.answerRow, shakeStyle]}>
           <View
             style={[
               styles.answerField,
@@ -309,7 +311,7 @@ export default function ReviewScreen() {
               )}
             </View>
           </Pressable>
-        </View>
+        </Animated.View>
 
         <Text style={styles.inputHint}>
           {current.half === 'reading' ? 'Kana input · romaji converts as you type' : 'Type the English meaning'}
@@ -341,12 +343,14 @@ export default function ReviewScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Mascot
-          pose={pose}
-          size={56}
-          speed={1}
-          onReactionEnd={onReactionEnd}
-        />
+        <Mascot pose={pose} size={64} speed={1} lively holdReaction />
+        {/* Only alongside a verdict — an encouragement that outlived the
+            answer it was about would be talking to nobody. */}
+        {verdict && line ? (
+          <Text style={styles.coachLine} numberOfLines={1}>
+            {line}
+          </Text>
+        ) : null}
         <Pressable onPress={finish} hitSlop={8}>
           <Text style={styles.wrapUp}>Wrap up ›</Text>
         </Pressable>
@@ -471,5 +475,11 @@ const styles = StyleSheet.create({
   wrapUp: {
     ...typeScale.meta,
     color: colors.inkFaint,
+  },
+  coachLine: {
+    flex: 1,
+    ...typeScale.captionBold,
+    color: colors.successInk,
+    marginHorizontal: 10,
   },
 });

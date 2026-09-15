@@ -11,6 +11,7 @@ import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { feedback } from '@/feedback';
 import { colors, jp, radius, type as typeScale } from '@/theme/tokens';
 
 export interface ScreenHeaderProps {
@@ -48,6 +49,7 @@ export function ScreenHeader({
   const insets = useSafeAreaInsets();
 
   const handleBack = React.useCallback(() => {
+    feedback.back();
     if (onBack) return onBack();
     if (router.canGoBack()) router.back();
   }, [onBack, router]);

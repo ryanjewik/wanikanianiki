@@ -13,15 +13,17 @@ import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { FeedbackToggles } from '@/components/FeedbackToggles';
 import { AllCaughtUpArt, NothingDueArt, OfflineArt } from '@/components/icons';
 import { Mascot } from '@/components/Mascot';
+import { RiseIn } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
   Card,
   ChunkyButton,
-  CountBadge,
   EmptyState,
   Overline,
+  QueueCard,
   SectionHeading,
 } from '@/components/ui';
 import { formatDueIn } from '@/data/sync';
@@ -29,6 +31,7 @@ import {
   useDashboard,
   useDueFlashcards,
   useLessonQueue,
+  usePracticeQueue,
   useReviewQueue,
   useSync,
 } from '@/hooks/useStudyData';
@@ -36,7 +39,6 @@ import {
   colors,
   radius,
   spacing,
-  subjectPalette,
   type as typeScale,
 } from '@/theme/tokens';
 
@@ -46,6 +48,7 @@ export default function StudyScreen() {
   const { data: lessons } = useLessonQueue();
   const { data: reviews } = useReviewQueue();
   const { data: dueCards } = useDueFlashcards();
+  const { data: practice } = usePracticeQueue();
   const { pendingWrites, result } = useSync();
 
   const lessonCount = lessons?.length ?? 0;
@@ -99,7 +102,7 @@ export default function StudyScreen() {
             tone="radical"
             blurb="Items whose interval has come due."
             cta="Start Reviews"
-            pose="walk"
+            art={<Mascot pose="walk" size={80} speed={0.7} />}
             onPress={() => router.push('/review')}
           />
         ) : (
@@ -123,7 +126,7 @@ export default function StudyScreen() {
             tone="kanji"
             blurb="New radicals, kanji and words unlocked for you."
             cta="Start Lessons"
-            pose="wave"
+            art={<Mascot pose="wave" size={80} speed={0.7} />}
             onPress={() => router.push('/lesson')}
           />
         ) : (
@@ -168,27 +171,44 @@ export default function StudyScreen() {
         </Card>
 
         <Overline style={styles.trackLabel}>Generated practice</Overline>
+
+        <QueueCard
+          title="Practice Questions"
+          count={practice?.questions ?? 0}
+          tone="vocabulary"
+          blurb={
+            practice && practice.questions > 0
+              ? `${practice.bundles} ${practice.bundles === 1 ? 'set' : 'sets'} written for you, from words across both decks.`
+              : 'Nothing written yet. These are generated twice a day from what you are studying.'
+          }
+          cta="Start Practice"
+          art={<Mascot pose="idle" size={80} speed={0.6} lively />}
+          disabled={!practice || practice.questions === 0}
+          onPress={() => router.push('/lesson-bundle')}
+        />
+
         <Card variant="bordered">
-          <SectionHeading title="Practice questions" />
           <Text style={styles.trackBlurb}>
-            Not WaniKani lessons. These are questions written for you ahead of
-            time — multiple choice, fill-in-the-blank, sentence building — drawn
-            from words across both decks above and any grammar you have
-            confirmed. A WaniKani lesson teaches you something new; this asks
-            you about what you have already met.
+            Not WaniKani lessons. These are questions written ahead of time —
+            multiple choice, fill-in-the-blank, sentence building — drawn from
+            words across both decks above and any grammar you have confirmed. A
+            WaniKani lesson teaches you something new; this asks you about what
+            you have already met.
           </Text>
           <Text style={styles.trackBlurb}>
             Answering advances every word the question tested, except
             WaniKani-owned words — those stay on WaniKani&apos;s own schedule, so
             practising them here counts as practice and nothing more.
           </Text>
-          <ChunkyButton
-            label="Start practice questions"
-            tone="vocabulary"
-            size="small"
-            onPress={() => router.push('/lesson-bundle')}
-          />
         </Card>
+
+        <Overline style={styles.trackLabel}>How it feels</Overline>
+
+        <RiseIn delay={60}>
+          <Card variant="bordered">
+            <FeedbackToggles />
+          </Card>
+        </RiseIn>
 
         <Overline style={styles.trackLabel}>Grammar</Overline>
 
@@ -216,42 +236,6 @@ export default function StudyScreen() {
         </Card>
       </ScrollView>
     </View>
-  );
-}
-
-function QueueCard({
-  title,
-  count,
-  tone,
-  blurb,
-  cta,
-  pose,
-  onPress,
-}: {
-  title: string;
-  count: number;
-  tone: 'kanji' | 'radical';
-  blurb: string;
-  cta: string;
-  pose: 'wave' | 'walk';
-  onPress: () => void;
-}) {
-  const palette = subjectPalette[tone];
-
-  return (
-    <Card style={styles.queueCard}>
-      <View style={[styles.artSlot, { backgroundColor: palette.tint }]}>
-        <Mascot pose={pose} size={80} speed={0.7} />
-      </View>
-      <View style={styles.queueBody}>
-        <View style={styles.queueTitleRow}>
-          <Text style={styles.queueTitle}>{title}</Text>
-          <CountBadge count={count} color={palette.solid} />
-        </View>
-        <Text style={styles.blurb}>{blurb}</Text>
-        <ChunkyButton label={cta} tone="neutral" size="small" onPress={onPress} style={styles.queueCta} />
-      </View>
-    </Card>
   );
 }
 
@@ -300,40 +284,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
-  queueCard: {
-    flexDirection: 'row',
-    gap: 12,
-    alignItems: 'center',
-    padding: 12,
-  },
-  artSlot: {
-    width: 80,
-    height: 80,
-    borderRadius: radius.art,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  queueBody: {
-    flex: 1,
-    gap: 7,
-  },
-  queueTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  queueTitle: {
-    ...typeScale.cardTitle,
-    color: colors.ink,
-  },
-  blurb: {
-    ...typeScale.caption,
-    color: colors.inkSoft,
-  },
-  queueCta: {
-    borderRadius: radius.tile,
-  },
 
   trackBlurb: {
     ...typeScale.caption,

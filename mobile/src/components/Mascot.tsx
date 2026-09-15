@@ -2,7 +2,7 @@
  * The Crabigator.
  *
  * Plays the sprite strips exported to `assets/mascot/anim/`. Each strip is a
- * single horizontal row of 200×200 frames, so the whole animation is one
+ * single horizontal row of 256×256 frames, so the whole animation is one
  * `translateX` on an oversized image inside a clipped box — no per-frame image
  * decoding, and the stepping runs on the UI thread rather than through React
  * state, which matters at 24–30fps.
@@ -74,9 +74,71 @@ export interface MascotProps {
    * is calmer, which suits an idle sitting behind content.
    */
   speed?: number;
-  /** Fired when a `correct` / `wrong` one-shot finishes. */
+  /** Fired when a `correct` / `wrong` one-shot finishes. Never fires while
+   *  `holdReaction` is set, since under it a reaction has no end. */
   onReactionEnd?: () => void;
+  /**
+   * Keeps a reaction cycling instead of playing once.
+   *
+   * A single 30-frame jump is over in a second, and on a screen that waits for
+   * the user to tap Next that leaves the mascot sitting idle for as long as it
+   * takes them to read the answer — which reads as the reaction having been
+   * missed rather than finished. Under this flag the caller owns the ending:
+   * set the pose back to a loop when the screen moves on.
+   */
+  holdReaction?: boolean;
+  /**
+   * Slips an occasional blink into a looping pose.
+   *
+   * One animation cycling forever is the thing that makes a mascot read as a
+   * decal rather than a creature — you stop seeing it within a screen or two.
+   * An unscheduled blink every few seconds costs nothing and is most of the
+   * difference. Ignored while a reaction is playing.
+   */
+  lively?: boolean;
   style?: StyleProp<ViewStyle>;
+}
+
+/**
+ * Returns the pose to actually draw, folding in the idle blink.
+ *
+ * The timer is re-randomised each cycle: a blink on a fixed interval is worse
+ * than no blink at all, because a regular rhythm is exactly what reads as
+ * mechanical.
+ */
+function useLivelyPose(pose: Pose, speed: number, enabled: boolean): Pose {
+  const [blinking, setBlinking] = React.useState(false);
+
+  // A reaction, or an explicitly chosen pose that is not the resting one,
+  // owns the mascot outright — nothing should interrupt a wave mid-wave.
+  const eligible = enabled && pose === 'idle';
+
+  React.useEffect(() => {
+    if (!eligible) {
+      setBlinking(false);
+      return;
+    }
+
+    let timer: ReturnType<typeof setTimeout>;
+
+    const schedule = () => {
+      timer = setTimeout(() => {
+        setBlinking(true);
+        // Hold for exactly one cycle of the blink strip at the caller's speed,
+        // so it never cuts off half-closed.
+        const cycleMs = (SPECS.blink.frames / (SPECS.blink.fps * Math.max(0.05, speed))) * 1000;
+        timer = setTimeout(() => {
+          setBlinking(false);
+          schedule();
+        }, cycleMs);
+      }, 3500 + Math.random() * 4500);
+    };
+
+    schedule();
+    return () => clearTimeout(timer);
+  }, [eligible, speed]);
+
+  return blinking ? 'blink' : pose;
 }
 
 export function Mascot({
@@ -84,9 +146,12 @@ export function Mascot({
   pose = 'idle',
   speed = 1,
   onReactionEnd,
+  lively = false,
+  holdReaction = false,
   style,
 }: MascotProps) {
-  const spec = SPECS[pose];
+  const drawn = useLivelyPose(pose, speed, lively);
+  const spec = SPECS[drawn];
   const frame = useSharedValue(0);
 
   // Keep the latest callback without restarting the animation when it changes
@@ -116,7 +181,7 @@ export function Mascot({
     const durationMs = (spec.frames / (spec.fps * Math.max(0.05, speed))) * 1000;
     frame.value = 0;
 
-    if (spec.oneShot) {
+    if (spec.oneShot && !holdReaction) {
       frame.value = withTiming(
         spec.frames,
         { duration: durationMs, easing: Easing.linear },
@@ -135,7 +200,7 @@ export function Mascot({
     }
 
     return () => cancelAnimation(frame);
-  }, [frame, notifyReactionEnd, pose, spec.frames, spec.fps, spec.oneShot, speed]);
+  }, [drawn, frame, holdReaction, notifyReactionEnd, spec.frames, spec.fps, spec.oneShot, speed]);
 
   const animatedStyle = useAnimatedStyle(() => {
     // Floor to a whole frame — a fractional offset would show two half-frames.
@@ -147,7 +212,7 @@ export function Mascot({
     <View style={[{ width: size, height: size }, styles.clip, style]}>
       <Animated.View style={animatedStyle}>
         <Image
-          source={SPRITES[pose]}
+          source={SPRITES[drawn]}
           style={{ width: size * spec.frames, height: size }}
           resizeMode="stretch"
           fadeDuration={0}

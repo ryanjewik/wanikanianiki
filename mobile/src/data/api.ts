@@ -20,6 +20,7 @@ import type {
   GrammarEntry,
   GrammarExampleInput,
   LessonBundle,
+  LessonQueueCount,
   QuestionOutcome,
   ReviewAnswer,
   Subject,
@@ -381,6 +382,17 @@ export function answerFlashcard(
  */
 export function fetchLessonBundle(signal?: AbortSignal): Promise<LessonBundle | null> {
   return request<LessonBundle | null>('/api/lesson-bundles/next', { signal });
+}
+
+/**
+ * How much practice is waiting, without spending any of it.
+ *
+ * Separate route precisely because `fetchLessonBundle` consumes: a card that
+ * showed its count by calling that would burn a lesson every time the home
+ * screen rendered.
+ */
+export function fetchLessonQueueCount(signal?: AbortSignal): Promise<LessonQueueCount> {
+  return request<LessonQueueCount>('/api/lesson-bundles/waiting', { signal });
 }
 
 /**

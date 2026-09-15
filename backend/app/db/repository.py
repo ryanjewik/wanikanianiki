@@ -1113,6 +1113,31 @@ async def table_counts(session: AsyncSession) -> dict[str, Any]:
 # Generated practice: the pools a generator reads, and the bundles it writes.
 
 
+async def count_waiting_practice(session: AsyncSession, user_id: int) -> tuple[int, int]:
+    """(bundles, questions) still waiting for this user.
+
+    Counts questions as well as bundles because that is the number a learner
+    actually reads — "16 questions" means something, "2 bundles" is the
+    generator's batching leaking into the UI.
+
+    A left join, so a bundle that somehow holds no questions still counts as a
+    bundle rather than vanishing from the total.
+    """
+    result = await session.execute(
+        select(
+            func.count(func.distinct(LessonBundle.id)),
+            func.count(LessonBundleQuestion.question_id),
+        )
+        .select_from(LessonBundle)
+        .outerjoin(
+            LessonBundleQuestion, LessonBundleQuestion.bundle_id == LessonBundle.id
+        )
+        .where(LessonBundle.user_id == user_id, LessonBundle.consumed.is_(False))
+    )
+    bundles, questions = result.one()
+    return int(bundles or 0), int(questions or 0)
+
+
 async def count_unconsumed_bundles(session: AsyncSession, user_id: int) -> int:
     """How many bundles are waiting. The only question the cron asks first."""
     result = await session.execute(

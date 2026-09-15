@@ -22,6 +22,7 @@ import type {
   Flashcard,
   GrammarEntry,
   LessonBundle,
+  LessonQueueCount,
   LevelItem,
   ReviewAnswer,
   SessionSummary,
@@ -535,6 +536,25 @@ export function useActivityStrip() {
  * remount would burn a second bundle and show a lesson the user never asked
  * for. The screen holds what it got.
  */
+/**
+ * How much generated practice is waiting, for the home and study cards.
+ *
+ * Emphatically not `useLessonBundle` — that one *claims* a bundle, so a card
+ * using it to draw a badge would consume a lesson on every render.
+ */
+export function usePracticeQueue() {
+  return useAsync<LessonQueueCount>(async () => {
+    if (!api.isBackendConfigured) return { bundles: 0, questions: 0 };
+    try {
+      return await api.fetchLessonQueueCount();
+    } catch {
+      // Offline. Nothing is reachable, so nothing is offered — the card shows
+      // its empty state rather than a stale count.
+      return { bundles: 0, questions: 0 };
+    }
+  }, []);
+}
+
 export function useLessonBundle() {
   return useAsync<LessonBundle | null>(async () => {
     if (!api.isBackendConfigured) return null;

@@ -13,21 +13,15 @@
  * of the server's grader kept in step so the two never disagree in front of
  * you.
  */
-import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import {
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { AllCaughtUpArt, CheckMark, CorrectMark, IncorrectMark, OfflineArt } from '@/components/icons';
 import { Mascot, type Pose } from '@/components/Mascot';
+import { useAnswerRun } from '@/components/MascotCoach';
+import { Pop, useShake } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
   Card,
@@ -40,6 +34,7 @@ import {
 } from '@/components/ui';
 import { matches } from '@/data/grading';
 import type { Flashcard } from '@/data/types';
+import { feedback } from '@/feedback';
 import { useDueFlashcards, useStudyActions } from '@/hooks/useStudyData';
 import {
   colors,
@@ -75,8 +70,9 @@ export default function QuizScreen() {
   const [answer, setAnswer] = React.useState('');
   const [verdict, setVerdict] = React.useState<Verdict | null>(null);
   const [pose, setPose] = React.useState<Pose>('idle');
-  const onReactionEnd = React.useCallback(() => setPose('idle'), []);
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as Flashcard[] });
+  const { line, register } = useAnswerRun();
+  const { style: shakeStyle, shake } = useShake();
 
   React.useEffect(() => {
     if (!due || entries) return;
@@ -96,10 +92,15 @@ export default function QuizScreen() {
     setVerdict(ok ? 'correct' : 'incorrect');
     setPose(ok ? 'correct' : 'wrong');
 
-    if (Platform.OS !== 'web') {
-      void Haptics.notificationAsync(
-        ok ? Haptics.NotificationFeedbackType.Success : Haptics.NotificationFeedbackType.Error,
-      );
+    if (ok) {
+      feedback.correct();
+      // A milestone chimes on top of the correct cue rather than replacing it,
+      // so a run of five still confirms the answer first.
+      if (register(true)) feedback.streak();
+    } else {
+      feedback.wrong();
+      shake();
+      register(false);
     }
 
     // Only the first attempt at a card is the graded one.
@@ -118,6 +119,7 @@ export default function QuizScreen() {
       () => {
         setVerdict(null);
         setAnswer('');
+        setPose('idle');
         setEntries((rest) => {
           if (!rest) return rest;
           const [, ...remaining] = rest;
@@ -126,7 +128,7 @@ export default function QuizScreen() {
       },
       ok ? 600 : 1600,
     );
-  }, [answer, answerFlashcard, current, verdict]);
+  }, [answer, answerFlashcard, current, register, shake, verdict]);
 
   if (loading) return <View style={styles.screen} />;
 
@@ -219,23 +221,28 @@ export default function QuizScreen() {
             the accepted forms and the sentence the word was printed in both
             come up before the next card. */}
         {verdict ? (
-          <Card variant="bordered" style={verdict === 'correct' ? styles.revealOk : styles.revealBad}>
-            <Text style={styles.revealLabel}>
-              {verdict === 'correct' ? 'Correct' : 'Answer'}
-            </Text>
-            <Text style={styles.revealAnswer}>
-              {production ? card.kanjiFurigana : card.english}
-            </Text>
-            {production && card.furiganaOnly && card.furiganaOnly !== card.kanjiFurigana ? (
-              <Text style={styles.revealReading}>{card.furiganaOnly}</Text>
-            ) : null}
-            {card.usageContext ? (
-              <Text style={styles.revealContext}>{card.usageContext}</Text>
-            ) : null}
-          </Card>
+          <Pop>
+            <Card
+              variant="bordered"
+              style={verdict === 'correct' ? styles.revealOk : styles.revealBad}
+            >
+              <Text style={styles.revealLabel}>
+                {verdict === 'correct' ? 'Correct' : 'Answer'}
+              </Text>
+              <Text style={styles.revealAnswer}>
+                {production ? card.kanjiFurigana : card.english}
+              </Text>
+              {production && card.furiganaOnly && card.furiganaOnly !== card.kanjiFurigana ? (
+                <Text style={styles.revealReading}>{card.furiganaOnly}</Text>
+              ) : null}
+              {card.usageContext ? (
+                <Text style={styles.revealContext}>{card.usageContext}</Text>
+              ) : null}
+            </Card>
+          </Pop>
         ) : null}
 
-        <View style={styles.answerRow}>
+        <Animated.View style={[styles.answerRow, shakeStyle]}>
           <View
             style={[
               styles.answerField,
@@ -277,7 +284,7 @@ export default function QuizScreen() {
               )}
             </View>
           </Pressable>
-        </View>
+        </Animated.View>
 
         <Text style={styles.inputHint}>
           {production
@@ -311,8 +318,21 @@ export default function QuizScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
-        <Mascot pose={pose} size={56} speed={1} onReactionEnd={onReactionEnd} />
-        <Pressable onPress={() => setEntries([])} hitSlop={8}>
+        <Mascot pose={pose} size={64} speed={1} lively holdReaction />
+        {/* Only alongside a verdict — an encouragement that outlived the
+            answer it was about would be talking to nobody. */}
+        {verdict && line ? (
+          <Text style={styles.coachLine} numberOfLines={1}>
+            {line}
+          </Text>
+        ) : null}
+        <Pressable
+          onPress={() => {
+            feedback.complete();
+            setEntries([]);
+          }}
+          hitSlop={8}
+        >
           <Text style={styles.wrapUp}>Wrap up ›</Text>
         </Pressable>
       </View>
@@ -478,5 +498,11 @@ const styles = StyleSheet.create({
   wrapUp: {
     ...typeScale.caption,
     color: colors.inkSoft,
+  },
+  coachLine: {
+    flex: 1,
+    ...typeScale.captionBold,
+    color: colors.vocabularyInk,
+    marginHorizontal: 10,
   },
 });

@@ -105,6 +105,20 @@ class DraftQuestion(BaseModel):
             "three, or there is nothing to arrange."
         ),
     )
+    furigana: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Readings for the words written with kanji anywhere in `prompt`, "
+            "`choices` or `tiles`, as a map from the exact written form to its "
+            "kana reading: {'入り口': 'いりぐち', '免許': 'めんきょ'}. Key it "
+            "exactly as the text writes it — the app matches the key as a "
+            "substring to draw the reading above those characters, so a key "
+            "that does not appear verbatim is simply ignored. Words already "
+            "written in kana need no entry. "
+            "NEVER include the word whose reading the question is asking for: "
+            "a reading question that ships its own furigana answers itself."
+        ),
+    )
     vocab_item_ids: list[int] = Field(
         description=(
             "Ids of the words this question actually tests, taken from the "
@@ -171,6 +185,13 @@ Two rules that matter more than variety:
    will be rejected.
 2. Only use the vocab_item_ids you were given. Never invent one, and never
    test a word that is not in the pools.
+
+Fill in `furigana` for every word you write in kanji. The learner can toggle
+readings on, and a question with none is a wall of kanji they cannot even
+attempt. The one exception is the word being asked about in a reading question
+— never give that one away. Put readings in the `furigana` map rather than in
+parentheses in the sentence: a sentence carrying its own glosses cannot have
+them turned off.
 
 Where a confirmed grammar point fits the words naturally, build a question
 around it and set grammar_entry_id. Where none fits, do not force it — a
@@ -487,6 +508,37 @@ async def _verify_with_lookup(
     return verdict
 
 
+def safe_furigana(draft: DraftQuestion) -> dict[str, str]:
+    """The readings that can be shown without giving the question away.
+
+    **Deliberately not left to the generator.** It is told not to gloss the word
+    a reading question is asking for, and it will mostly comply, but "mostly" is
+    not good enough for a rule that silently converts a question into a freebie
+    — and unlike naturalness or ambiguity, this one is exactly checkable. So it
+    is checked: any entry whose reading is the answer, or whose key is the word
+    being asked for, is dropped here.
+
+    Entries whose key does not occur in the text are dropped too. They cannot
+    render (the app matches keys as substrings) and would otherwise accumulate
+    in the payload as quiet noise.
+    """
+    if not draft.furigana:
+        return {}
+
+    haystack = " ".join([draft.prompt, *draft.choices, *draft.tiles])
+    answer = draft.answer.strip()
+
+    return {
+        written: reading
+        for written, reading in draft.furigana.items()
+        if written
+        and reading
+        and written in haystack
+        and reading.strip() != answer
+        and written.strip() != answer
+    }
+
+
 def to_payload(draft: DraftQuestion) -> dict:
     """The stored shape. Varies by type, which is why the column is JSONB."""
     payload: dict = {"prompt": draft.prompt, "answer": draft.answer}
@@ -496,6 +548,9 @@ def to_payload(draft: DraftQuestion) -> dict:
         # Stored shuffled would be wrong: the app shuffles for display, and a
         # stored order is the answer key for grading a drag-and-drop.
         payload["tiles"] = draft.tiles
+    furigana = safe_furigana(draft)
+    if furigana:
+        payload["furigana"] = furigana
     return payload
 
 

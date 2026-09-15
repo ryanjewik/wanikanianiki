@@ -10,10 +10,13 @@ import * as React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 
-import { MascotStill } from '@/components/Mascot';
+import { MascotBanner, MascotStill, type Pose } from '@/components/Mascot';
+import { MascotCoach, summaryLine, summaryPose } from '@/components/MascotCoach';
+import { GrowBar, RiseIn, useEasedNumber } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, SectionHeading, TextButton } from '@/components/ui';
 import { formatDueIn } from '@/data/sync';
+import { feedback } from '@/feedback';
 import { useSessionSummary } from '@/hooks/useStudyData';
 import {
   colors,
@@ -55,21 +58,41 @@ export default function SessionSummaryScreen() {
       <ScreenHeader title="Session Complete" trailingText={`${summary.durationMinutes} min`} />
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Card variant="bordered" style={styles.heroCard}>
-          <AccuracyRing percentage={summary.percentageCorrect} />
-          <View style={styles.heroBody}>
-            <View>
-              <Text style={styles.heroTitle}>Best run this week</Text>
-              <Text style={styles.heroSubtitle}>
-                {summary.total} reviews · {summary.correct} right, {summary.incorrect} wrong
-              </Text>
+        <ArrivalCue movedUp={movedUp} />
+
+        {/* The celebrate scene, bled to the edges. Same two-layer idea as the
+            home screen: engraved world along the top, flat interface below. */}
+        <MascotBanner variant="celebrate" height={92} style={styles.banner} />
+
+        {/* The payoff. Everything below is a number; this is the only part of
+            the screen that just says well done and gets out of the way. */}
+        <RiseIn>
+          <Card variant="bordered">
+            <CelebrationCoach
+              percentage={summary.percentageCorrect}
+              total={summary.total}
+              movedUp={movedUp}
+            />
+          </Card>
+        </RiseIn>
+
+        <RiseIn delay={70}>
+          <Card variant="bordered" style={styles.heroCard}>
+            <AccuracyRing percentage={summary.percentageCorrect} />
+            <View style={styles.heroBody}>
+              <View>
+                <Text style={styles.heroTitle}>Best run this week</Text>
+                <Text style={styles.heroSubtitle}>
+                  {summary.total} reviews · {summary.correct} right, {summary.incorrect} wrong
+                </Text>
+              </View>
+              <View style={styles.streakPill}>
+                <Text style={styles.streakValue}>{summary.streakDays}</Text>
+                <Text style={styles.streakLabel}>day streak</Text>
+              </View>
             </View>
-            <View style={styles.streakPill}>
-              <Text style={styles.streakValue}>{summary.streakDays}</Text>
-              <Text style={styles.streakLabel}>day streak</Text>
-            </View>
-          </View>
-        </Card>
+          </Card>
+        </RiseIn>
 
         <Card variant="bordered">
           <SectionHeading
@@ -78,18 +101,17 @@ export default function SessionSummaryScreen() {
             trailingColor={colors.success}
           />
           <View style={styles.movementList}>
-            {summary.movements.map((movement) => (
+            {summary.movements.map((movement, index) => (
               <View key={`${movement.from}-${movement.to}`} style={styles.movementRow}>
                 <Text style={styles.movementLabel}>
                   {names[bucket(movement.from)]} → {names[bucket(movement.to)]}
                 </Text>
                 <View style={styles.movementTrack}>
-                  <View
-                    style={{
-                      width: `${(movement.count / peak) * 100}%`,
-                      height: '100%',
-                      backgroundColor: srsStages[bucket(movement.to)].color,
-                    }}
+                  <GrowBar
+                    fraction={movement.count / peak}
+                    color={srsStages[bucket(movement.to)].color}
+                    delay={200 + index * 70}
+                    style={styles.movementFill}
                   />
                 </View>
                 <Text style={styles.movementCount}>{movement.count}</Text>
@@ -160,13 +182,83 @@ export default function SessionSummaryScreen() {
   );
 }
 
-/** Accuracy ring — a stroked circle with `strokeDasharray` for the arc. */
+/**
+ * The mascot's moment, and the line that goes with it.
+ *
+ * A component of its own because the screen returns early while the summary is
+ * still syncing, so the state this needs cannot be a hook in the screen body.
+ *
+ * `correct` is a one-shot: played and then left alone it freezes on the last
+ * frame of the jump, which after a second or two stops reading as a
+ * celebration and starts reading as a crash. It settles back to idle, where
+ * the blink keeps it alive.
+ */
+function CelebrationCoach({
+  percentage,
+  total,
+  movedUp,
+}: {
+  percentage: number;
+  total: number;
+  movedUp: number;
+}) {
+  const [pose, setPose] = React.useState<Pose>(summaryPose(percentage));
+  const settle = React.useCallback(() => setPose('idle'), []);
+
+  return (
+    <MascotCoach
+      pose={pose}
+      onReactionEnd={settle}
+      tone={movedUp > 0 ? 'kanji' : 'neutral'}
+      size={84}
+      speed={0.8}
+      line={summaryLine(percentage, total)}
+    />
+  );
+}
+
+/**
+ * Fires the arrival cue once, shortly after the screen settles.
+ *
+ * A component rather than an effect in the screen body because the screen
+ * returns early while the summary is still syncing, and a hook above that
+ * return would be a conditional-hook violation.
+ *
+ * The delay is doing real work: the session already played its completion cue
+ * on the way out of the review, and stacking a second fanfare on top of it
+ * reads as one muddled noise. Landing this after the ring has begun sweeping
+ * makes it a second beat instead.
+ */
+function ArrivalCue({ movedUp }: { movedUp: number }) {
+  React.useEffect(() => {
+    // Only when something actually advanced. A session where nothing moved up
+    // gets no fanfare — that is information, and faking it costs the cue its
+    // meaning everywhere else.
+    if (movedUp <= 0) return;
+    const timer = setTimeout(() => feedback.levelUp(), 450);
+    return () => clearTimeout(timer);
+  }, [movedUp]);
+
+  return null;
+}
+
+/**
+ * Accuracy ring — a stroked circle with `strokeDasharray` for the arc.
+ *
+ * The arc sweeps and the number counts up from zero over the same 900ms, off
+ * one eased value. They have to share it: a ring that is already full while
+ * the number is still climbing reads as two unrelated animations.
+ */
 function AccuracyRing({ percentage }: { percentage: number }) {
   const size = 96;
   const strokeWidth = 10;
   const r = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * r;
-  const filled = (Math.max(0, Math.min(100, percentage)) / 100) * circumference;
+  const clamped = Math.max(0, Math.min(100, percentage));
+  // A short hold first, so the sweep starts after the card has finished
+  // arriving rather than racing it.
+  const eased = useEasedNumber(clamped, 900, 220);
+  const filled = (eased / 100) * circumference;
 
   return (
     <View style={{ width: size, height: size }}>
@@ -193,7 +285,7 @@ function AccuracyRing({ percentage }: { percentage: number }) {
         />
       </Svg>
       <View style={styles.ringCentre}>
-        <Text style={styles.ringValue}>{percentage}%</Text>
+        <Text style={styles.ringValue}>{Math.round(eased)}%</Text>
         <Text style={styles.ringLabel}>CORRECT</Text>
       </View>
     </View>
@@ -212,6 +304,11 @@ const styles = StyleSheet.create({
     gap: spacing.stack,
   },
 
+  banner: {
+    // Cancels the page gutter, so the scene runs the full width.
+    marginHorizontal: -spacing.gutter,
+    marginBottom: 2,
+  },
   heroCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -288,6 +385,9 @@ const styles = StyleSheet.create({
     ...typeScale.meta,
     fontSize: 12,
     color: colors.inkMuted,
+  },
+  movementFill: {
+    height: '100%',
   },
   movementTrack: {
     flex: 1.4,

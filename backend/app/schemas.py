@@ -496,6 +496,22 @@ class LessonBundle(CamelModel):
     questions: list[Question]
 
 
+class LessonQueue(CamelModel):
+    """How much generated practice is waiting, without spending any of it.
+
+    Exists because `GET /api/lesson-bundles/next` *consumes* — a client that
+    wanted to show "2 sets waiting" by asking for one would burn a lesson to
+    draw a badge. This is the read-only counterpart, and the only thing the
+    home and study cards need.
+    """
+
+    #: Bundles not yet handed out.
+    bundles: int = 0
+    #: Questions across those bundles, which is the number worth showing: a
+    #: learner counts questions, not the batching the generator happens to use.
+    questions: int = 0
+
+
 class AgentContext(CamelModel):
     """The narrow feed a generator reads instead of the raw tables.
 

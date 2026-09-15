@@ -87,6 +87,14 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
       value TEXT
     );
 
+    -- Deliberately not sync_meta: that table is cached server state and
+    -- resetLocalData clears it. A preference is the user's, not the server's
+    -- — clearing the cache should not silently un-mute the app.
+    CREATE TABLE IF NOT EXISTS app_prefs (
+      key   TEXT PRIMARY KEY NOT NULL,
+      value TEXT
+    );
+
     -- Part 2: photo-imported vocabulary and its own SM-2 scheduling.
     CREATE TABLE IF NOT EXISTS vocab_items (
       id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -504,6 +512,28 @@ export async function setSyncMeta(key: string, value: string): Promise<void> {
 }
 
 export const SYNC_KEY_LAST_SYNCED = 'last_synced_at';
+
+/* -------------------------------------------------------------------------- */
+
+/** User preferences. Survives `resetLocalData` — see the table comment. */
+export async function getPref(key: string): Promise<string | null> {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ value: string | null }>(
+    'SELECT value FROM app_prefs WHERE key = ?',
+    key,
+  );
+  return row?.value ?? null;
+}
+
+export async function setPref(key: string, value: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    `INSERT INTO app_prefs (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    key,
+    value,
+  );
+}
 
 /** Drops everything local. Used by "reset local cache" in settings. */
 export async function resetLocalData(): Promise<void> {

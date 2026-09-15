@@ -8,9 +8,10 @@
  */
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { Mascot } from '@/components/Mascot';
+import { MascotCoach } from '@/components/MascotCoach';
+import { RiseIn } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
   Card,
@@ -24,6 +25,8 @@ import {
 import { findSubject } from '@/data/fixtures';
 import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
+import { feedback } from '@/feedback';
+import { speakJapanese } from '@/feedback/speech';
 import { useLessonQueue, useStudyActions } from '@/hooks/useStudyData';
 import {
   colors,
@@ -50,6 +53,16 @@ export default function LessonScreen() {
   /** Items actually taught — a deferred item comes back round and is not one. */
   const taught = React.useRef<StudyItem[]>([]);
 
+  /**
+   * One scroll view serves every item in the queue, so moving on leaves the
+   * offset where the last item was read to — tap through a long mnemonic and
+   * the next item opens halfway down itself. Reset on each change of item.
+   */
+  const scroller = React.useRef<ScrollView>(null);
+  React.useEffect(() => {
+    scroller.current?.scrollTo({ y: 0, animated: false });
+  }, [index]);
+
   const advance = React.useCallback(() => {
     if (index + 1 >= items.length) {
       // A lesson has nothing to get wrong, so every item taught is `correct`.
@@ -71,6 +84,7 @@ export default function LessonScreen() {
         finishedAt: Date.now(),
         items: session,
       });
+      feedback.complete();
       router.replace('/session-summary');
       return;
     }
@@ -82,11 +96,17 @@ export default function LessonScreen() {
       taught.current.push(current);
       await completeLesson(current.assignment);
     }
+    // Deliberately `advance` and not the level-up fanfare, even though an item
+    // taught really is an item unlocked. A lesson queue is twenty-odd items
+    // long, and a cue that says "this is a big moment" twenty times in four
+    // minutes stops meaning it. The fanfare is kept for the end of the run.
+    feedback.advance();
     advance();
   }, [current, completeLesson, advance]);
 
   const onDefer = React.useCallback(() => {
     if (current) setDeferred((rest) => [...rest, current]);
+    feedback.advance();
     advance();
   }, [current, advance]);
 
@@ -100,6 +120,12 @@ export default function LessonScreen() {
   const onyomi = subject.readings.find((r) => r.type === 'onyomi');
   const kunyomi = subject.readings.find((r) => r.type === 'kunyomi');
   const plainReading = subject.readings.find((r) => r.type === 'vocabulary');
+  // Vocabulary is spoken as written; anything else is spoken as its reading,
+  // since a bare kanji has no pronunciation to read out.
+  const spoken =
+    subject.type === 'vocabulary'
+      ? (subject.characters ?? '')
+      : (subject.readings.find((r) => r.primary) ?? subject.readings[0])?.reading ?? '';
   const components = subject.componentSubjectIds
     .map(findSubject)
     .filter((s): s is Subject => Boolean(s));
@@ -124,46 +150,55 @@ export default function LessonScreen() {
         }
       />
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <Card flush>
-          <CardBanner
-            type={subject.type}
-            label={`${typeLabel} · level ${subject.level}`}
-            trailing="meaning first"
-          />
-          <View style={styles.subjectBody}>
-            <Text style={styles.subjectGlyph}>{subject.characters}</Text>
+      <ScrollView ref={scroller} contentContainerStyle={styles.content}>
+        {/* Keyed on the subject so each new item's card rises in, rather than
+            its contents swapping under a stationary frame. */}
+        <RiseIn key={subject.id}>
+          <Card flush>
+            <CardBanner
+              type={subject.type}
+              label={`${typeLabel} · level ${subject.level}`}
+              trailing="meaning first"
+            />
+            <View style={styles.subjectBody}>
+              <Text style={styles.subjectGlyph}>{subject.characters}</Text>
 
-            {components.length > 0 ? (
-              <View style={styles.equation}>
-                {components.map((component, position) => (
-                  <React.Fragment key={component.id}>
-                    {position > 0 ? <Text style={styles.operator}>+</Text> : null}
-                    <View style={[styles.equationChip, { backgroundColor: subjectPalette[component.type].solid }]}>
-                      <Text style={styles.equationChipText}>{component.characters}</Text>
-                    </View>
-                  </React.Fragment>
-                ))}
-                <Text style={styles.operator}>=</Text>
-                <View style={[styles.equationChip, { backgroundColor: palette.solid }]}>
-                  <Text style={styles.equationChipText}>{subject.characters}</Text>
+              {components.length > 0 ? (
+                <View style={styles.equation}>
+                  {components.map((component, position) => (
+                    <React.Fragment key={component.id}>
+                      {position > 0 ? <Text style={styles.operator}>+</Text> : null}
+                      <View style={[styles.equationChip, { backgroundColor: subjectPalette[component.type].solid }]}>
+                        <Text style={styles.equationChipText}>{component.characters}</Text>
+                      </View>
+                    </React.Fragment>
+                  ))}
+                  <Text style={styles.operator}>=</Text>
+                  <View style={[styles.equationChip, { backgroundColor: palette.solid }]}>
+                    <Text style={styles.equationChipText}>{subject.characters}</Text>
+                  </View>
                 </View>
-              </View>
-            ) : null}
+              ) : null}
 
-            <Text style={styles.meaning}>{primaryMeaning}</Text>
-          </View>
-        </Card>
+              <Text style={styles.meaning}>{primaryMeaning}</Text>
+            </View>
+          </Card>
+        </RiseIn>
 
         {subject.meaningMnemonic ? (
           <Card style={styles.mnemonicCard}>
-            <View style={[styles.artSlot, { backgroundColor: palette.tint }]}>
-              <Mascot pose="idle" size={84} speed={0.6} />
-            </View>
-            <View style={styles.mnemonicBody}>
-              <Overline style={{ color: palette.solid }}>Mnemonic</Overline>
+            {/* A mnemonic is the one place in the app where something is being
+                explained to you rather than tested, so it is the one place the
+                mascot should be doing the talking. */}
+            <MascotCoach
+              label="Mnemonic"
+              tone={subject.type}
+              size={84}
+              speed={0.6}
+              pose="idle"
+            >
               <Text style={styles.mnemonicText}>{subject.meaningMnemonic}</Text>
-            </View>
+            </MascotCoach>
           </Card>
         ) : null}
 
@@ -179,10 +214,24 @@ export default function LessonScreen() {
                 <ReadingChip reading={plainReading.reading} label="READING" tone="vocabulary" />
               ) : null}
               {/* Reads the item aloud via the platform speech engine — free, and
-                  works offline once a Japanese voice pack is installed. */}
-              <View style={styles.speakButton}>
+                  works offline once a Japanese voice pack is installed.
+
+                  What gets spoken is not the glyph: a kanji in isolation has no
+                  one pronunciation, so a kanji or radical is read by its
+                  primary reading and only a vocabulary word reads as itself. */}
+              <Pressable
+                onPress={() => {
+                  feedback.tap();
+                  speakJapanese(spoken);
+                }}
+                disabled={!spoken}
+                style={[styles.speakButton, !spoken && styles.speakButtonMuted]}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Read aloud"
+              >
                 <Text style={styles.speakGlyph}>♪</Text>
-              </View>
+              </Pressable>
             </View>
           </Card>
         ) : null}
@@ -300,6 +349,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
+  },
+  speakButtonMuted: {
+    opacity: 0.4,
   },
   speakButton: {
     marginLeft: 'auto',

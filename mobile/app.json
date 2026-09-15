@@ -17,7 +17,7 @@
         "backgroundColor": "#FDEAF1",
         "foregroundImage": "./assets/mascot/icon/adaptive-foreground-1024.png",
         "backgroundImage": "./assets/mascot/icon/adaptive-background-1024.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "monochromeImage": "./assets/mascot/icon/adaptive-monochrome-1024.png"
       },
       "package": "com.anonymous.wanikanianiki",
       "edgeToEdgeEnabled": true
@@ -49,7 +49,8 @@
           "photosPermission": "Kanji Workshop needs your photo library to import vocabulary from textbook pages.",
           "cameraPermission": "Kanji Workshop needs the camera to scan textbook vocabulary pages."
         }
-      ]
+      ],
+      "expo-audio"
     ]
   }
 }

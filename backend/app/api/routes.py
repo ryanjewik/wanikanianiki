@@ -55,6 +55,7 @@ from app.schemas import (
     VocabSourceResult,
 )
 from app.schemas import LessonBundle as LessonBundleOut
+from app.schemas import LessonQueue as LessonQueueOut
 from app.schemas import Question as QuestionOut
 from app.services import grammar as grammar_service
 from app.services import ocr as ocr_service
@@ -995,6 +996,31 @@ def _parse_ids(raw: str | None) -> list[int]:
 
 
 # -- generated lessons -----------------------------------------------------
+
+
+@router.get(
+    "/api/lesson-bundles/waiting",
+    response_model=LessonQueueOut,
+    tags=["study"],
+)
+async def get_lesson_queue(
+    session: AsyncSession = Depends(db_session),
+) -> LessonQueueOut:
+    """How much generated practice is waiting. **Does not consume anything.**
+
+    The sibling route below hands out a bundle and marks it spent, which makes
+    it useless for drawing a count — asking in order to display "2 sets
+    waiting" would spend one of them. Hence a separate, read-only route.
+
+    Zero is a normal answer: the cron tops the queue up twice a day, and a user
+    who has worked through everything is simply early.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        return LessonQueueOut()
+
+    bundles, questions = await repo.count_waiting_practice(session, user.id)
+    return LessonQueueOut(bundles=bundles, questions=questions)
 
 
 @router.get(

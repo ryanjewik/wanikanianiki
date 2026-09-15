@@ -15,6 +15,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { getDatabase } from '@/data/db';
+import { initFeedback } from '@/feedback';
 import { colors } from '@/theme/tokens';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
@@ -50,7 +51,15 @@ export default function RootLayout() {
     // screens all fall back to fixtures when the mirror is empty.
     getDatabase()
       .catch(() => undefined)
-      .finally(() => setDatabaseReady(true));
+      // Sound and haptic preferences live in the same database, and the audio
+      // players are built here so the first cue of the first session does not
+      // pay for loading them. Deliberately after the catch and not awaited into
+      // the gate below: feedback is a nicety, and the app should open without
+      // it rather than wait on it.
+      .finally(() => {
+        void initFeedback();
+        setDatabaseReady(true);
+      });
   }, []);
 
   const ready = (fontsLoaded || Boolean(fontError)) && databaseReady;
@@ -76,6 +85,7 @@ export default function RootLayout() {
           <Stack.Screen name="lesson" />
           <Stack.Screen name="review" />
           <Stack.Screen name="quiz" />
+          <Stack.Screen name="lesson-bundle" />
           {/* The summary ends a session, so it should not slide back into it. */}
           <Stack.Screen name="session-summary" options={{ animation: 'fade' }} />
           <Stack.Screen name="item/[id]" />

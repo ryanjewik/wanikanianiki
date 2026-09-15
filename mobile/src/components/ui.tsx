@@ -9,6 +9,7 @@
  */
 import * as React from 'react';
 import {
+  type GestureResponderEvent,
   Pressable,
   type PressableProps,
   StyleSheet,
@@ -19,7 +20,15 @@ import {
   type ViewProps,
   type ViewStyle,
 } from 'react-native';
+import Animated, {
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
+import { AnimatedSessionProgress, PressBounce } from '@/components/motion';
+import { cue as fireCue, feedback, type Cue } from '@/feedback';
 import {
   colors,
   controlBorder,
@@ -96,10 +105,80 @@ export function SectionHeading({
     <View style={styles.sectionHeading}>
       <Text style={styles.sectionTitle}>{title}</Text>
       {trailing ? (
-        <Pressable onPress={onPressTrailing} disabled={!onPressTrailing} hitSlop={8}>
+        <Pressable
+          onPress={onPressTrailing}
+          onPressIn={onPressTrailing ? feedback.tap : undefined}
+          disabled={!onPressTrailing}
+          hitSlop={8}
+        >
           <Text style={[styles.sectionTrailing, { color: trailingColor }]}>{trailing}</Text>
         </Pressable>
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * The card that offers a queue: lessons, reviews, generated practice.
+ *
+ * One component rather than the near-identical pair the dashboard and study
+ * hub each had, because they were already the same card and drifting — and
+ * because the colour treatment below has to be decided once to read as a set.
+ *
+ * Unlike the rest of the system these are *tinted* rather than white. Three of
+ * them sit above the fold on both screens and they are the only things there
+ * you can act on; a white card among white cards makes the primary action look
+ * like another read-only panel. The art slot stays white so the mascot keeps
+ * its contrast against the ink line-work.
+ */
+export function QueueCard({
+  title,
+  count,
+  tone,
+  blurb,
+  cta,
+  art,
+  onPress,
+  disabled = false,
+}: {
+  title: string;
+  /** Hidden when zero — a badge reading 0 is worse than no badge. */
+  count: number;
+  tone: SubjectType;
+  blurb: string;
+  cta: string;
+  /** The mascot, or whatever belongs in the square. */
+  art: React.ReactNode;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  const palette = subjectPalette[tone];
+
+  return (
+    <View
+      style={[
+        styles.queueCard,
+        { backgroundColor: palette.tint, borderColor: palette.solid },
+        disabled && styles.queueCardEmpty,
+      ]}
+    >
+      <View style={styles.queueArt}>{art}</View>
+
+      <View style={styles.queueBody}>
+        <View style={styles.queueTitleRow}>
+          <Text style={styles.queueTitle}>{title}</Text>
+          {count > 0 ? <CountBadge count={count} color={palette.solid} /> : null}
+        </View>
+        <Text style={styles.queueBlurb}>{blurb}</Text>
+        <ChunkyButton
+          label={cta}
+          tone={disabled ? 'neutral' : tone}
+          size="small"
+          disabled={disabled}
+          onPress={onPress}
+          style={styles.queueCta}
+        />
+      </View>
     </View>
   );
 }
@@ -115,6 +194,12 @@ export interface ChunkyButtonProps extends Omit<PressableProps, 'style'> {
   size?: 'large' | 'small';
   /** Appends the "›" the designs put on anything that moves you forward. */
   chevron?: boolean;
+  /**
+   * Which feedback cue to fire. `tap` is right for almost everything; a button
+   * that ends a session or moves to the next card should say so, since the cue
+   * is most of how those moments read when the screen barely changes.
+   */
+  cue?: Cue;
   style?: ViewStyle;
 }
 
@@ -128,8 +213,10 @@ export function ChunkyButton({
   tone = 'kanji',
   size = 'large',
   chevron = true,
+  cue = 'tap',
   style,
   disabled,
+  onPress,
   ...rest
 }: ChunkyButtonProps) {
   const filled = tone !== 'neutral';
@@ -137,8 +224,20 @@ export function ChunkyButton({
   const foreground = filled ? colors.onSolid : colors.ink;
   const offset = size === 'large' ? 3 : 2;
 
+  // The cue fires on press-down rather than inside `onPress`, so it lands with
+  // the finger instead of after whatever the handler does — which on the
+  // committing buttons here is often a navigation.
+  const onPressIn = rest.onPressIn;
+  const handlePressIn = React.useCallback(
+    (event: GestureResponderEvent) => {
+      if (!disabled) fireCue(cue);
+      onPressIn?.(event);
+    },
+    [cue, disabled, onPressIn],
+  );
+
   return (
-    <Pressable disabled={disabled} {...rest}>
+    <Pressable disabled={disabled} onPress={onPress} {...rest} onPressIn={handlePressIn}>
       {({ pressed }) => (
         <View
           style={[
@@ -182,7 +281,7 @@ export function TextButton({
   color?: string;
 }) {
   return (
-    <Pressable onPress={onPress} style={styles.textButton} hitSlop={6}>
+    <Pressable onPress={onPress} onPressIn={feedback.tap} style={styles.textButton} hitSlop={6}>
       <Text style={[typeScale.buttonSmall, { color }]}>{label}</Text>
     </Pressable>
   );
@@ -204,7 +303,7 @@ export function InlineButton({
 }) {
   const strong = emphasis === 'strong';
   return (
-    <Pressable onPress={onPress}>
+    <Pressable onPress={onPress} onPressIn={feedback.tap}>
       {({ pressed }) => (
         <View
           style={[
@@ -261,7 +360,11 @@ export function CharTile({
     </View>
   );
 
-  return onPress ? <Pressable onPress={onPress}>{content}</Pressable> : content;
+  return onPress ? (
+    <PressBounce onPress={onPress} onPressIn={feedback.select}>
+      {content}
+    </PressBounce>
+  ) : content;
 }
 
 /** The count badge beside a card title, e.g. the "24" on Today's Lessons. */
@@ -382,7 +485,14 @@ export function StageLadder({ bucket }: { bucket: number }) {
   );
 }
 
-/** Progress split into a correct run and an incorrect tail. */
+/**
+ * Progress split into a correct run and an incorrect tail.
+ *
+ * The fill is tweened rather than stepped. This bar is the only thing on a
+ * review screen that reports the shape of the session, and a card answered
+ * every four seconds gives it no other way to be noticed — a jump between two
+ * renders is change the eye never catches, whereas 340ms of travel is.
+ */
 export function SessionProgressBar({
   correct,
   incorrect,
@@ -392,13 +502,16 @@ export function SessionProgressBar({
   incorrect: number;
   total: number;
 }) {
-  const safeTotal = Math.max(1, total);
   return (
-    <View style={styles.sessionTrack}>
-      <View style={{ flex: correct / safeTotal, backgroundColor: colors.success }} />
-      <View style={{ flex: incorrect / safeTotal, backgroundColor: colors.kanji }} />
-      <View style={{ flex: Math.max(0, (safeTotal - correct - incorrect) / safeTotal) }} />
-    </View>
+    <AnimatedSessionProgress
+      correct={correct}
+      incorrect={incorrect}
+      total={total}
+      height={6}
+      correctColor={colors.success}
+      incorrectColor={colors.kanji}
+      trackColor={colors.border}
+    />
   );
 }
 
@@ -415,13 +528,29 @@ export function StepDots({
   return (
     <View style={styles.stepDots}>
       {Array.from({ length: total }, (_, index) => (
-        <View
-          key={index}
-          style={[styles.stepDot, { backgroundColor: index < completed ? color : colors.border }]}
-        />
+        <StepDot key={index} filled={index < completed} color={color} />
       ))}
     </View>
   );
+}
+
+/**
+ * One dash. The colour crossfades rather than switching, so the dash that was
+ * just earned is visibly the one that changed — with a dozen identical dashes
+ * in a row, an instant swap is impossible to attribute to your own last answer.
+ */
+function StepDot({ filled, color }: { filled: boolean; color: string }) {
+  const progress = useSharedValue(filled ? 1 : 0);
+
+  React.useEffect(() => {
+    progress.value = withTiming(filled ? 1 : 0, { duration: 240 });
+  }, [filled, progress]);
+
+  const animated = useAnimatedStyle(() => ({
+    backgroundColor: interpolateColor(progress.value, [0, 1], [colors.border, color]),
+  }));
+
+  return <Animated.View style={[styles.stepDot, animated]} />;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -494,6 +623,53 @@ const styles = StyleSheet.create({
     color: colors.ink,
   },
   sectionTrailing: typeScale.captionBold,
+
+  queueCard: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: radius.card,
+    // A hairline of the type colour rather than the usual grey, so the three
+    // cards read as a set of three different things.
+    borderWidth: 1,
+  },
+  queueCardEmpty: {
+    opacity: 0.6,
+  },
+  queueArt: {
+    width: 80,
+    height: 80,
+    borderRadius: radius.art,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+  },
+  queueBody: {
+    flex: 1,
+    gap: 5,
+  },
+  queueTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  queueTitle: {
+    ...typeScale.cardTitle,
+    color: colors.ink,
+    flexShrink: 1,
+  },
+  queueBlurb: {
+    ...typeScale.caption,
+    color: colors.inkMuted,
+    lineHeight: 16,
+  },
+  queueCta: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    marginTop: 3,
+  },
 
   chunkyButton: {
     borderRadius: radius.button,
@@ -579,13 +755,6 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 7,
     borderRadius: 4,
-  },
-  sessionTrack: {
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.border,
-    overflow: 'hidden',
-    flexDirection: 'row',
   },
   stepDots: {
     flexDirection: 'row',

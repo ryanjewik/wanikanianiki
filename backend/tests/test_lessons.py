@@ -17,6 +17,7 @@ from app.services.lessons import (
     Verdict,
     _structurally_sound,
     prune_for_variety,
+    safe_furigana,
     to_payload,
     variety_note,
     verify_draft,
@@ -148,6 +149,60 @@ def test_payload_keeps_choices_only_where_they_exist():
         "receipt",
     ]
     assert "choices" not in to_payload(draft(type="recall", choices=[]))
+
+
+# -- furigana --------------------------------------------------------------
+# The generator is told not to gloss the word a reading question asks for. This
+# is the deterministic backstop, because a slip there turns the question into a
+# freebie and, unlike naturalness, it is exactly checkable.
+
+
+def test_furigana_survives_when_it_gives_nothing_away():
+    kept = safe_furigana(draft(furigana={"免許": "めんきょ"}))
+    assert kept == {"免許": "めんきょ"}
+
+
+def test_furigana_that_is_the_answer_is_dropped():
+    reading_question = draft(
+        prompt="「入り口」の読み方はどれですか。",
+        choices=["いりぐち", "はいりくち", "いりごう", "にゅうぐち"],
+        answer="いりぐち",
+        furigana={"入り口": "いりぐち"},
+    )
+    assert safe_furigana(reading_question) == {}
+
+
+def test_furigana_for_the_word_being_asked_for_is_dropped():
+    fill_in = draft(
+        type="fill_in_blank",
+        prompt="車を運転するには ___ が必要です。",
+        choices=[],
+        answer="免許",
+        furigana={"免許": "めんきょ", "運転": "うんてん"},
+    )
+    # 運転 is context and may be read; 免許 is the answer and may not.
+    assert safe_furigana(fill_in) == {"運転": "うんてん"}
+
+
+def test_furigana_that_appears_nowhere_is_dropped():
+    assert safe_furigana(draft(furigana={"川": "かわ"})) == {}
+
+
+def test_furigana_is_read_from_choices_and_tiles_too():
+    built = draft(
+        type="sentence_construction",
+        prompt="Arrange the sentence.",
+        choices=[],
+        tiles=["川を", "見", "ながら", "勉強します"],
+        answer="川を見ながら勉強します",
+        furigana={"川": "かわ", "勉強": "べんきょう"},
+    )
+    assert safe_furigana(built) == {"川": "かわ", "勉強": "べんきょう"}
+
+
+def test_payload_omits_furigana_when_there_is_none():
+    assert "furigana" not in to_payload(draft())
+    assert to_payload(draft(furigana={"免許": "めんきょ"}))["furigana"] == {"免許": "めんきょ"}
 
 
 # -- batch variety ---------------------------------------------------------
