@@ -1,7 +1,7 @@
 {
   "idle": {
     "frames": 24,
-    "size": 200,
+    "size": 256,
     "fps": 24,
     "loop": true,
     "oneShot": false,
@@ -10,7 +10,7 @@
   },
   "wave": {
     "frames": 24,
-    "size": 200,
+    "size": 256,
     "fps": 24,
     "loop": true,
     "oneShot": false,
@@ -19,7 +19,7 @@
   },
   "walk": {
     "frames": 24,
-    "size": 200,
+    "size": 256,
     "fps": 24,
     "loop": true,
     "oneShot": false,
@@ -28,7 +28,7 @@
   },
   "blink": {
     "frames": 24,
-    "size": 200,
+    "size": 256,
     "fps": 24,
     "loop": true,
     "oneShot": false,
@@ -37,7 +37,7 @@
   },
   "correct": {
     "frames": 30,
-    "size": 200,
+    "size": 256,
     "fps": 30,
     "loop": false,
     "oneShot": true,
@@ -46,7 +46,7 @@
   },
   "wrong": {
     "frames": 30,
-    "size": 200,
+    "size": 256,
     "fps": 30,
     "loop": false,
     "oneShot": true,

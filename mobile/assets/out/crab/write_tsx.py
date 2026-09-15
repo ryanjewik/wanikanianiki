@@ -11,11 +11,16 @@ def pas(k):
 
 
 # ---------------------------------------------------------------- parts file
+# only import the primitives the generated geometry actually uses, so the
+# file does not trip noUnusedLocals
+blob = ''.join(P.values()) + d['defs'] + d['shadow']
+prim = [n for n in ('Path', 'Ellipse', 'G', 'ClipPath', 'Pattern', 'Circle',
+                    'Rect', 'Defs') if f'<{n}' in blob]
+prim = sorted(set(prim + ['Path', 'G']))
 lines = ['// AUTO-GENERATED from crabigator6.py — do not hand-edit.',
          '// Every path here was machine-traced from the source artwork.',
          "import * as React from 'react';",
-         "import { Path, Ellipse, G, ClipPath, Pattern, Circle } "
-         "from 'react-native-svg';", '']
+         "import { " + ", ".join(prim) + " } from 'react-native-svg';", '']
 for k in order + EYES:
     body = P[k]
     if k == 'head':

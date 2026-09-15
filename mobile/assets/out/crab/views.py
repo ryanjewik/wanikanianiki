@@ -210,7 +210,7 @@ def front(mono=False):
 
     defs = '<defs>' + "".join(C._DEFS) + '</defs>'
     shadow = (f'<ellipse cx="{A}" cy="{"916"}" rx="430" ry="30" '
-              f'fill="{C.BK}" opacity=".1"/>')
+              f'fill="{C.BK}" opacity="0.1"/>')
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" '
             f'width="1024" height="1024">{defs}{shadow}'
             f'<g id="crabigator">' + "".join(b) + '</g></svg>')

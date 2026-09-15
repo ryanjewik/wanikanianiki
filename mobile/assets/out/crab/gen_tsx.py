@@ -4,6 +4,9 @@ import re, json
 import anim, crabigator6 as C
 
 VB = (56, 60, 912, 912)
+# the component ships the flat-tone screen, not the <pattern> one — see
+# crabigator6.SCREEN for why react-native-svg cannot be trusted with it
+C.SCREEN = 'tone'
 svg = C.build(mono=False, rig={}, eye=1.0)
 defs = re.search(r'<defs>(.*?)</defs>', svg, re.S).group(1)
 shadow = re.search(r'(<ellipse cx="500".*?/>)', svg).group(1)

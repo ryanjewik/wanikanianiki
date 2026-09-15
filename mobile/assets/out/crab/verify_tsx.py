@@ -53,6 +53,7 @@ a = Image.open(io.BytesIO(cairosvg.svg2png(bytestring=svg.encode(),
               background_color='white'))).convert('RGB')
 
 import crabigator6 as C
+C.SCREEN = 'tone'      # the component ships the flat screen
 ref = C.build(False, rig={}, eye=1.0).replace(
     'viewBox="0 0 1024 1024" width="1024" height="1024"',
     f'viewBox="{d["viewBox"][0]} {d["viewBox"][1]} {d["viewBox"][2]} '

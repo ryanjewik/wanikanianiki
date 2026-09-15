@@ -59,6 +59,25 @@ SHADE = [(.34, 1.9), (.62, 3.1)]    # (terminator fraction, dot radius)
 DOT_GAP, DOT_OP = 13, .42
 _DEFS = []
 
+# How the shadow band is painted.
+#   'dots'  the real halftone screen — an SVG <pattern>. Correct everywhere a
+#           browser or a rasteriser is doing the drawing.
+#   'tone'  the same average value as a flat wash. react-native-svg resolves
+#           patternUnits="userSpaceOnUse" against the root, not against the
+#           ancestor transform, so inside an animated group the dot field
+#           stays put on screen while the part slides over it — the texture
+#           appears to crawl across the mascot. At the size a mascot renders
+#           in an app the 13-unit pitch is about 2px and reads as a tone
+#           anyway, so the vector component uses this and the raster exports
+#           keep the dots.
+SCREEN = 'dots'
+
+
+def _tone(rad):
+    """the flat opacity a dot screen of this radius averages out to"""
+    cover = 2 * math.pi * rad * rad / (DOT_GAP * DOT_GAP)
+    return min(1.0, cover) * DOT_OP
+
 
 def _halftone(rad):
     did = f"tx{int(rad * 10)}"
@@ -74,32 +93,109 @@ def _halftone(rad):
     return did
 
 
-def _halfplane(pts, f):
-    """polygon covering everything past a terminator at fraction f along the
-    light direction — i.e. the shadow side of the form"""
-    dx, dy = -LIGHT[0], -LIGHT[1]
-    ts = [x * dx + y * dy for x, y in pts]
-    t = min(ts) + f * (max(ts) - min(ts))
-    px, py = -dy, dx
-    mx, my = dx * t, dy * t
-    R = 4000
-    q = [(mx + px * R, my + py * R),
-         (mx + px * R + dx * R, my + py * R + dy * R),
-         (mx - px * R + dx * R, my - py * R + dy * R),
-         (mx - px * R, my - py * R)]
-    return "M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in q) + " Z"
+def _flat(d, steps=7):
+    """flatten an M/L/C path into a dense point list"""
+    t = d.replace(",", " ").split()
+    pts, cur, i = [], (0.0, 0.0), 0
+    while i < len(t):
+        c = t[i]
+        if c in ("M", "L"):
+            cur = (float(t[i + 1]), float(t[i + 2]))
+            pts.append(cur)
+            i += 3
+        elif c == "C":
+            p1 = (float(t[i + 1]), float(t[i + 2]))
+            p2 = (float(t[i + 3]), float(t[i + 4]))
+            p3 = (float(t[i + 5]), float(t[i + 6]))
+            p0 = cur
+            for k in range(1, steps + 1):
+                u = k / steps
+                v = 1 - u
+                pts.append((v*v*v*p0[0] + 3*v*v*u*p1[0]
+                            + 3*v*u*u*p2[0] + u*u*u*p3[0],
+                            v*v*v*p0[1] + 3*v*v*u*p1[1]
+                            + 3*v*u*u*p2[1] + u*u*u*p3[1]))
+            cur = p3
+            i += 7
+        else:
+            i += 1
+    return pts
+
+
+def _clip_half(pts, nx, ny, t):
+    """Sutherland-Hodgman, keeping the part of the polygon where n.p >= t.
+
+    The clipper is a half-plane and so convex, which is all the algorithm
+    needs; the subject polygon may be concave.
+    """
+    out, n = [], len(pts)
+    for i in range(n):
+        a, b = pts[i], pts[(i + 1) % n]
+        da = a[0] * nx + a[1] * ny - t
+        db = b[0] * nx + b[1] * ny - t
+        if da >= 0:
+            out.append(a)
+        if (da >= 0) != (db >= 0):
+            u = da / (da - db)
+            out.append((a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u))
+    return out
+
+
+def _dp(pts, eps=0.6):
+    """Douglas-Peucker; the shading edge sits under the part's own outline,
+    so it can be simplified hard without showing"""
+    if len(pts) < 3:
+        return pts
+    keep = [False] * len(pts)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(pts) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        ax, ay = pts[i]
+        dx, dy = pts[j][0] - ax, pts[j][1] - ay
+        L = math.hypot(dx, dy) or 1.0
+        best, bi = -1.0, -1
+        for k in range(i + 1, j):
+            px, py = pts[k]
+            dist = abs(dx * (ay - py) - (ax - px) * dy) / L
+            if dist > best:
+                best, bi = dist, k
+        if best > eps:
+            keep[bi] = True
+            stack.append((i, bi))
+            stack.append((bi, j))
+    return [q for q, k in zip(pts, keep) if k]
 
 
 def _shade(wd, raw):
+    """The shadow-side dot screen, as ordinary paths.
+
+    This used to be a half-plane rect stretching +-4000 units, clipped to the
+    part with a <clipPath>. Rendered on the web that is fine; inside
+    react-native-svg it is not — a nested clip under an animated transform is
+    unreliable on Android, and when it drops you get a 9,500-unit slab of 42%
+    black sweeping across the mascot as the part moves. So the half-plane is
+    intersected with the part here instead, and what ships is a plain filled
+    polygon with nothing to clip and no geometry outside the canvas.
+    """
     pts = pts_of(raw)
-    if len(pts) < 3:
+    poly = _flat(wd)
+    if len(pts) < 3 or len(poly) < 3:
         return ""
-    cid = f"cp{len(_DEFS)}"
-    _DEFS.append(f'<clipPath id="{cid}"><path d="{wd}"/></clipPath>')
-    o = [f'<g clip-path="url(#{cid})">']
+    dx, dy = -LIGHT[0], -LIGHT[1]
+    ts = [x * dx + y * dy for x, y in pts]
+    lo, hi = min(ts), max(ts)
+    o = []
     for f, rad in SHADE:
-        o.append(f'<path d="{_halfplane(pts, f)}" fill="url(#{_halftone(rad)})"/>')
-    return "".join(o) + '</g>'
+        c = _dp(_clip_half(poly, dx, dy, lo + f * (hi - lo)))
+        if len(c) >= 3:
+            d = "M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in c) + " Z"
+            paint = (f'fill="{BK}" opacity="{_tone(rad):.3f}"' if SCREEN == 'tone'
+                     else f'fill="url(#{_halftone(rad)})"')
+            o.append(f'<path d="{d}" {paint}/>')
+    return "".join(o)
 
 
 def block(paths, fill, amp=None):
@@ -369,7 +465,7 @@ def build(mono=False, rig=None, eye=1.0, eyes='open', burst=0.0,
              + block(PUFF, GY_L) + "".join(edge(d, 13) for d in PUFF_ARC)
              + '</g>')
 
-    shadow = f'<ellipse cx="500" cy="862" rx="400" ry="30" fill="{BK}" opacity=".1"/>'
+    shadow = f'<ellipse cx="500" cy="862" rx="400" ry="30" fill="{BK}" opacity="0.1"/>'
     defs = '<defs>' + "".join(_DEFS) + '</defs>'
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" '
             f'width="1024" height="1024">{defs}{shadow}'
