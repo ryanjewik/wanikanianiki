@@ -347,6 +347,31 @@ export interface Question {
   createdAt: string;
 }
 
+/** One JLPT tier's kanji coverage. */
+export interface JlptTier {
+  level: number;
+  /** Every kanji at this tier, from the reference list — never from what has
+   *  been synced, which would make coverage permanently complete. */
+  total: number;
+  /** Passed in WaniKani's sense. */
+  passed: number;
+  /** Unlocked but not yet passed. */
+  started: number;
+}
+
+/**
+ * Kanji coverage per JLPT tier, N5 first.
+ *
+ * Coverage, not readiness: the exam tests grammar and listening too, neither
+ * of which this app can see. Named that way everywhere so a full bar is never
+ * read as "ready to sit it".
+ */
+export interface JlptCoverage {
+  tiers: JlptTier[];
+  /** False before the first sync — an empty state rather than a row of 0%. */
+  tracked: boolean;
+}
+
 /**
  * How much generated practice is waiting.
  *

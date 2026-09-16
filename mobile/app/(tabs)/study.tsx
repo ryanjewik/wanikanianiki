@@ -148,19 +148,25 @@ export default function StudyScreen() {
             trailingColor={colors.vocabulary}
           />
           <Text style={styles.trackBlurb}>
-            Words you photographed from a textbook. These run on their own SM-2 schedule, kept
-            separate from the WaniKani queue above so the two never disagree about the same word.
+            Words you photographed from a textbook, studied as two-sided flashcards: each word
+            becomes one card that shows you the Japanese and asks for the meaning, and another
+            that asks you to produce the Japanese. You type the answer rather than flipping it
+            over, so the card can tell whether you actually knew it.
+          </Text>
+          <Text style={styles.trackBlurb}>
+            They run on their own SM-2 schedule, kept separate from the WaniKani queue above so
+            the two never disagree about the same word.
           </Text>
           <View style={styles.deckActions}>
             <ChunkyButton
-              label="Notecards"
+              label="Browse words"
               tone="vocabulary"
               size="small"
               onPress={() => router.push('/sets')}
               style={styles.deckButton}
             />
             <ChunkyButton
-              label={dueCardCount > 0 ? `Quiz me (${dueCardCount})` : 'Quiz me'}
+              label={dueCardCount > 0 ? `Flashcards (${dueCardCount})` : 'Flashcards'}
               tone="neutral"
               size="small"
               disabled={dueCardCount === 0}

@@ -496,6 +496,38 @@ class LessonBundle(CamelModel):
     questions: list[Question]
 
 
+class JlptTier(CamelModel):
+    """One tier's kanji coverage.
+
+    `passed` + `started` + untouched = `total`. The untouched count is left for
+    the client to subtract rather than sent, since it is the only one of the
+    four that is never drawn.
+    """
+
+    level: int
+    #: Every kanji at this tier, from the reference list — not from what has
+    #: been synced, which would make coverage permanently complete.
+    total: int
+    #: Passed in WaniKani's sense: `passed_at` is set.
+    passed: int
+    #: Unlocked but not yet passed.
+    started: int
+
+
+class JlptCoverage(CamelModel):
+    """Kanji coverage per JLPT tier, N5 first.
+
+    Explicitly not a readiness score — the exam also tests grammar and
+    listening, which this app never sees. Named and framed as coverage
+    everywhere for that reason.
+    """
+
+    tiers: list[JlptTier] = []
+    #: Whether anything was measurable at all. False before the first sync,
+    #: which the client shows as an empty state rather than as 0%.
+    tracked: bool = False
+
+
 class LessonQueue(CamelModel):
     """How much generated practice is waiting, without spending any of it.
 

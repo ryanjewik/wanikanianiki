@@ -19,6 +19,7 @@ import type {
   GrammarEnrichment,
   GrammarEntry,
   GrammarExampleInput,
+  JlptCoverage,
   LessonBundle,
   LessonQueueCount,
   QuestionOutcome,
@@ -382,6 +383,11 @@ export function answerFlashcard(
  */
 export function fetchLessonBundle(signal?: AbortSignal): Promise<LessonBundle | null> {
   return request<LessonBundle | null>('/api/lesson-bundles/next', { signal });
+}
+
+/** Kanji coverage per JLPT tier. Read-only and cheap; nothing is consumed. */
+export function fetchJlptCoverage(signal?: AbortSignal): Promise<JlptCoverage> {
+  return request<JlptCoverage>('/api/jlpt/coverage', { signal });
 }
 
 /**

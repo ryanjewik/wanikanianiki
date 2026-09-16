@@ -55,9 +55,12 @@ from app.schemas import (
     VocabSourceResult,
 )
 from app.schemas import LessonBundle as LessonBundleOut
+from app.schemas import JlptCoverage as JlptCoverageOut
+from app.schemas import JlptTier as JlptTierOut
 from app.schemas import LessonQueue as LessonQueueOut
 from app.schemas import Question as QuestionOut
 from app.services import grammar as grammar_service
+from app.services import jlpt
 from app.services import ocr as ocr_service
 from app.services import srs, storage
 from app.services import sync as sync_service
@@ -996,6 +999,31 @@ def _parse_ids(raw: str | None) -> list[int]:
 
 
 # -- generated lessons -----------------------------------------------------
+
+
+@router.get("/api/jlpt/coverage", response_model=JlptCoverageOut, tags=["read"])
+async def get_jlpt_coverage(
+    session: AsyncSession = Depends(db_session),
+) -> JlptCoverageOut:
+    """Kanji coverage per JLPT tier.
+
+    Coverage, not readiness. The exam tests grammar and listening as well, and
+    neither is visible from here, so nothing in this response or the UI that
+    draws it claims to predict a pass.
+
+    Denominators come from the vendored reference list rather than from
+    `subjects`, which holds only what this user has synced — counting against
+    our own table would make every tier read as complete.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        return JlptCoverageOut(tracked=False)
+
+    tiers = await jlpt.coverage(session, user.id)
+    return JlptCoverageOut(
+        tiers=[JlptTierOut(**tier) for tier in tiers],
+        tracked=True,
+    )
 
 
 @router.get(

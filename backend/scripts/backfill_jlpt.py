@@ -14,9 +14,10 @@ script writes. Running it is the missing half of that arrangement.
 Idempotent, and safe to re-run after every level-up: new kanji arrive untiered
 from the sync and this fills them in.
 
-**Kanji only.** The source covers nothing else, so vocabulary and radicals keep
-a null tier. Radicals are correct that way — they are not JLPT items — but
-vocabulary is a genuine gap; see `app/data/README.md`.
+**Kanji only, by decision.** Vocabulary and radicals keep a null tier. Radicals
+are not JLPT items; vocabulary is a deliberate scope choice, since JLPT has
+published no official vocabulary list since 2010 and the community ones
+disagree. See `app/data/README.md`.
 """
 
 from __future__ import annotations

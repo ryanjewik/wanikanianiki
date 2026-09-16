@@ -21,6 +21,7 @@ import type {
   DayActivitySummary,
   Flashcard,
   GrammarEntry,
+  JlptCoverage,
   LessonBundle,
   LessonQueueCount,
   LevelItem,
@@ -536,6 +537,25 @@ export function useActivityStrip() {
  * remount would burn a second bundle and show a lesson the user never asked
  * for. The screen holds what it got.
  */
+/**
+ * Kanji coverage per JLPT tier.
+ *
+ * Server-side, because the denominators live in a reference list the phone has
+ * no copy of — and should not, since it is 50KB that would go stale silently.
+ * Untracked is the honest answer offline rather than a row of zeroes, which
+ * would read as having forgotten everything.
+ */
+export function useJlptCoverage() {
+  return useAsync<JlptCoverage>(async () => {
+    if (!api.isBackendConfigured) return { tiers: [], tracked: false };
+    try {
+      return await api.fetchJlptCoverage();
+    } catch {
+      return { tiers: [], tracked: false };
+    }
+  }, []);
+}
+
 /**
  * How much generated practice is waiting, for the home and study cards.
  *

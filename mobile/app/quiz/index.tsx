@@ -189,7 +189,10 @@ export default function QuizScreen() {
   return (
     <View style={styles.screen}>
       <ScreenHeader
-        title={production ? 'Produce' : 'Recognise'}
+        // Says what it is, not just which way round it is. "Produce" alone
+        // never told you this was a flashcard deck on its own schedule; the
+        // direction is already spelled out on the prompt card below.
+        title={production ? 'Flashcards · Produce' : 'Flashcards · Recognise'}
         glyph={palette.glyph}
         glyphColor={palette.solid}
         trailingText={`${stats.correct} / ${total}`}

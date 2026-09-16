@@ -10,12 +10,24 @@ import * as React from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Mascot, MascotBanner } from '@/components/Mascot';
-import { GrowBar, RiseIn } from '@/components/motion';
+import { AnimatedSessionProgress, GrowBar, RiseIn } from '@/components/motion';
 import { ProfileAvatar, ScreenHeader } from '@/components/ScreenHeader';
 import { Card, QueueCard, SectionHeading } from '@/components/ui';
 import { formatSyncedAgo } from '@/data/sync';
-import type { ActivityDay, Counted, DayActivity, SubjectType } from '@/data/types';
-import { useActivityStrip, useDashboard, usePracticeQueue, useSync } from '@/hooks/useStudyData';
+import type {
+  ActivityDay,
+  Counted,
+  DayActivity,
+  JlptCoverage,
+  SubjectType,
+} from '@/data/types';
+import {
+  useActivityStrip,
+  useDashboard,
+  useJlptCoverage,
+  usePracticeQueue,
+  useSync,
+} from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -32,6 +44,7 @@ export default function DashboardScreen() {
   const { data, reload } = useDashboard();
   const { data: strip } = useActivityStrip();
   const { data: practice } = usePracticeQueue();
+  const { data: jlpt } = useJlptCoverage();
   const { syncing, refresh } = useSync();
 
   const onRefresh = React.useCallback(async () => {
@@ -134,6 +147,8 @@ export default function DashboardScreen() {
           </Text>
         </Card>
 
+        {jlpt?.tracked ? <JlptCard coverage={jlpt} /> : null}
+
         <SpreadCard spread={data.stageSpread} />
 
         <View style={styles.syncRow}>
@@ -235,6 +250,51 @@ function CountTile({
         {counted.passed}/{counted.total}
       </Text>
     </View>
+  );
+}
+
+/**
+ * Kanji coverage per JLPT tier.
+ *
+ * **Coverage, not readiness**, and the footnote says so. The exam also tests
+ * grammar and listening, neither of which this app can see, so a full N5 bar
+ * means every N5 kanji is passed — not that you would pass N5. Overstating
+ * that is the one way this card could do harm.
+ *
+ * Two-tone: solid is passed in WaniKani's sense, amber is unlocked but not yet
+ * passed. Without the second band a tier you are halfway through reads as
+ * untouched, which is the most discouraging possible way to draw it.
+ */
+function JlptCard({ coverage }: { coverage: JlptCoverage }) {
+  return (
+    <Card>
+      <SectionHeading title="JLPT Kanji Coverage" />
+      <View style={styles.jlptRows}>
+        {coverage.tiers.map((tier) => (
+          <View key={tier.level} style={styles.jlptRow}>
+            <Text style={styles.jlptLabel}>N{tier.level}</Text>
+            <View style={styles.jlptTrack}>
+              <AnimatedSessionProgress
+                correct={tier.passed}
+                incorrect={tier.started}
+                total={tier.total}
+                height={7}
+                correctColor={colors.kanji}
+                incorrectColor={colors.warningSoft}
+                trackColor={colors.border}
+              />
+            </View>
+            <Text style={styles.jlptCount}>
+              {tier.passed}/{tier.total}
+            </Text>
+          </View>
+        ))}
+      </View>
+      <Text style={styles.jlptNote}>
+        Kanji only, and coverage rather than readiness — the exam also tests
+        grammar and listening. Amber is unlocked but not yet passed.
+      </Text>
+    </Card>
   );
 }
 
@@ -405,6 +465,35 @@ const styles = StyleSheet.create({
   footnoteStrong: {
     fontFamily: typeScale.section.fontFamily,
     color: colors.ink,
+  },
+
+  jlptRows: {
+    gap: 7,
+  },
+  jlptRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  jlptLabel: {
+    width: 24,
+    ...typeScale.meta,
+    color: colors.inkMuted,
+  },
+  jlptTrack: {
+    flex: 1,
+  },
+  jlptCount: {
+    width: 58,
+    textAlign: 'right',
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+  },
+  jlptNote: {
+    marginTop: 9,
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+    lineHeight: 15,
   },
 
   spreadChart: {

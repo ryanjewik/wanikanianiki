@@ -35,13 +35,19 @@ on the exam were still unseen. The extra rows cost 8KB.
 kanji whose upstream `wk_level` disagrees with our own `subjects.level` means
 the two datasets have drifted apart.
 
-### Not covered: vocabulary
+### Kanji only, by decision
 
-`kanji-data` is kanji only. `subjects.jlpt_level` therefore stays null for
-WaniKani vocabulary and for radicals — radicals correctly, since they are not
-JLPT items, but vocabulary is a real gap. The design note names
-`elzup/jlpt-word-list` for it and says the licence should be checked before
-use; that has not been done, so no vocabulary list is vendored here.
+`subjects.jlpt_level` stays null for vocabulary and for radicals. Radicals are
+not JLPT items, so that is simply correct. Vocabulary is a deliberate scope
+choice rather than an unfinished edge: the design note named
+`elzup/jlpt-word-list` as a second source, but tracking vocabulary coverage
+would mean vendoring a list on a licence nobody has checked, maintaining a
+second reference set, and answering "which of the several competing JLPT
+vocabulary lists is the real one" — a question with no good answer, since
+JLPT has published no official vocabulary list since 2010.
+
+Kanji coverage is the measurable half, and the one where the lists are
+uncontested. Everything here is named for kanji so nothing implies otherwise.
 
 [src]: https://github.com/davidluzgouveia/kanji-data
 
