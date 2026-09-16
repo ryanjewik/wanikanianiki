@@ -36,6 +36,7 @@ import {
   subjectPalette,
   type as typeScale,
 } from '@/theme/tokens';
+import { feedback } from '@/feedback';
 
 export default function ItemDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -105,6 +106,7 @@ export default function ItemDetailScreen() {
                     <Pressable
                       key={component.id}
                       onPress={() => router.push(`/item/${component.id}`)}
+                      onPressIn={feedback.select}
                     >
                       <View
                         style={[
@@ -193,7 +195,11 @@ export default function ItemDetailScreen() {
             />
             <View>
               {usedIn.map((word, index) => (
-                <Pressable key={word.id} onPress={() => router.push(`/item/${word.id}`)}>
+                <Pressable
+                  key={word.id}
+                  onPress={() => router.push(`/item/${word.id}`)}
+                  onPressIn={feedback.select}
+                >
                   <View style={[styles.wordRow, index < usedIn.length - 1 && styles.rowDivider]}>
                     <Text style={styles.wordGlyph}>{word.characters}</Text>
                     <Text style={styles.wordMeaning}>

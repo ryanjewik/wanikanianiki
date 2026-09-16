@@ -28,6 +28,7 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, EmptyState, Pill } from '@/components/ui';
 import * as api from '@/data/api';
 import type { GrammarEntry } from '@/data/types';
+import { feedback } from '@/feedback';
 import { useGrammarEntries } from '@/hooks/useStudyData';
 import { colors, jp, radius, spacing, type as typeScale } from '@/theme/tokens';
 
@@ -186,7 +187,7 @@ function GrammarRow({ entry, onPress }: { entry: GrammarEntry; onPress: () => vo
   const status = !entry.meaning ? 'empty' : entry.enriched ? 'confirmed' : 'unchecked';
 
   return (
-    <Pressable onPress={onPress}>
+    <Pressable onPress={onPress} onPressIn={feedback.select}>
       {({ pressed }) => (
         <Card variant="bordered" style={[styles.row, pressed ? styles.rowPressed : null]}>
           <View style={styles.rowHeader}>

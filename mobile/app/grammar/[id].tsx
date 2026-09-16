@@ -43,6 +43,7 @@ import {
 } from '@/components/ui';
 import * as api from '@/data/api';
 import type { GrammarEntry } from '@/data/types';
+import { feedback } from '@/feedback';
 import { useGrammarEntry } from '@/hooks/useStudyData';
 import { colors, jp, radius, spacing, type as typeScale } from '@/theme/tokens';
 
@@ -297,7 +298,12 @@ export default function GrammarDetailScreen() {
               class actually covered.
             </Text>
             {senses.map((sense) => (
-              <Pressable key={sense} onPress={() => chooseSense(sense)} disabled={working}>
+              <Pressable
+                key={sense}
+                onPress={() => chooseSense(sense)}
+                onPressIn={working ? undefined : feedback.select}
+                disabled={working}
+              >
                 {({ pressed }) => (
                   <View style={[styles.senseRow, pressed ? styles.senseRowPressed : null]}>
                     <Text style={styles.senseRowText}>{sense}</Text>

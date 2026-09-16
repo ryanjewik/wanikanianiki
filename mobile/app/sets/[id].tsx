@@ -46,6 +46,7 @@ import {
 } from '@/components/ui';
 import * as api from '@/data/api';
 import type { DetectedItem, VocabItem } from '@/data/types';
+import { feedback } from '@/feedback';
 import { useVocabSetItems, useVocabSets } from '@/hooks/useStudyData';
 import { colors, jp, radius, spacing, type as typeScale } from '@/theme/tokens';
 
@@ -264,6 +265,7 @@ export default function SetDetailScreen() {
                     <Pressable
                       key={String(value)}
                       onPress={() => setTier(value)}
+                      onPressIn={feedback.toggle}
                       style={styles.tierPressable}
                     >
                       <View style={[styles.tierChip, tier === value && styles.tierChipActive]}>
@@ -392,8 +394,13 @@ export default function SetDetailScreen() {
 function Notecard({ item }: { item: VocabItem }) {
   const [flipped, setFlipped] = React.useState(false);
 
+  // Turning a card over is the only gesture this screen has; without a cue it
+  // was the one tap in the app that reported nothing at all.
   return (
-    <Pressable onPress={() => setFlipped((previous) => !previous)}>
+    <Pressable
+      onPress={() => setFlipped((previous) => !previous)}
+      onPressIn={feedback.toggle}
+    >
       {({ pressed }) => (
         <Card
           variant="bordered"

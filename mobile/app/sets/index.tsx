@@ -28,6 +28,7 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, EmptyState, InlineButton, Pill } from '@/components/ui';
 import * as api from '@/data/api';
 import type { VocabSet } from '@/data/types';
+import { feedback } from '@/feedback';
 import { useVocabSets } from '@/hooks/useStudyData';
 import { colors, radius, spacing, type as typeScale } from '@/theme/tokens';
 
@@ -179,7 +180,7 @@ function SetRow({ set, onPress }: { set: VocabSet; onPress: () => void }) {
       : null;
 
   return (
-    <Pressable onPress={onPress}>
+    <Pressable onPress={onPress} onPressIn={feedback.select}>
       {({ pressed }) => (
         <Card variant="bordered" style={[styles.setCard, pressed ? styles.setCardPressed : null]}>
           <View style={styles.setHeader}>

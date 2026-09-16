@@ -19,6 +19,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { CheckMark } from '@/components/icons';
 import { Card, SectionHeading } from '@/components/ui';
 import type { DetectedItem } from '@/data/types';
+import { feedback } from '@/feedback';
 import { colors, jp, radius, type as typeScale } from '@/theme/tokens';
 
 /**
@@ -142,7 +143,11 @@ export function DetectedRow({
 
   return (
     <View>
-      <Pressable onPress={onToggle} disabled={duplicate}>
+      <Pressable
+        onPress={onToggle}
+        onPressIn={duplicate ? undefined : feedback.toggle}
+        disabled={duplicate}
+      >
         <View
           style={[
             styles.detectedRow,
@@ -193,7 +198,11 @@ export function DetectedRow({
       {ambiguous && item.readingChoices ? (
         <View style={styles.choiceRow}>
           {item.readingChoices.map((choice) => (
-            <Pressable key={choice} onPress={() => onResolve(choice)}>
+            <Pressable
+              key={choice}
+              onPress={() => onResolve(choice)}
+              onPressIn={feedback.select}
+            >
               <View style={styles.choiceChip}>
                 <Text style={styles.choiceText}>{choice}</Text>
               </View>

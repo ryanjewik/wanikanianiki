@@ -35,6 +35,7 @@ import {
 import * as api from '@/data/api';
 import { DETECTED_ITEMS, DETECTED_TOTAL, IMPORT_PAGE_LABEL } from '@/data/fixtures';
 import type { DetectedItem, StudyMode } from '@/data/types';
+import { feedback } from '@/feedback';
 import {
   colors,
   radius,
@@ -162,7 +163,12 @@ export default function ImportScreen() {
               <SectionHeading title="Tag this list as" />
               <View style={styles.tierRow}>
                 {JLPT_TIERS.map((value) => (
-                  <Pressable key={String(value)} onPress={() => setTier(value)} style={styles.tierPressable}>
+                  <Pressable
+                    key={String(value)}
+                    onPress={() => setTier(value)}
+                    onPressIn={feedback.toggle}
+                    style={styles.tierPressable}
+                  >
                     <View style={[styles.tierChip, tier === value && styles.tierChipActive]}>
                       <Text style={[styles.tierLabel, tier === value && styles.tierLabelActive]}>
                         {value === null ? 'None' : `N${value}`}
@@ -312,7 +318,7 @@ function ModeTile({
   onPress: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={styles.modeTilePressable}>
+    <Pressable onPress={onPress} onPressIn={feedback.select} style={styles.modeTilePressable}>
       <View style={[styles.modeTile, active && styles.modeTileActive]}>
         <Text style={[styles.modeTitle, active && styles.modeTitleActive]}>{title}</Text>
         <Text style={[styles.modeSubtitle, active && styles.modeSubtitleActive]}>{subtitle}</Text>
