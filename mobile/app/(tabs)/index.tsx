@@ -13,6 +13,7 @@ import { Mascot, MascotBanner } from '@/components/Mascot';
 import { AnimatedSessionProgress, GrowBar, RiseIn } from '@/components/motion';
 import { ProfileAvatar, ScreenHeader } from '@/components/ScreenHeader';
 import { Card, QueueCard, SectionHeading } from '@/components/ui';
+import { isBackendConfigured } from '@/data/api';
 import { formatSyncedAgo } from '@/data/sync';
 import type {
   ActivityDay,
@@ -147,7 +148,11 @@ export default function DashboardScreen() {
           </Text>
         </Card>
 
-        {jlpt?.tracked ? <JlptCard coverage={jlpt} /> : null}
+        {/* Rendered whenever a server is configured, even when it cannot be
+            reached. Returning null on failure is what made a stale backend
+            look like a missing feature — the card was simply absent, with
+            nothing anywhere to say why. */}
+        {isBackendConfigured ? <JlptCard coverage={jlpt} /> : null}
 
         <SpreadCard spread={data.stageSpread} />
 
@@ -265,7 +270,23 @@ function CountTile({
  * passed. Without the second band a tier you are halfway through reads as
  * untouched, which is the most discouraging possible way to draw it.
  */
-function JlptCard({ coverage }: { coverage: JlptCoverage }) {
+function JlptCard({ coverage }: { coverage: JlptCoverage | null }) {
+  // Still loading, or the server could not be reached. Said out loud rather
+  // than drawn as a row of zeroes, which would read as having forgotten
+  // everything, and rather than hidden, which reads as not existing.
+  if (!coverage?.tracked) {
+    return (
+      <Card>
+        <SectionHeading title="JLPT Kanji Coverage" />
+        <Text style={styles.jlptNote}>
+          {coverage
+            ? 'Not available — your server could not be reached. Coverage is counted there, against the full JLPT kanji lists.'
+            : 'Counting…'}
+        </Text>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <SectionHeading title="JLPT Kanji Coverage" />
