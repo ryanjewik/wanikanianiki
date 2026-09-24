@@ -19,11 +19,11 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 
 import { EmptyDeckArt, OfflineArt } from '@/components/icons';
+import { LanguageInput } from '@/components/LanguageInput';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, EmptyState, Pill } from '@/components/ui';
 import * as api from '@/data/api';
@@ -101,7 +101,7 @@ export default function GrammarScreen() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Card variant="bordered" style={styles.composer}>
           <Text style={styles.composerLabel}>Log a point</Text>
-          <TextInput
+          <LanguageInput
             value={pattern}
             onChangeText={setPattern}
             placeholder="～てからでないと"
@@ -111,6 +111,9 @@ export default function GrammarScreen() {
             returnKeyType="done"
             onSubmitEditing={logPoint}
             autoCorrect={false}
+            // Hint only, no romaji conversion: a pattern is copied from a
+            // textbook with its kanji, and a stray Latin note should survive.
+            language="ja"
           />
           <View style={styles.composerFoot}>
             <Text style={styles.composerHint}>

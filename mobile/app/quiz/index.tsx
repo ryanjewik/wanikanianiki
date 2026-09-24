@@ -15,10 +15,11 @@
  */
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { AllCaughtUpArt, CheckMark, CorrectMark, IncorrectMark, OfflineArt } from '@/components/icons';
+import { finishKana, LanguageInput } from '@/components/LanguageInput';
 import { Mascot, type Pose } from '@/components/Mascot';
 import { useAnswerRun } from '@/components/MascotCoach';
 import { Pop, useShake } from '@/components/motion';
@@ -86,7 +87,11 @@ export default function QuizScreen() {
   const onSubmit = React.useCallback(() => {
     if (!current || verdict) return;
 
-    const typed = answer;
+    // A production card accepts the reading as well as the written form, so
+    // romaji converted to kana is a real answer, not a near miss.
+    const production = current.card.skillType === 'production';
+    const typed = production ? finishKana(answer) : answer;
+    if (typed !== answer) setAnswer(typed);
     const ok = matches(typed, current.card.acceptedAnswers);
 
     setVerdict(ok ? 'correct' : 'incorrect');
@@ -255,7 +260,7 @@ export default function QuizScreen() {
               verdict === 'incorrect' && { borderColor: colors.danger },
             ]}
           >
-            <TextInput
+            <LanguageInput
               value={answer}
               onChangeText={setAnswer}
               onSubmitEditing={onSubmit}
@@ -266,6 +271,8 @@ export default function QuizScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="done"
+              language={production ? 'ja' : 'en'}
+              kana={production}
             />
           </View>
 

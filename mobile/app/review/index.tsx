@@ -11,10 +11,11 @@
  */
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { CheckMark, CorrectMark, IncorrectMark } from '@/components/icons';
+import { finishKana, LanguageInput } from '@/components/LanguageInput';
 import { Mascot, type Pose } from '@/components/Mascot';
 import { useAnswerRun } from '@/components/MascotCoach';
 import { useShake } from '@/components/motion';
@@ -104,7 +105,11 @@ export default function ReviewScreen() {
   const onSubmit = React.useCallback(async () => {
     if (!current || !entries || verdict) return;
 
-    const ok = grade(current, answer);
+    const typed = current.half === 'reading' ? finishKana(answer) : answer;
+    // Shown back as graded, so a trailing n reads as the ん it was scored as.
+    if (typed !== answer) setAnswer(typed);
+
+    const ok = grade(current, typed);
     setVerdict(ok ? 'correct' : 'incorrect');
     setPose(ok ? 'correct' : 'wrong');
 
@@ -273,7 +278,7 @@ export default function ReviewScreen() {
               verdict === 'incorrect' && { borderColor: colors.danger },
             ]}
           >
-            <TextInput
+            <LanguageInput
               value={answer}
               onChangeText={setAnswer}
               onSubmitEditing={onSubmit}
@@ -284,9 +289,9 @@ export default function ReviewScreen() {
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="done"
-              // The reading half wants kana; romaji conversion is handled by the
-              // platform IME rather than re-implemented here.
-              keyboardType="default"
+              // Readings are always kana, so romaji typed on any keyboard counts.
+              language={current.half === 'reading' ? 'ja' : 'en'}
+              kana={current.half === 'reading'}
             />
           </View>
 

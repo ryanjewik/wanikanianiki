@@ -63,3 +63,8 @@ yarn-error.*
 /mobile/ios
 /mobile/android
 /android
+
+# Gradle output inside local native modules (mobile/modules/*). The prebuild's
+# android/ is ignored above, but each module builds in its own folder too.
+/mobile/modules/*/android/build/
+/mobile/modules/*/android/.gradle/

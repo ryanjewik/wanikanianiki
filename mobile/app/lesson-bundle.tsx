@@ -15,7 +15,7 @@
  */
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { Mascot, type Pose } from '@/components/Mascot';
@@ -27,6 +27,7 @@ import {
   useAnswerRun,
 } from '@/components/MascotCoach';
 import { FuriganaText, extractReadings } from '@/components/Furigana';
+import { finishKana, LanguageInput, languageOf } from '@/components/LanguageInput';
 import { Pop, PressBounce, RiseIn, useShake } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
@@ -145,7 +146,7 @@ export default function GeneratedLessonScreen() {
     if (!current) return '';
     if (current.type === 'multiple_choice') return picked ?? '';
     if (current.type === 'sentence_construction') return order.join('');
-    return typed.trim();
+    return languageOf(current.payload.answer) === 'ja' ? finishKana(typed.trim()) : typed.trim();
   }, [current, picked, order, typed]);
 
   /** Clears whatever the last question left behind. */
@@ -498,7 +499,7 @@ export default function GeneratedLessonScreen() {
           ) : null}
 
           {current.type === 'fill_in_blank' || current.type === 'recall' ? (
-            <TextInput
+            <LanguageInput
               value={typed}
               onChangeText={setTyped}
               editable={!submitted}
@@ -508,6 +509,10 @@ export default function GeneratedLessonScreen() {
               autoCorrect={false}
               autoCapitalize="none"
               onSubmitEditing={onSubmit}
+              // Recall can go either way — English prompt, Japanese answer or
+              // the reverse — so the answer key decides the keyboard.
+              language={languageOf(current.payload.answer)}
+              kana={languageOf(current.payload.answer) === 'ja'}
             />
           ) : null}
         </Animated.View>
