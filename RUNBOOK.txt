@@ -1,0 +1,261 @@
+================================================================================
+KANJI WORKSHOP - RUN & TEST RUNBOOK
+================================================================================
+Two independent projects. Start each in its own terminal. Backend first, so the
+app has something to talk to on first render.
+
+Paths below use Windows form. In Git Bash use /e/wanikanianiki/... instead.
+The venv is Windows-layout (.venv/Scripts/). On macOS/Linux use .venv/bin/.
+
+
+================================================================================
+0. ONE-TIME SETUP  (skip if backend/.venv and mobile/node_modules exist)
+================================================================================
+
+  cd E:\wanikanianiki\mobile
+  npm install
+
+  cd E:\wanikanianiki\backend
+  python -m venv .venv
+  .venv/Scripts/python -m pip install -e ".[dev]"
+
+Both .env files are gitignored and do NOT travel with a clone. A fresh checkout
+must create its own:
+
+  backend/.env    wanikani_apikey (required), DATABASE_URL, ANTHROPIC_API_KEY,
+                  DATABASE_MIGRATION_URL, ENVIRONMENT, LOG_LEVEL
+  mobile/.env     EXPO_PUBLIC_API_URL
+
+NEVER move the WaniKani token to the repo root - the mobile app would load a
+root .env too, and the whole point is that the client never holds the token.
+
+Apply the schema once (only if DATABASE_URL is set):
+
+  cd E:\wanikanianiki\backend
+  .venv/Scripts/python -m alembic upgrade head
+
+
+================================================================================
+1. START THE BACKEND                                          (terminal 1)
+================================================================================
+
+  cd E:\wanikanianiki\backend
+  .venv/Scripts/python -m uvicorn app.main:app --reload
+
+Serves http://127.0.0.1:8000 - interactive docs at /docs - --reload watches
+backend/ and restarts on edit.
+
+Confirm it is up and see whether a database is attached:
+
+  curl localhost:8000/health
+
+Healthy response looks like:
+
+  {"status":"ok","environment":"local","database":"configured",
+   "wanikani_revision":"20170710",
+   "counts":{"subjects":362,"study_progress":134,"vocab_items":47}}
+
+  database: "configured"  -> reads served from Postgres
+  database: absent/unset  -> reads fall through to WaniKani directly; the app
+                             still works, but streaks are empty (they derive
+                             from reviews_log, which needs a database)
+
+First run against an empty database - minutes, not seconds, it is rate limited
+to 55 req/min:
+
+  curl -X POST localhost:8000/api/sync/backfill    # all content, one time
+  curl -X POST localhost:8000/api/sync             # assignments + user state
+  curl localhost:8000/health                       # counts now non-zero
+
+  502 from sync -> WaniKani rejected the token; check wanikani_apikey
+  503 from sync -> DATABASE_URL unset
+
+
+================================================================================
+2. START THE APP                                              (terminal 2)
+================================================================================
+
+  cd E:\wanikanianiki\mobile
+  npm start
+
+Then press  a  for Android, or  w  for web.
+
+Metro serves on :8081. Confirm with:
+
+  curl localhost:8081/status        # -> packager-status:running
+
+
+--- Android emulator: the parts that are not in the README -------------------
+
+Have an emulator running first:
+
+  adb devices                       # expect e.g.  emulator-5554   device
+
+mobile/.env is set to  EXPO_PUBLIC_API_URL=http://10.0.2.2:8000  which is the
+emulator alias for the host's localhost. IMPORTANT: that value ONLY resolves on
+an Android emulator. Press  w  for web, or run on a physical device, and the app
+cannot reach the backend and silently falls back to the fixtures in
+mobile/src/data/fixtures.ts. Everything renders, but none of it is your data.
+
+Forward both ports into the emulator (belt-and-braces; 10.0.2.2 already works):
+
+  adb reverse tcp:8081 tcp:8081
+  adb reverse tcp:8000 tcp:8000
+
+To launch without pressing 'a' (e.g. from a script):
+
+  adb shell monkey -p com.anonymous.wanikanianiki -c android.intent.category.LAUNCHER 1
+
+Do NOT use the dev-client deep link:
+
+  kanjiworkshop://expo-development-client/?url=...      # FAILS
+
+expo-dev-client is not a dependency of this project. This is a plain
+"expo run:android" build that connects to Metro on its own, so a direct
+launcher intent is the correct way in. The deep link returns
+"Activity not started, unable to resolve Intent".
+
+Full JS refresh (reloads the bundle from Metro, keeps the installed binary):
+
+  adb shell am force-stop com.anonymous.wanikanianiki
+  adb shell monkey -p com.anonymous.wanikanianiki -c android.intent.category.LAUNCHER 1
+
+
+--- Native rebuild: needed when a native module changes -----------------------
+
+  cd E:\wanikanianiki\mobile
+  npx expo run:android --no-bundler        # --no-bundler reuses running Metro
+
+Takes about 4 minutes. Required whenever a package with a native side is added
+or removed - reloading JS CANNOT add a native module. Symptom: the app reports
+a feature "unavailable in this build" while the JS for it is plainly present.
+
+Verify a native module really landed in the APK (example: expo-audio).
+Run from Git Bash:
+
+  cd /e/wanikanianiki/mobile
+  APK=android/app/build/outputs/apk/debug/app-debug.apk
+  for d in $(unzip -Z1 $APK "classes*.dex"); do
+    unzip -p $APK "$d" | grep -qa "expo/modules/audio" && echo "FOUND in $d"
+  done
+
+  adb shell dumpsys package com.anonymous.wanikanianiki | grep lastUpdateTime
+
+
+================================================================================
+3. TESTS AND CHECKS
+================================================================================
+
+Backend - 188 tests, no network (respx mocks the transport):
+
+  cd E:\wanikanianiki\backend
+  .venv/Scripts/python -m pytest
+  .venv/Scripts/python -m pytest tests/test_client.py -v        # one file
+  .venv/Scripts/python -m alembic check                         # models vs migrations
+
+Repository integration tests hit a REAL Postgres and are skipped unless
+TEST_DATABASE_URL is set. That variable is deliberately separate from
+DATABASE_URL because the test DROPS AND RECREATES EVERY TABLE and must never
+find a real database by accident:
+
+  TEST_DATABASE_URL=postgresql://postgres@localhost:5432/kanji_test \
+    .venv/Scripts/python -m pytest tests/test_repository_integration.py
+
+Mobile:
+
+  cd E:\wanikanianiki\mobile
+  npm run typecheck              # tsc --noEmit
+  npm run check:grading          # grading parity between app and backend
+  npm run fonts:check            # subset fonts still match sources
+
+
+================================================================================
+4. MANUAL FUNCTIONAL CHECKS
+================================================================================
+
+Read routes - all should return 200:
+
+  curl localhost:8000/health
+  curl "localhost:8000/api/dashboard?tz=America/Chicago"
+  curl "localhost:8000/api/subjects?level=2"
+  curl "localhost:8000/api/flashcards/due?limit=100"
+  curl localhost:8000/api/lesson-bundles/waiting
+  curl localhost:8000/api/vocab-sets
+  curl localhost:8000/api/grammar-entries
+
+Write routes - only two touch WaniKani. Everything else is safe to call freely:
+
+  PUT  /api/assignments/{id}/start      finish a lesson
+  POST /api/reviews                     submit one answered review
+
+Photo import against real pages (writes nothing to the database; prints the
+rows an import would produce plus wall-clock time per page, and warns when the
+slowest page gets within 2x of VISION_TIMEOUT_SECONDS):
+
+  cd E:\wanikanianiki\backend
+  .venv/Scripts/python scripts/extract_page.py ../vocab_samples/*.jpg
+
+Run one lesson-generation pass by hand:
+
+  .venv/Scripts/python -c "from app.lambda_handler import lessons_handler; print(lessons_handler({}, None))"
+
+In-app smoke test: open the app, confirm the dashboard shows real counts rather
+than fixture data, then watch terminal 1. You should see the app's own requests
+logged as they happen.
+
+
+================================================================================
+5. TROUBLESHOOTING
+================================================================================
+
+"Sounds aren't available in the current build"
+  The installed APK predates the expo-audio dependency. The JS bundle Metro
+  serves has require('expo-audio') but the binary has no native side, so the
+  require throws and the engine reports itself unavailable - by design, see the
+  comment in mobile/src/feedback/audio.ts. Fix with a native rebuild, section 2.
+  After rebuilding, the Sound toggle on the study hub becomes enabled. Note it
+  still respects the phone's silent switch: audio.ts sets playsInSilentMode
+  false deliberately, so check emulator volume before concluding it is broken.
+
+App shows data but it is all fixtures
+  EXPO_PUBLIC_API_URL is unreachable from wherever the app is running. 10.0.2.2
+  is emulator-only. Check terminal 1 for incoming requests - silence means the
+  app never reached the backend.
+
+Backend appears dead but curl still answers
+  uvicorn runs as a reloader parent plus a server child. The image name is
+  python3.10.exe, not python.exe - a tasklist filter on "python.exe" finds
+  nothing and looks like a crash. Check what is actually listening:
+
+    netstat -ano | grep ":8000.*LISTENING"
+    tasklist | grep -i python
+
+Port 8081 already in use
+  Metro is already running. Reuse it with "npx expo run:android --no-bundler"
+  rather than starting a second one.
+
+502 on PUT /api/assignments/{id}/start
+  WaniKani returned 404 for that assignment id - it does not exist on the
+  account. Distinct from the stale-client case (422 -> mapped to 409 with a
+  hint). The app replays this from its SQLite outbox on every launch, so a
+  permanently-dead write retries forever. Reads are unaffected.
+  ** Open issue, not yet diagnosed. **
+
+404 on GET /api/jlpt/coverage
+  The app calls a route the running backend does not serve. Note that
+  backend/tests/test_jlpt_coverage.py exists, so this may be a route that is
+  tested but not registered, or a version skew between the two halves.
+  ** Open issue, not yet diagnosed. **
+
+
+================================================================================
+6. SHUTDOWN
+================================================================================
+
+  Ctrl-C in each terminal.
+
+  Verify nothing is left listening:
+    netstat -ano | grep -E ":(8000|8081).*LISTENING"
+
+  Undo the port forwards:
+    adb reverse --remove-all
