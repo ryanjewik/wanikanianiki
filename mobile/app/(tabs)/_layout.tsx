@@ -9,6 +9,7 @@
 import { Tabs } from 'expo-router';
 import * as React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { feedback } from '@/feedback';
 import { colors, jp, type as typeScale } from '@/theme/tokens';
@@ -23,14 +24,28 @@ function TabGlyph({ glyph, focused }: { glyph: string; focused: boolean }) {
   );
 }
 
+/** The bar's own height and bottom padding, before the system inset. */
+const BAR_HEIGHT = 64;
+const BAR_PAD_BOTTOM = 5;
+
 export default function TabsLayout() {
+  // The bar runs under the system navigation (edge to edge) and pads itself
+  // clear of it. React Navigation would do this on its own, but a fixed
+  // `height` in the style overrides that, and the design wants a fixed height —
+  // so the inset is added explicitly. On a phone with back / home / recents
+  // buttons that inset is ~48dp; left out, the buttons sit on the labels.
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.kanji,
         tabBarInactiveTintColor: colors.inkFaint,
-        tabBarStyle: styles.bar,
+        tabBarStyle: [
+          styles.bar,
+          { height: BAR_HEIGHT + insets.bottom, paddingBottom: BAR_PAD_BOTTOM + insets.bottom },
+        ],
         tabBarItemStyle: styles.item,
         tabBarLabelStyle: styles.label,
         sceneStyle: { backgroundColor: colors.ground },
@@ -77,9 +92,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    height: 64,
     paddingTop: 9,
-    paddingBottom: 5,
   },
   item: {
     gap: 0,

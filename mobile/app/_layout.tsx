@@ -12,7 +12,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as React from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { getDatabase } from '@/data/db';
 import { initFeedback } from '@/feedback';
@@ -74,27 +74,52 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar style="dark" />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.ground },
-            animation: 'slide_from_right',
-          }}
-        >
-          <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="lesson" />
-          <Stack.Screen name="review" />
-          <Stack.Screen name="quiz" />
-          <Stack.Screen name="lesson-bundle" />
-          {/* The summary ends a session, so it should not slide back into it. */}
-          <Stack.Screen name="session-summary" options={{ animation: 'fade' }} />
-          <Stack.Screen name="item/[id]" />
-          <Stack.Screen name="sets/index" />
-          <Stack.Screen name="sets/[id]" />
-          <Stack.Screen name="grammar/index" />
-          <Stack.Screen name="grammar/[id]" />
-        </Stack>
+        <RootStack />
       </SafeAreaProvider>
     </GestureHandlerRootView>
+  );
+}
+
+/**
+ * The stack, kept below the system navigation bar.
+ *
+ * The app draws edge to edge, so on a phone with Android's back / home /
+ * recents buttons every full-screen page would otherwise run underneath them —
+ * a review's "Wrap up", the last row of a summary. Padding here, once, covers
+ * every stacked screen, and the ground colour fills the strip so it reads as
+ * the page ending rather than a gap. Gesture navigation has a small inset and
+ * gets a small strip.
+ *
+ * The tab group opts out: its bar extends under the buttons and pads itself
+ * (`(tabs)/_layout.tsx`), which is how a bottom bar is meant to meet them.
+ *
+ * A component of its own because the insets are only readable inside
+ * `SafeAreaProvider`.
+ */
+function RootStack() {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: colors.ground, paddingBottom: insets.bottom },
+        animation: 'slide_from_right',
+      }}
+    >
+      <Stack.Screen name="(tabs)" options={{ contentStyle: { backgroundColor: colors.ground } }} />
+      <Stack.Screen name="lesson" />
+      <Stack.Screen name="review" />
+      <Stack.Screen name="quiz" />
+      <Stack.Screen name="lesson-bundle" />
+      {/* The summary ends a session, so it should not slide back into it. */}
+      <Stack.Screen name="session-summary" options={{ animation: 'fade' }} />
+      <Stack.Screen name="item/[id]" />
+      <Stack.Screen name="sets/index" />
+      <Stack.Screen name="sets/[id]" />
+      <Stack.Screen name="grammar/index" />
+      <Stack.Screen name="grammar/[id]" />
+      <Stack.Screen name="profile" />
+    </Stack>
   );
 }
