@@ -423,12 +423,13 @@ export function StatTile({
 }: {
   value: string | number;
   label: string;
-  tone?: 'success' | 'danger' | 'neutral' | 'radical';
+  tone?: 'success' | 'danger' | 'neutral' | 'radical' | 'kanji';
 }) {
   const palettes = {
     success: { bg: colors.successTint, fg: colors.successInk, label: colors.successInkSoft },
     danger: { bg: colors.dangerTint, fg: colors.dangerInk, label: colors.dangerInkSoft },
     radical: { bg: colors.radicalTint, fg: colors.radical, label: colors.radicalInk },
+    kanji: { bg: colors.kanjiTint, fg: colors.kanji, label: colors.kanjiInk },
     neutral: { bg: colors.ground, fg: colors.ink, label: colors.inkSoft },
   } as const;
   const palette = palettes[tone];

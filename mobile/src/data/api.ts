@@ -9,6 +9,7 @@
  */
 import Constants from 'expo-constants';
 
+import { getApiKey, reportAuth } from './credentials';
 import type {
   Assignment,
   DashboardSummary,
@@ -77,10 +78,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       headers: {
         Accept: 'application/json',
         ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(await authHeader()),
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
+    reportAuth(response.status);
 
     const text = await response.text();
     const parsed = text ? safeParse(text) : null;
@@ -95,6 +98,32 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     return parsed as T;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+/**
+ * `Authorization: Bearer <key>` when this phone has a key, nothing otherwise.
+ * A local server run without `API_KEY` asks for none, so sending nothing is
+ * still a working request there.
+ */
+async function authHeader(): Promise<Record<string, string>> {
+  const key = await getApiKey();
+  return key ? { Authorization: `Bearer ${key}` } : {};
+}
+
+/**
+ * Whether the server is reachable and accepts this phone's key.
+ *
+ * `/health` because it is the cheapest route that is still behind the key —
+ * it touches no WaniKani quota and no model.
+ */
+export async function checkConnection(): Promise<'ok' | 'unauthorized' | 'unreachable'> {
+  try {
+    await request('/health', { timeoutMs: 8_000 });
+    return 'ok';
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return 'unauthorized';
+    return 'unreachable';
   }
 }
 
@@ -235,8 +264,10 @@ export async function uploadVocabPhoto(
 
   const response = await fetch(`${API_BASE_URL}/api/vocab-sources`, {
     method: 'POST',
+    headers: await authHeader(),
     body: form,
   });
+  reportAuth(response.status);
 
   if (!response.ok) {
     throw new ApiError(`Photo import failed with ${response.status}`, response.status);

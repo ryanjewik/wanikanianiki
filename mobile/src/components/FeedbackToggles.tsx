@@ -1,11 +1,10 @@
 /**
  * The two switches that govern how the app feels.
  *
- * There is no settings screen in the designs and the tab bar is full at four,
- * so this lives as a card on the study hub rather than behind a route of its
- * own. That is the right place anyway: it sits with the other decisions about
- * how you study, and it is visible rather than buried, which matters for a
- * pair of switches most people will touch exactly once.
+ * Shown twice on purpose: as a card on the study hub, where it sits with the
+ * other decisions about how you study and is met rather than hunted for, and
+ * on My profile, which is where people look for settings later. Both read and
+ * write the same stored preferences.
  */
 import * as React from 'react';
 import { StyleSheet, Switch, Text, View } from 'react-native';

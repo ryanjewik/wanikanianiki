@@ -11,8 +11,9 @@ import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { MascotAvatar } from '@/components/Mascot';
 import { feedback } from '@/feedback';
-import { colors, jp, radius, type as typeScale } from '@/theme/tokens';
+import { colors, jp, type as typeScale } from '@/theme/tokens';
 
 export interface ScreenHeaderProps {
   title?: string;
@@ -91,13 +92,11 @@ export function ScreenHeader({
   );
 }
 
-/** The circular 私 avatar on the dashboard header. */
+/** The crabigator avatar on the dashboard header — the way into My profile. */
 export function ProfileAvatar({ onPress }: { onPress?: () => void }) {
   return (
-    <Pressable onPress={onPress} hitSlop={8}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarGlyph}>私</Text>
-      </View>
+    <Pressable onPress={onPress} hitSlop={8} accessibilityRole="button" accessibilityLabel="My profile">
+      <MascotAvatar size={32} style={styles.avatar} />
     </Pressable>
   );
 }
@@ -166,17 +165,9 @@ const styles = StyleSheet.create({
   },
   trailingText: typeScale.captionBold,
   avatar: {
-    width: 30,
-    height: 30,
-    borderRadius: radius.round,
-    backgroundColor: colors.ground,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.ink,
   },
-  avatarGlyph: {
-    ...jp.icon,
-    color: colors.inkFaint,
-  },
+
+
 });

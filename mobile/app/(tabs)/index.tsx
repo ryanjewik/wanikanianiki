@@ -7,13 +7,14 @@
  */
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { Mascot, MascotBanner } from '@/components/Mascot';
 import { AnimatedSessionProgress, GrowBar, RiseIn } from '@/components/motion';
 import { ProfileAvatar, ScreenHeader } from '@/components/ScreenHeader';
 import { Card, QueueCard, SectionHeading } from '@/components/ui';
 import { isBackendConfigured } from '@/data/api';
+import { useAuthStatus } from '@/data/credentials';
 import { formatSyncedAgo } from '@/data/sync';
 import type {
   ActivityDay,
@@ -47,6 +48,20 @@ export default function DashboardScreen() {
   const { data: practice } = usePracticeQueue();
   const { data: jlpt } = useJlptCoverage();
   const { syncing, refresh } = useSync();
+  const auth = useAuthStatus();
+
+  // Everything on screen was loaded while the server was refusing this phone,
+  // so it is fallback data. Once a key is accepted, load the real thing — but
+  // only after a refusal, not on every launch's first `ok`. A flag rather than
+  // the previous value: saving a key passes through `unknown` on the way.
+  const wasRefused = React.useRef(false);
+  React.useEffect(() => {
+    if (auth === 'missing' || auth === 'rejected') wasRefused.current = true;
+    else if (auth === 'ok' && wasRefused.current) {
+      wasRefused.current = false;
+      reload();
+    }
+  }, [auth, reload]);
 
   const onRefresh = React.useCallback(async () => {
     await refresh();
@@ -60,7 +75,11 @@ export default function DashboardScreen() {
 
   return (
     <View style={styles.screen}>
-      <ScreenHeader branded title="KANJI WORKSHOP" trailing={<ProfileAvatar />} />
+      <ScreenHeader
+        branded
+        title="KANJI WORKSHOP"
+        trailing={<ProfileAvatar onPress={() => router.push('/profile')} />}
+      />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -75,6 +94,24 @@ export default function DashboardScreen() {
             and edge-to-edge is what makes it a horizon rather than a picture
             someone dropped into a card. */}
         <MascotBanner variant="wide" height={76} style={styles.banner} />
+
+        {/* Refused, not offline. Both leave the dashboard on cached data and
+            look the same from here, so without this a missing key would pass
+            for a bad connection — and waiting never fixes a missing key. */}
+        {auth === 'missing' || auth === 'rejected' ? (
+          <Pressable onPress={() => router.push('/profile')}>
+            <Card variant="bordered" style={styles.authCard}>
+              <Text style={styles.authTitle}>
+                {auth === 'missing' ? 'Connect this phone' : 'The server refused this phone'}
+              </Text>
+              <Text style={styles.authBody}>
+                {auth === 'missing'
+                  ? 'Your server asks for an API key. Enter it once and it stays on this phone. ›'
+                  : 'The saved API key no longer matches the server. Enter the current one. ›'}
+              </Text>
+            </Card>
+          </Pressable>
+        ) : null}
 
         {/* A short stagger, and only down the first few cards. Past about six
             a cascade stops reading as choreography and starts reading as the
@@ -364,6 +401,21 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 20,
     gap: 4,
+  },
+  authCard: {
+    backgroundColor: colors.warningRow,
+    borderColor: colors.warningBorder,
+    gap: 4,
+    marginBottom: 6,
+  },
+  authTitle: {
+    ...typeScale.section,
+    color: colors.warningInkDeep,
+  },
+  authBody: {
+    ...typeScale.caption,
+    color: colors.warningInkDeep,
+    lineHeight: 17,
   },
   banner: {
     // Cancels the page gutter so the horizon runs the full width. A scene

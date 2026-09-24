@@ -50,7 +50,8 @@
           "cameraPermission": "Kanji Workshop needs the camera to scan textbook vocabulary pages."
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      "expo-secure-store"
     ]
   }
 }
