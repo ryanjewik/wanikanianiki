@@ -10,3 +10,6 @@ __pycache__/
 
 # Local Postgres used for migration checks
 *.log
+
+# Lambda artifact (scripts/build_lambda.py)
+build/

@@ -3,10 +3,13 @@
 Four handlers, deployed as separate functions off the same image or zip:
 
 * `handler` — the HTTP API, behind a Function URL or API Gateway HTTP API.
-* `sync_handler` — the scheduled poll, triggered by EventBridge.
+* `sync_handler` — the scheduled poll, triggered by EventBridge Scheduler.
 * `ocr_handler` — page extraction, triggered by SQS.
-* `lessons_handler` — the scheduled lesson top-up, triggered by EventBridge
-  twice a day.
+* `lessons_handler` — the lesson top-up, triggered by EventBridge Scheduler
+  twice a day and by the API's `LessonBundleClaimed` / `VocabConfirmed` events
+  in between. See `services/events.py`.
+
+The wiring for all of it is `infra/` at the repo root.
 
 One artifact, several entry points. Each function gets its own memory, timeout
 and concurrency, which is the only reason they are separate at all: `ocr_handler`
@@ -26,10 +29,16 @@ import json
 import logging
 from typing import Any
 
-from mangum import Mangum
+from app.parameters import load_into_environment
 
-from app.config import get_settings
-from app.main import app, configure_logging
+# Before anything below builds `Settings`: importing `app.main` constructs the
+# app, and the app reads its token from the environment this fills.
+load_into_environment()
+
+from mangum import Mangum  # noqa: E402
+
+from app.config import get_settings  # noqa: E402
+from app.main import app, configure_logging  # noqa: E402
 
 # Mangum translates API Gateway / Function URL events into ASGI scope.
 # `lifespan="auto"` runs the app's lifespan on cold start, which is what builds
@@ -133,11 +142,15 @@ async def _run_ocr(source_ids: list[int]) -> dict[str, Any]:
 def lessons_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     """EventBridge target. Keeps the generated-lesson queue stocked.
 
-    **Twice a day is the intended schedule** — `cron(0 7,19 * * ? *)` or
-    similar. Generation is the most expensive thing this system does and the
-    queue drains at the speed a person studies, which is slow. A run that finds
-    the queue full costs one COUNT and stops, so the cheap case is genuinely
-    cheap; the expensive case is bounded by `lesson_bundles_per_run`.
+    **Woken two ways.** Twice a day by schedule, and by the API whenever a
+    bundle is claimed or words are confirmed into the deck. The events are what
+    make a drained queue refill in a minute rather than by evening; the schedule
+    is the backstop for an event that was lost. Either way the run starts the
+    same: a queue at or above the low-water mark costs one COUNT and stops, so
+    the cheap case is genuinely cheap and the expensive case is bounded by
+    `lesson_bundles_per_run`. Generation is paced by consumption, not by the
+    number of events — a burst of five confirmed pages is one top-up and four
+    COUNTs.
 
     **Set reserved concurrency to 1**, for a different reason than the sync
     function. Sync is limited by WaniKani's per-token budget; this is limited by
@@ -157,6 +170,12 @@ def lessons_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         logger.error("Lesson top-up invoked with no DATABASE_URL configured")
         return {"ok": False, "detail": "No database configured"}
 
+    # A rule delivers the whole event; a schedule delivers the input it was
+    # given. Logged so a surprising run can be traced to what woke it.
+    logger.info(
+        "Lesson top-up triggered by %s",
+        event.get("detail-type") or event.get("trigger") or "manual",
+    )
     return asyncio.run(_run_lessons())
 
 

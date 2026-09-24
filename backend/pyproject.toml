@@ -26,6 +26,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The AWS SDK, for publishing events and reading secrets on Lambda. The Lambda
+# runtime ships it, so the deployment zip leaves it out (scripts/build_lambda.py);
+# install this only to publish events from a laptop with EVENT_BUS_NAME set.
+aws = ["boto3>=1.34"]
 dev = [
     "uvicorn[standard]>=0.32",
     "pytest>=8.3",

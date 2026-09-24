@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     # local Postgres where there is only one endpoint.
     database_migration_url: str = ""
 
+    # --- Events -------------------------------------------------------------
+    # The EventBridge bus domain events go to. Empty means events are off,
+    # which is the right answer locally: there is nothing listening, and a
+    # laptop should not need AWS credentials to run the API. See
+    # `services/events.py`.
+    event_bus_name: str = ""
+
     # --- Runtime ------------------------------------------------------------
     environment: str = "local"
     log_level: str = "INFO"

@@ -219,14 +219,16 @@ locally, `app/lambda_handler.py` wraps it for Lambda, and the same image runs
 unchanged on Fargate or App Runner. Only the pooling strategy varies, and that
 is isolated in `app/db/session.py`.
 
-Two functions off one artifact:
+Several functions off one artifact, wired up by the Terraform in
+[`infra/`](../infra/README.md) at the repo root — which also covers building the zip, where the
+secrets live, and what stands between the API and a public URL:
 
 | Handler | Trigger | Notes |
 |---|---|---|
-| `app.lambda_handler.handler` | Function URL / API Gateway HTTP API | The HTTP API. |
-| `app.lambda_handler.sync_handler` | EventBridge, every 15–60 min | **Reserved concurrency 1.** |
-| `app.lambda_handler.ocr_handler` | SQS | Minutes, not seconds. Blocked on durable image storage — see below. |
-| `app.lambda_handler.lessons_handler` | EventBridge, twice a day | **Reserved concurrency 1.** Generates lesson bundles — see below. |
+| `app.lambda_handler.handler` | Function URL | The HTTP API. Publishes domain events to EventBridge. |
+| `app.lambda_handler.sync_handler` | EventBridge Scheduler, every 30 min | **Reserved concurrency 1.** |
+| `app.lambda_handler.ocr_handler` | SQS | Minutes, not seconds. Blocked on durable image storage, so not deployed yet. |
+| `app.lambda_handler.lessons_handler` | Scheduler twice a day, plus the API's events | **Reserved concurrency 1.** Generates lesson bundles — see below. |
 
 ### Keep Lambda out of a VPC
 
@@ -256,20 +258,15 @@ waiting, the run costs one `COUNT` and no model calls. Below that it generates
 `lesson_bundles_per_run` (3) bundles of `lesson_questions_per_bundle` (8), each
 question verified before it is bundled.
 
-**Twice a day is the intended cadence.** The queue drains at the speed a person
-studies, which is slow, and generation is the most expensive thing this system
-does. There is no benefit to checking hourly.
-
-```bash
-aws events put-rule --name kanji-lessons-topup   --schedule-expression 'cron(0 7,19 * * ? *)'
-
-aws events put-targets --rule kanji-lessons-topup   --targets 'Id=1,Arn=<lessons-function-arn>'
-
-aws lambda add-permission --function-name <lessons-function>   --statement-id events-invoke --action lambda:InvokeFunction   --principal events.amazonaws.com --source-arn <rule-arn>
-
-# The line that matters most:
-aws lambda put-function-concurrency --function-name <lessons-function>   --reserved-concurrent-executions 1
-```
+**Woken by events, backed by a schedule.** The API publishes
+`LessonBundleClaimed` when a bundle leaves the queue and `VocabConfirmed` when
+words enter the deck (`app/services/events.py`), and a rule routes both here.
+So a queue drawn down at lunch refills within a minute, and a first imported
+page has lessons waiting shortly after. Twice-daily Scheduler runs catch
+anything an event missed. A run that finds the queue full is one `COUNT`, so
+an event that turns out to be unnecessary costs nothing worth measuring, and
+generation stays paced by how fast a person studies rather than by how many
+events arrive.
 
 **Reserved concurrency 1, for a different reason than the sync worker.** Sync is
 bounded by WaniKani's per-token budget. This is bounded by arithmetic: two
@@ -281,9 +278,8 @@ Give the function a timeout above `lesson_timeout_seconds` (180s) with room for
 several sequential calls; 900s is the safe ceiling. It needs `ANTHROPIC_API_KEY`
 and `DATABASE_URL`, and nothing WaniKani-related.
 
-There is deliberately no Terraform or SAM here yet, matching the rest of this
-section. When IaC lands, this becomes a rule, a target, a permission and a
-concurrency setting — nothing that needs rethinking.
+All of the above is in the repo-root `infra/` — the rule, the target, the permission, the
+schedule and the concurrency setting.
 
 To run one pass by hand, locally:
 

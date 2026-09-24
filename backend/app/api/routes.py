@@ -54,15 +54,14 @@ from app.schemas import (
     VocabSetCreate,
     VocabSourceResult,
 )
-from app.schemas import LessonBundle as LessonBundleOut
 from app.schemas import JlptCoverage as JlptCoverageOut
 from app.schemas import JlptTier as JlptTierOut
+from app.schemas import LessonBundle as LessonBundleOut
 from app.schemas import LessonQueue as LessonQueueOut
 from app.schemas import Question as QuestionOut
+from app.services import events, jlpt, srs, storage
 from app.services import grammar as grammar_service
-from app.services import jlpt
 from app.services import ocr as ocr_service
-from app.services import srs, storage
 from app.services import sync as sync_service
 from app.services.dates import timezone_name, today_in
 from app.wanikani.client import WaniKaniClient, WaniKaniError, WaniKaniValidationError
@@ -546,6 +545,15 @@ async def confirm_vocab_source(
     # The draft has served its purpose; holding it would leak for every import.
     ocr_service.discard_result(source_id)
     storage.discard(source_id)
+
+    if created:
+        # Committed first: the lesson worker reads in its own transaction and
+        # must see the words this event announces.
+        await session.commit()
+        await events.publish(
+            events.VOCAB_CONFIRMED,
+            {"userId": user.id, "sourceId": source_id, "words": len(created)},
+        )
     return created
 
 
@@ -1061,9 +1069,10 @@ async def get_next_lesson_bundle(
 ) -> LessonBundleOut | None:
     """The next pregenerated session, or null when the queue is empty.
 
-    Null is a normal answer, not an error: the cron tops the queue up twice a
-    day, and a user who has just worked through everything is simply early. The
-    client shows "nothing generated yet" rather than a failure.
+    Null is a normal answer, not an error: each claim nudges the lesson worker
+    to top the queue up, but generation takes a minute or two, and a user who
+    has just worked through everything is simply early. The client shows
+    "nothing generated yet" rather than a failure.
 
     **Asking consumes it.** The bundle is marked spent on the way out, so a
     client that drops the response does not get the same lesson again. That is
@@ -1080,6 +1089,15 @@ async def get_next_lesson_bundle(
         return None
 
     bundle, questions = claimed
+
+    # The claim may have taken the queue below the low-water mark, and the
+    # worker decides that by counting — so it has to count after this commits,
+    # or it sees the bundle still waiting and tops up nothing.
+    await session.commit()
+    await events.publish(
+        events.LESSON_BUNDLE_CLAIMED, {"userId": user.id, "bundleId": bundle.id}
+    )
+
     return LessonBundleOut(
         id=bundle.id,
         generated_at=bundle.generated_at,
