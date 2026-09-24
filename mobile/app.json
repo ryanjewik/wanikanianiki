@@ -19,8 +19,7 @@
         "backgroundImage": "./assets/mascot/icon/adaptive-background-1024.png",
         "monochromeImage": "./assets/mascot/icon/adaptive-monochrome-1024.png"
       },
-      "package": "com.anonymous.wanikanianiki",
-      "edgeToEdgeEnabled": true
+      "package": "com.anonymous.wanikanianiki"
     },
     "web": {
       "bundler": "metro",
