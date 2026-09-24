@@ -122,19 +122,18 @@ export interface DayActivity {
 }
 
 /**
- * One column of the dashboard's streak strip, from `/api/activity`.
+ * One square of the dashboard's activity calendar, from `/api/activity`.
  *
- * `studied` and `grammarOnly` are separate on purpose and must stay that way.
- * Logging a pattern puts a mark on the strip and never extends the streak — it
- * is a record of the day, not practice of it — so a single "intensity" number
- * could not express the difference without lying about one of them.
+ * `count` and `grammarOnly` are separate on purpose and must stay that way.
+ * Logging a pattern puts a mark on the calendar and never extends the streak —
+ * it is a record of the day, not practice of it — so a single number could not
+ * express the difference without lying about one of them.
  */
-export interface ActivityDay {
-  /** Single weekday letter; the strip is too narrow for more. */
-  label: string;
-  isToday: boolean;
-  /** Something that counts happened: reviews, or imported-vocab reviews. */
-  studied: boolean;
+export interface CalendarDay {
+  /** The device's local date, `YYYY-MM-DD` — the zone the server bucketed in. */
+  date: string;
+  /** Reviews answered that day, WaniKani and the imported deck together. */
+  count: number;
   /** A pattern was logged and nothing was answered. Shown, never counted. */
   grammarOnly: boolean;
 }

@@ -335,15 +335,13 @@ async def adopt_timezone(session: AsyncSession, user: User, reported: str | None
     return user.timezone
 
 
-def _as_dates(values: Iterable[object]) -> set[date]:
+def _as_date(value: object) -> date:
     """Postgres hands back `date`; SQLite hands back an ISO string. Accept both."""
-    days: set[date] = set()
-    for value in values:
-        if isinstance(value, date):
-            days.add(value)
-        elif isinstance(value, str):
-            days.add(date.fromisoformat(value))
-    return days
+    return value if isinstance(value, date) else date.fromisoformat(str(value))
+
+
+def _as_dates(values: Iterable[object]) -> set[date]:
+    return {_as_date(value) for value in values if isinstance(value, (date, str))}
 
 
 async def get_review_days(
@@ -810,6 +808,37 @@ async def get_vocab_review_days(
     local_day = func.date(func.timezone(timezone_name(tz), VocabReviewLog.created_at))
     result = await session.execute(select(local_day).distinct())
     return _as_dates(result.scalars())
+
+
+async def count_reviews_by_day(
+    session: AsyncSession, tz: str = DEFAULT_TIMEZONE, *, since: date | None = None
+) -> dict[date, int]:
+    """How many WaniKani reviews were answered on each day — the calendar's shading.
+
+    A separate query from `get_review_days` rather than a replacement for it:
+    the streak needs one bit per day and is called on every dashboard load, and
+    it should not start paying for counts it throws away. Same zone bucketing,
+    so a day here is the same day there.
+    """
+    return await _count_by_local_day(session, ReviewLog.created_at, tz, since)
+
+
+async def count_vocab_reviews_by_day(
+    session: AsyncSession, tz: str = DEFAULT_TIMEZONE, *, since: date | None = None
+) -> dict[date, int]:
+    """The imported-deck half of `count_reviews_by_day`."""
+    return await _count_by_local_day(session, VocabReviewLog.created_at, tz, since)
+
+
+async def _count_by_local_day(
+    session: AsyncSession, column: Any, tz: str, since: date | None
+) -> dict[date, int]:
+    local_day = func.date(func.timezone(timezone_name(tz), column))
+    statement = select(local_day, func.count()).group_by(local_day)
+    if since is not None:
+        statement = statement.where(local_day >= since)
+    result = await session.execute(statement)
+    return {_as_date(day): count for day, count in result.all() if day is not None}
 
 
 async def insert_vocab_items(

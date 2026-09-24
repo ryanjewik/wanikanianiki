@@ -9,6 +9,7 @@ import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ActivityCalendar } from '@/components/ActivityCalendar';
 import { Mascot, MascotBanner } from '@/components/Mascot';
 import { AnimatedSessionProgress, GrowBar, RiseIn } from '@/components/motion';
 import { ProfileAvatar, ScreenHeader } from '@/components/ScreenHeader';
@@ -17,14 +18,15 @@ import { isBackendConfigured } from '@/data/api';
 import { useAuthStatus } from '@/data/credentials';
 import { formatSyncedAgo } from '@/data/sync';
 import type {
-  ActivityDay,
+  CalendarDay,
   Counted,
   DayActivity,
   JlptCoverage,
   SubjectType,
 } from '@/data/types';
 import {
-  useActivityStrip,
+  isoDate,
+  useActivityCalendar,
   useDashboard,
   useJlptCoverage,
   usePracticeQueue,
@@ -44,7 +46,7 @@ import {
 export default function DashboardScreen() {
   const router = useRouter();
   const { data, reload } = useDashboard();
-  const { data: strip } = useActivityStrip();
+  const { data: calendar } = useActivityCalendar();
   const { data: practice } = usePracticeQueue();
   const { data: jlpt } = useJlptCoverage();
   const { syncing, refresh } = useSync();
@@ -163,7 +165,7 @@ export default function DashboardScreen() {
         </RiseIn>
 
         <RiseIn delay={165}>
-          <StreakCard streak={data.streak} strip={strip} />
+          <StreakCard streak={data.streak} calendar={calendar} />
         </RiseIn>
 
         <Card>
@@ -210,27 +212,28 @@ export default function DashboardScreen() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * The seven days the dashboard payload carries, in the shape the strip wants.
- * Used only when `/api/activity` could not be reached — it has no notion of a
- * grammar-only day, so those simply read as empty.
+ * The seven days the dashboard payload carries, in the calendar's shape. Used
+ * only when `/api/activity` could not be reached: it has no counts and no
+ * notion of a grammar-only day, so a studied day shows at a single shade and
+ * everything before the week is left undrawn rather than shown as empty.
  */
-function fromWeek(week: DayActivity[]): ActivityDay[] {
-  return week.map((day) => ({
-    label: day.label.slice(0, 1),
-    isToday: day.isToday,
-    studied: day.intensity > 0,
-    grammarOnly: false,
-  }));
+function fromWeek(week: DayActivity[]): CalendarDay[] {
+  return week.map((day, i) => {
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() - (week.length - 1 - i));
+    return { date: isoDate(date), count: day.intensity > 0 ? 1 : 0, grammarOnly: false };
+  });
 }
 
 function StreakCard({
   streak,
-  strip,
+  calendar,
 }: {
   streak: { days: number; best: number; week: DayActivity[] };
-  strip: ActivityDay[] | null;
+  calendar: CalendarDay[] | null;
 }) {
-  const days = strip ?? fromWeek(streak.week);
+  const days = calendar ?? fromWeek(streak.week);
   const anyGrammarOnly = days.some((day) => day.grammarOnly);
 
   return (
@@ -243,25 +246,7 @@ function StreakCard({
         <Text style={styles.meta}>best {streak.best}</Text>
       </View>
 
-      <View style={styles.weekRow}>
-        {days.map((day, i) => (
-          <View key={i} style={styles.dayColumn}>
-            <Text style={[styles.dayLabel, day.isToday && styles.dayLabelToday]}>{day.label}</Text>
-            <View
-              style={[
-                styles.dayBar,
-                day.studied
-                  ? { backgroundColor: colors.warning }
-                  : day.grammarOnly
-                    ? styles.dayBarGrammar
-                    : day.isToday
-                      ? styles.dayBarToday
-                      : { backgroundColor: colors.border },
-              ]}
-            />
-          </View>
-        ))}
-      </View>
+      <ActivityCalendar days={days} />
 
       {anyGrammarOnly ? (
         <Text style={styles.stripNote}>Outlined days logged grammar — not counted.</Text>
@@ -444,46 +429,12 @@ const styles = StyleSheet.create({
   streakDays: {
     fontFamily: typeScale.stat.fontFamily,
     fontSize: 19,
-    color: colors.warning,
+    // The calendar's darkest shade, so the number and the squares read as one.
+    color: colors.kanji,
   },
   meta: {
     ...typeScale.meta,
     color: colors.inkFaint,
-  },
-  weekRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 5,
-  },
-  dayColumn: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 5,
-  },
-  dayLabel: {
-    fontFamily: typeScale.meta.fontFamily,
-    fontSize: 9.5,
-    color: colors.inkFaint,
-  },
-  dayLabelToday: {
-    color: colors.ink,
-  },
-  dayBar: {
-    width: '100%',
-    height: 26,
-    borderRadius: 7,
-  },
-  dayBarToday: {
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    borderColor: colors.inkDisabled,
-  },
-  /** Hollow, in the streak's own hue: present on the strip, absent from the count. */
-  dayBarGrammar: {
-    backgroundColor: colors.warningTint,
-    borderWidth: 1.5,
-    borderColor: colors.warningBorder,
   },
   stripNote: {
     ...typeScale.metaSmall,

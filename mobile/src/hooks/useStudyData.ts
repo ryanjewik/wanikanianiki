@@ -15,7 +15,7 @@ import { durationMinutes, getLastSession } from '@/data/session';
 import { syncNow, type SyncResult } from '@/data/sync';
 import { stageBucket } from '@/theme/tokens';
 import type {
-  ActivityDay,
+  CalendarDay,
   Assignment,
   DashboardSummary,
   DayActivitySummary,
@@ -459,40 +459,39 @@ async function loadStreakDays(): Promise<number> {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Activity strip                                                              */
+/* Activity calendar                                                           */
 /* -------------------------------------------------------------------------- */
 
-/** Two weeks. Wider than this and the weekday letters stop fitting. */
-const STRIP_DAYS = 14;
-
-const WEEKDAY_INITIAL = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+/**
+ * Half a year. The card shows as many recent weeks as fit its width — about
+ * twenty on a phone — and a wider screen shows more without another fetch.
+ * The payload is one row per active day, so this is cheap even when full.
+ */
+const CALENDAR_WEEKS = 26;
 
 /**
  * Local calendar date, not `toISOString()`.
  *
  * The server buckets days in the zone the device reported, so the key has to
  * be the device's own date. UTC would disagree with it for part of every day
- * and slide the whole strip by one.
+ * and slide the whole calendar by one.
  */
-function isoDate(d: Date): string {
+export function isoDate(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 /**
- * The dashboard's streak strip, widened from a week to a fortnight and able to
- * show a grammar-only day.
- *
- * Returns `null` rather than an empty strip when there is no backend to ask,
- * which is the caller's signal to fall back to the seven days the dashboard
- * payload already carries.
+ * Every day from the Sunday `CALENDAR_WEEKS` weeks back through today, oldest
+ * first — whole weeks, so the calendar's columns line up the way GitHub's do.
  */
-export function useActivityStrip() {
-  return useAsync<ActivityDay[] | null>(async () => {
+export function useActivityCalendar() {
+  return useAsync<CalendarDay[] | null>(async () => {
     if (!api.isBackendConfigured) return null;
 
     const first = new Date();
-    first.setDate(first.getDate() - (STRIP_DAYS - 1));
+    first.setHours(12, 0, 0, 0); // midday, so a DST change cannot skip a date
+    first.setDate(first.getDate() - first.getDay() - (CALENDAR_WEEKS - 1) * 7);
 
     let summaries: DayActivitySummary[];
     try {
@@ -502,26 +501,24 @@ export function useActivityStrip() {
     }
 
     const byDay = new Map(summaries.map((s) => [s.day, s]));
-    const strip: ActivityDay[] = [];
+    const today = isoDate(new Date());
+    const days: CalendarDay[] = [];
 
-    for (let back = STRIP_DAYS - 1; back >= 0; back -= 1) {
-      const day = new Date();
-      day.setDate(day.getDate() - back);
-      const summary = byDay.get(isoDate(day));
-      const studied = !!summary && summary.reviews + summary.vocabReviews > 0;
-
-      strip.push({
-        label: WEEKDAY_INITIAL[day.getDay()],
-        isToday: back === 0,
-        studied,
-        grammarOnly: !studied && !!summary && summary.grammarLogged > 0,
+    for (const cursor = new Date(first); ; cursor.setDate(cursor.getDate() + 1)) {
+      const date = isoDate(cursor);
+      const summary = byDay.get(date);
+      const count = summary ? summary.reviews + summary.vocabReviews : 0;
+      days.push({
+        date,
+        count,
+        grammarOnly: count === 0 && !!summary && summary.grammarLogged > 0,
       });
+      if (date === today) break;
     }
 
-    return strip;
+    return days;
   }, []);
 }
-
 
 /* -------------------------------------------------------------------------- */
 /* Generated lessons                                                           */

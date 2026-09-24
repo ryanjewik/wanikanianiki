@@ -918,21 +918,19 @@ async def get_activity(
         return []
 
     zone = await repo.adopt_timezone(session, user, tz)
-    review_days = await repo.get_review_days(session, zone)
-    vocab_days = await repo.get_vocab_review_days(session, zone)
+    reviews = await repo.count_reviews_by_day(session, zone, since=since)
+    vocab_reviews = await repo.count_vocab_reviews_by_day(session, zone, since=since)
     grammar_days = await repo.get_grammar_days(session, user.id, since=since)
 
-    days = review_days | vocab_days | set(grammar_days)
-    if since is not None:
-        days = {day for day in days if day >= since}
+    days = set(reviews) | set(vocab_reviews) | set(grammar_days)
 
     return [
         DayActivitySummary(
             day=day,
-            # One row per day is what the calendar draws; the exact counts are
-            # a later refinement, and a bool dressed up as a count would lie.
-            reviews=1 if day in review_days else 0,
-            vocab_reviews=1 if day in vocab_days else 0,
+            # Real counts, which is what lets the calendar shade a heavy day
+            # darker than a light one rather than drawing every day the same.
+            reviews=reviews.get(day, 0),
+            vocab_reviews=vocab_reviews.get(day, 0),
             grammar_logged=grammar_days.get(day, 0),
         )
         for day in sorted(days)
