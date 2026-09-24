@@ -50,6 +50,13 @@ yarn-error.*
 .DS_Store
 *.pem
 
+# Terraform (infra/). The lock file is committed; state, provider caches and
+# variable files are not — state can hold resource details worth keeping local.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
 # local env files — .env holds the WaniKani token, never commit it
 .env
 .env.*
