@@ -272,6 +272,14 @@ Expo 57 docs before writing code — Expo has changed.
 | `app/lesson-bundle.tsx` — generated lesson | real (`useLessonBundle`) |
 | `app/session-summary.tsx` | real (`useSessionSummary`) |
 
+**Answer fields pick their own keyboard** (2026-09-23). `LanguageInput`
+(`src/components/LanguageInput.tsx`) sets Android's `imeHintLocales` through a
+local native module (`modules/keyboard-language`), so Gboard flips between
+Japanese and English as a review alternates reading and meaning. Verified on the
+emulator: kana layout on reading cards, QWERTY on meaning cards. Kana answers
+also convert romaji as typed (wanakana, as WaniKani does), which covers phones
+with no Japanese keyboard. iOS gets the conversion but not the hint.
+
 Notecards mode is **not** a route — it lives inside `app/sets/[id].tsx`, which
 browses a set as cards, photographs pages into it, and confirms extracted rows
 without leaving the set.
@@ -386,15 +394,41 @@ What is still unexercised:
 - **Cross-run behaviour.** Only one run has happened, so nothing is known about
   duplicate questions across runs.
 
-### 3. The cron is not deployed
+### 3. The AWS side is deployed (2026-09-24)
 
-`lessons_handler` exists and runs by hand; no EventBridge rule fires it. The
-exact commands are in `backend/README.md`, including the **reserved concurrency
-1** setting, which is not optional — the low-water check and the write are not
-one transaction, so two overlapping runs both generate.
+`infra/` (repo root) is Terraform for the sync and lesson workers, the API
+function, an EventBridge bus, and two Scheduler schedules. The API now publishes
+`LessonBundleClaimed` and `VocabConfirmed` (`app/services/events.py`), and a
+rule routes both to the lesson worker, so the queue refills on use and the
+twice-daily schedule is only the backstop. Secrets come from Parameter Store at
+cold start (`app/parameters.py`), never from Terraform. `infra/README.md` has
+the apply steps.
 
-There is deliberately no Terraform or SAM in this repo yet, so this stays a
-documented procedure rather than code until IaC lands.
+**Deployed** to account `050451388503`, `us-east-2`, with `api_public=true`:
+26 resources. Verified live: the API answers 401 without the key and hides
+`/docs`; a manual sync invocation wrote 169 assignments. Sign in with
+`aws login --profile kanji` (root, console credentials, 12 h). Terraform
+refuses any other account and, by name, the `sumo-admin` IAM user that shares
+it. **State is local** (`infra/terraform.tfstate`, gitignored) — it is the
+only record of what was created; back it up or move it to an S3 backend.
+
+First apply hit one bug: the IAM policy allowed `parameter/kanji-workshop` but
+the functions ask for `parameter/kanji-workshop/`, and GetParametersByPath is
+authorised against the path as spelled. Both are granted now. The API failed
+closed (502 at init) rather than serving without its key.
+
+**The API has a key now** (2026-09-24). Every route, `/health` included,
+requires `Authorization: Bearer <API_KEY>`; unset is allowed only under
+`ENVIRONMENT=local`, and anywhere else the API refuses every request (503)
+rather than run open. The phone stores the key in `expo-secure-store`, entered
+once on `app/profile.tsx` (the crabigator avatar); the dashboard shows a banner when
+the server refuses it and reloads once it is accepted. Verified end to end on the
+emulator against a local API. The Terraform validates (Terraform 1.16.4, AWS
+provider 6.66.0) and makes the function URL public only with `api_public=true`.
+
+**Still blocking photo import on Lambda:** drafts live in process memory
+(`ocr.py` `_CACHE`), so an upload and its polls can land in different
+containers. Everything else works from a public URL.
 
 ### 4. Smaller, in the lesson system
 
