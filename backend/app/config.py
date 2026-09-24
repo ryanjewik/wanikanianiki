@@ -131,6 +131,17 @@ class Settings(BaseSettings):
     # local Postgres where there is only one endpoint.
     database_migration_url: str = ""
 
+    # --- Access -------------------------------------------------------------
+    # The key the app sends as `Authorization: Bearer <key>`. This API acts on
+    # a WaniKani account and spends an Anthropic key, so anything that can reach
+    # it can do both; this is what stops a reachable URL being an open one.
+    #
+    # Unset is allowed only under ENVIRONMENT=local, where the API is on a
+    # laptop and unauthenticated is how it has always run. Anywhere else an
+    # unset key refuses every request rather than falling open — a missing
+    # Parameter Store entry must not quietly publish the account.
+    api_key: SecretStr | None = None
+
     # --- Events -------------------------------------------------------------
     # The EventBridge bus domain events go to. Empty means events are off,
     # which is the right answer locally: there is nothing listening, and a
@@ -141,6 +152,18 @@ class Settings(BaseSettings):
     # --- Runtime ------------------------------------------------------------
     environment: str = "local"
     log_level: str = "INFO"
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _blank_key_is_no_key(cls, value: object) -> object:
+        """`API_KEY=` in a .env means unset, not a key that is the empty string.
+
+        Otherwise a blank line would configure a key that an empty bearer
+        token matches — the one value that must never authenticate.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @field_validator("database_url", "database_migration_url")
     @classmethod

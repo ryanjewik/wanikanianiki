@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import AsyncIterator
 
 from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -14,6 +16,46 @@ from app.wanikani.client import WaniKaniClient, get_client
 
 def settings_dep() -> Settings:
     return get_settings()
+
+
+# `auto_error=False` so a missing header reaches the check below and gets the
+# same 401 as a wrong one, instead of FastAPI's own 403.
+_bearer = HTTPBearer(auto_error=False)
+
+
+async def require_api_key(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    settings: Settings = Depends(settings_dep),
+) -> None:
+    """Every route sits behind this, `/health` included.
+
+    Health is not exempt because it is not harmless: it reports table counts
+    and, when the database is unhappy, the driver's error text — which can name
+    the host. There is no uptime checker to keep it open for.
+    """
+    expected = settings.api_key
+    if expected is None:
+        if settings.environment == "local":
+            return
+        # Fail closed. An unset key on a deployed function is a missing
+        # Parameter Store entry, not a decision to run open.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": "No API key configured",
+                "hint": "Set API_KEY. Outside ENVIRONMENT=local the API will not run open.",
+            },
+        )
+
+    # Constant-time, so response timing cannot be used to guess the key a
+    # character at a time.
+    given = credentials.credentials if credentials else ""
+    if not hmac.compare_digest(given.encode(), expected.get_secret_value().encode()):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or wrong API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 async def wanikani_client() -> WaniKaniClient:

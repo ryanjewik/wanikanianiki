@@ -12,10 +12,11 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.deps import require_api_key
 from app.api.routes import router
 from app.config import get_settings
 from app.wanikani.client import WaniKaniAuthError, WaniKaniError, get_client
@@ -66,7 +67,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
 
+    local = settings.environment == "local"
+
     app = FastAPI(
+        # The interactive docs map every route, and are served outside the
+        # router the key protects. Useful on a laptop; a gift anywhere public.
+        docs_url="/docs" if local else None,
+        redoc_url="/redoc" if local else None,
+        openapi_url="/openapi.json" if local else None,
         title="Kanji Workshop API",
         version="0.1.0",
         description=(
@@ -104,7 +112,7 @@ def create_app() -> FastAPI:
             content={"detail": "Upstream WaniKani request failed", "error": str(exc)},
         )
 
-    app.include_router(router)
+    app.include_router(router, dependencies=[Depends(require_api_key)])
     return app
 
 

@@ -14,10 +14,16 @@ import os
 
 os.environ.setdefault("wanikani_apikey", "test-token-not-real")
 
-# No unit test may reach the real database a developer's backend/.env points
-# at. `monkeypatch.delenv("DATABASE_URL")` does not achieve that — the variable
-# is gone but Settings still reads the .env file — so a test calling /health
-# would open a connection to it. An empty
+# Route tests run open, the way the API runs on a laptop. Set outright rather
+# than defaulted: a developer's real API_KEY in backend/.env would otherwise put
+# every route test behind a 401. `test_auth.py` turns the key on per test.
+os.environ["API_KEY"] = ""
+os.environ.setdefault("ENVIRONMENT", "local")
+
+# The same, and more important: no unit test may reach the real database a
+# developer's backend/.env points at. `monkeypatch.delenv("DATABASE_URL")` does
+# not achieve that — the variable is gone but Settings still reads the .env
+# file — so a test calling /health would open a connection to it. An empty
 # variable wins over the file. The integration tests set their own URL from
 # TEST_DATABASE_URL, which this does not touch.
 os.environ["DATABASE_URL"] = ""
