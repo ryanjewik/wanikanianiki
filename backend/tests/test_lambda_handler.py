@@ -27,7 +27,8 @@ from app.wanikani.client import get_client
 def clean_process_state(monkeypatch):
     """Every test starts with no cached settings and no cached client."""
     monkeypatch.setenv("wanikani_apikey", "test-token-not-real")
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    # Empty, not deleted: deleting lets Settings fall back to backend/.env.
+    monkeypatch.setenv("DATABASE_URL", "")
     monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
     get_settings.cache_clear()
     get_client.cache_clear()
