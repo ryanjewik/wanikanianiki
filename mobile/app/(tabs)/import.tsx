@@ -47,6 +47,19 @@ import {
 /** The tier the user picks at upload time, cascading to every extracted row. */
 const JLPT_TIERS: (number | null)[] = [5, 4, 3, 2, 1, null];
 
+/** Why an upload failed, in terms of what to do about it. */
+function importErrorMessage(error: unknown): string {
+  if (error instanceof api.ApiError) {
+    if (error.status === 401) {
+      return 'The server refused this phone. Check the API key under My profile.';
+    }
+    if (error.status === 413 || error.status === 504) return error.message;
+    if (error.status >= 500) return 'The server had a problem reading the page. Try again in a moment.';
+    return `The server answered ${error.status}. Try again, or check My profile → Connection.`;
+  }
+  return "Couldn't reach the server. Check your connection and try again.";
+}
+
 export default function ImportScreen() {
   const [imageUri, setImageUri] = React.useState<string | null>(null);
   const [items, setItems] = React.useState<DetectedItem[] | null>(null);
@@ -116,9 +129,14 @@ export default function ImportScreen() {
           setItems(DETECTED_ITEMS);
           setSampled(true);
         }
-      } catch {
-        setItems(DETECTED_ITEMS);
-        setSampled(true);
+      } catch (error) {
+        console.warn('[import] upload failed', error);
+        // Say what went wrong. This used to fall back to the bundled sample
+        // rows, which made a rejected upload look like a page that had been
+        // read — twelve plausible words, some "already in your deck" — while
+        // the real page never reached the server.
+        Alert.alert("Couldn't import that page", importErrorMessage(error));
+        setImageUri(null);
       } finally {
         setBusy(false);
       }

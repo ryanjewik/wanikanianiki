@@ -8,6 +8,8 @@
  * endpoints that actually mutate the account.
  */
 import Constants from 'expo-constants';
+import { File } from 'expo-file-system';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { getApiKey, reportAuth } from './credentials';
 import type {
@@ -237,6 +239,47 @@ export interface VocabSourceResult {
 const UPLOAD_TIMEOUT_MS = 330_000;
 
 /**
+ * The long edge Claude reads images at. Anything larger is downscaled by the
+ * model anyway, so sending more pixels costs upload time and buys nothing.
+ */
+const MAX_UPLOAD_EDGE = 2576;
+
+/**
+ * Shrinks a page photo to what the model can actually use.
+ *
+ * Not only a nicety: AWS rejects a Lambda function-URL request over 6 MB
+ * before the backend ever runs, and a full-resolution photo from a current
+ * phone camera is past that once encoded. At 2576 px on the long edge a JPEG
+ * page is around 1–2 MB, whatever camera took it.
+ *
+ * Falls back to the original file if the image cannot be processed: an upload
+ * that might be too large is better than no upload.
+ */
+async function prepareForUpload(uri: string): Promise<string> {
+  try {
+    const original = await ImageManipulator.manipulate(uri).renderAsync();
+    const longEdge = Math.max(original.width, original.height);
+    const context = ImageManipulator.manipulate(uri);
+    if (longEdge > MAX_UPLOAD_EDGE) {
+      context.resize(
+        original.width >= original.height
+          ? { width: MAX_UPLOAD_EDGE, height: null }
+          : { width: null, height: MAX_UPLOAD_EDGE },
+      );
+    }
+    const rendered = await context.renderAsync();
+    const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
+    console.info(
+      `[upload] page ${original.width}x${original.height} -> ${saved.width}x${saved.height}`,
+    );
+    return saved.uri;
+  } catch (error) {
+    console.warn('[upload] could not shrink the page photo; sending it as is', error);
+    return uri;
+  }
+}
+
+/**
  * Sends a textbook photo to be read, and waits for the rows.
  *
  * One request: the server hands the photo to the model and answers with what
@@ -255,12 +298,13 @@ export async function uploadVocabPhoto(
   }
 
   const form = new FormData();
-  // React Native's FormData takes this shape for a local file URI.
-  form.append('image', {
-    uri: imageUri,
-    name: 'page.jpg',
-    type: 'image/jpeg',
-  } as unknown as Blob);
+  // A real file object, not React Native's `{ uri, name, type }` shape: Expo
+  // replaces the global `fetch` with its own, which sends a part only if it
+  // can read the bytes (a Blob, or an expo-file-system File) and throws
+  // "Unsupported FormDataPart implementation" on the old shape — before a
+  // single byte leaves the phone. That is what made every upload fail with
+  // "couldn't reach the server".
+  form.append('image', new File(await prepareForUpload(imageUri)), 'page.jpg');
   if (jlptLevel !== null) form.append('jlpt_level', String(jlptLevel));
   if (options.setId !== undefined) form.append('set_id', String(options.setId));
   if (options.position !== undefined) form.append('position', String(options.position));
@@ -281,7 +325,12 @@ export async function uploadVocabPhoto(
     reportAuth(response.status);
 
     if (!response.ok) {
-      throw new ApiError(`Photo import failed with ${response.status}`, response.status);
+      throw new ApiError(
+        response.status === 413
+          ? 'That photo is too large to send. Try a lower-resolution picture of the page.'
+          : `Photo import failed with ${response.status}`,
+        response.status,
+      );
     }
     return (await response.json()) as VocabSourceResult;
   } catch (error) {
