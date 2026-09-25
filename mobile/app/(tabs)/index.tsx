@@ -17,6 +17,7 @@ import { Card, QueueCard, SectionHeading } from '@/components/ui';
 import { isBackendConfigured } from '@/data/api';
 import { useAuthStatus } from '@/data/credentials';
 import { formatSyncedAgo } from '@/data/sync';
+import { feedback } from '@/feedback';
 import type {
   CalendarDay,
   Counted,
@@ -65,9 +66,13 @@ export default function DashboardScreen() {
     }
   }, [auth, reload]);
 
+  // The pull itself gets a tap, and the end of the sync a soft reveal: a
+  // refresh that finishes silently leaves you guessing whether it did anything.
   const onRefresh = React.useCallback(async () => {
+    feedback.tap();
     await refresh();
     reload();
+    feedback.reveal();
   }, [refresh, reload]);
 
   if (!data) return <View style={styles.screen} />;
@@ -101,7 +106,11 @@ export default function DashboardScreen() {
             look the same from here, so without this a missing key would pass
             for a bad connection — and waiting never fixes a missing key. */}
         {auth === 'missing' || auth === 'rejected' ? (
-          <Pressable onPress={() => router.push('/profile')}>
+          <Pressable
+            onPress={() => router.push('/profile')}
+            onPressIn={feedback.select}
+            style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+          >
             <Card variant="bordered" style={styles.authCard}>
               <Text style={styles.authTitle}>
                 {auth === 'missing' ? 'Connect this phone' : 'The server refused this phone'}

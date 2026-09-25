@@ -245,7 +245,12 @@ export function ChunkyButton({
             controlBorder,
             {
               backgroundColor: background,
-              height: size === 'large' ? 50 : 40,
+              // A floor, not a fixed height, and padding of its own: a fixed
+              // height clipped the label under a larger system font size, and
+              // with no side padding the text ran almost to the border.
+              minHeight: size === 'large' ? 52 : 42,
+              paddingHorizontal: size === 'large' ? 24 : 18,
+              paddingVertical: 8,
               // Collapse the hard shadow and drop into the gap it leaves.
               shadowOffset: { width: 0, height: pressed ? 0 : offset },
               transform: [{ translateY: pressed ? offset : 0 }],
@@ -668,7 +673,7 @@ const styles = StyleSheet.create({
   },
   queueCta: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 14,
+    paddingHorizontal: 20,
     marginTop: 3,
   },
 
@@ -678,14 +683,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   textButton: {
-    height: 32,
+    minHeight: 40,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   inlineButton: {
     borderRadius: radius.tile,
-    paddingVertical: 6,
-    paddingHorizontal: 11,
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 15,
     backgroundColor: colors.surface,
   },
   inlineButtonQuiet: {

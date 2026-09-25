@@ -95,7 +95,14 @@ export function ScreenHeader({
 /** The crabigator avatar on the dashboard header — the way into My profile. */
 export function ProfileAvatar({ onPress }: { onPress?: () => void }) {
   return (
-    <Pressable onPress={onPress} hitSlop={8} accessibilityRole="button" accessibilityLabel="My profile">
+    <Pressable
+      onPress={onPress}
+      onPressIn={feedback.select}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel="My profile"
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
       <MascotAvatar size={32} style={styles.avatar} />
     </Pressable>
   );
