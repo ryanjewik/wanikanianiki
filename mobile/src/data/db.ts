@@ -130,6 +130,35 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
       UNIQUE (vocab_item_id, skill_type)
     );
   `);
+
+  await upgrade(db);
+}
+
+/**
+ * Numbered steps on top of the base schema, tracked in `PRAGMA user_version`.
+ * The base above only ever creates tables that do not exist, so a column added
+ * to an existing table has to arrive here, where it runs exactly once.
+ */
+async function upgrade(db: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  const version = row?.user_version ?? 0;
+
+  if (version < 1) {
+    // Everything WaniKani sends beyond the core fields: hints, context
+    // sentences, parts of speech, audio, similar kanji, auxiliary meanings.
+    // One JSON column rather than six, because the screens read them together
+    // and nothing queries inside them.
+    //
+    // Subjects already mirrored have none of it, and the incremental sync only
+    // refetches subjects whose assignments changed -- so the sync cursor is
+    // dropped too, and the next sync pulls every assignment and its subject
+    // once, filling the new column.
+    await db.execAsync(`
+      ALTER TABLE local_subjects ADD COLUMN extras_json TEXT NOT NULL DEFAULT '{}';
+      DELETE FROM sync_meta WHERE key = '${SYNC_KEY_LAST_SYNCED}';
+      PRAGMA user_version = 1;
+    `);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -148,7 +177,20 @@ interface SubjectRow {
   components_json: string;
   amalgamations_json: string;
   jlpt_level: number | null;
+  extras_json: string;
 }
+
+/** What lives in `extras_json`. */
+type SubjectExtras = Pick<
+  Subject,
+  | 'meaningHint'
+  | 'readingHint'
+  | 'contextSentences'
+  | 'partsOfSpeech'
+  | 'pronunciationAudios'
+  | 'visuallySimilarSubjectIds'
+  | 'auxiliaryMeanings'
+>;
 
 /** Tolerates a malformed blob rather than taking the whole screen down. */
 function parseJson<T>(raw: string, fallback: T): T {
@@ -161,6 +203,7 @@ function parseJson<T>(raw: string, fallback: T): T {
 
 function toSubject(row: SubjectRow): Subject {
   const mnemonics = parseJson<{ meaning?: string; reading?: string }>(row.mnemonics_json, {});
+  const extras = parseJson<SubjectExtras>(row.extras_json ?? '{}', {});
   return {
     id: row.subject_id,
     type: row.type as SubjectType,
@@ -174,6 +217,13 @@ function toSubject(row: SubjectRow): Subject {
     componentSubjectIds: parseJson(row.components_json, []),
     amalgamationSubjectIds: parseJson(row.amalgamations_json, []),
     jlptLevel: row.jlpt_level,
+    meaningHint: extras.meaningHint ?? null,
+    readingHint: extras.readingHint ?? null,
+    contextSentences: extras.contextSentences ?? [],
+    partsOfSpeech: extras.partsOfSpeech ?? [],
+    pronunciationAudios: extras.pronunciationAudios ?? [],
+    visuallySimilarSubjectIds: extras.visuallySimilarSubjectIds ?? [],
+    auxiliaryMeanings: extras.auxiliaryMeanings ?? [],
   };
 }
 
@@ -220,8 +270,8 @@ export async function upsertSubjects(subjects: Subject[]): Promise<void> {
       await db.runAsync(
         `INSERT INTO local_subjects
            (subject_id, type, character, level, slug, meanings_json, readings_json,
-            mnemonics_json, components_json, amalgamations_json, jlpt_level)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            mnemonics_json, components_json, amalgamations_json, jlpt_level, extras_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(subject_id) DO UPDATE SET
            type = excluded.type,
            character = excluded.character,
@@ -232,7 +282,8 @@ export async function upsertSubjects(subjects: Subject[]): Promise<void> {
            mnemonics_json = excluded.mnemonics_json,
            components_json = excluded.components_json,
            amalgamations_json = excluded.amalgamations_json,
-           jlpt_level = excluded.jlpt_level`,
+           jlpt_level = excluded.jlpt_level,
+           extras_json = excluded.extras_json`,
         subject.id,
         subject.type,
         subject.characters,
@@ -247,6 +298,15 @@ export async function upsertSubjects(subjects: Subject[]): Promise<void> {
         JSON.stringify(subject.componentSubjectIds),
         JSON.stringify(subject.amalgamationSubjectIds),
         subject.jlptLevel ?? null,
+        JSON.stringify({
+          meaningHint: subject.meaningHint ?? null,
+          readingHint: subject.readingHint ?? null,
+          contextSentences: subject.contextSentences ?? [],
+          partsOfSpeech: subject.partsOfSpeech ?? [],
+          pronunciationAudios: subject.pronunciationAudios ?? [],
+          visuallySimilarSubjectIds: subject.visuallySimilarSubjectIds ?? [],
+          auxiliaryMeanings: subject.auxiliaryMeanings ?? [],
+        } satisfies SubjectExtras),
       );
     }
   });

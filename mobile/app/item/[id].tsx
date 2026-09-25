@@ -11,6 +11,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { StageBadge } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { speakSubject, SubjectExtras } from '@/components/SubjectExtras';
 import {
   Card,
   CardBanner,
@@ -136,9 +137,17 @@ export default function ItemDetailScreen() {
               {plainReading ? (
                 <ReadingChip reading={plainReading.reading} label="READING" tone="vocabulary" />
               ) : null}
-              <View style={styles.speakButton}>
+              {/* Was drawn but never wired: a ♪ that did nothing when tapped. */}
+              <Pressable
+                onPress={() => speakSubject(subject)}
+                onPressIn={feedback.tap}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Read aloud"
+                style={({ pressed }) => [styles.speakButton, pressed && { opacity: 0.6 }]}
+              >
                 <Text style={styles.speakGlyph}>♪</Text>
-              </View>
+              </Pressable>
             </View>
           </Card>
         ) : null}
@@ -160,6 +169,8 @@ export default function ItemDetailScreen() {
             <Text style={styles.mnemonicText}>{subject.readingMnemonic}</Text>
           </Card>
         ) : null}
+
+        <SubjectExtras subject={subject} />
 
         <Card variant="bordered">
           <SectionHeading

@@ -141,8 +141,16 @@ export default function ReviewScreen() {
       if (!normalised) return false;
 
       if (entry.half === 'meaning') {
-        return entry.item.subject.meanings.some(
-          (m) => m.acceptedAnswer && m.meaning.toLowerCase() === normalised,
+        // WaniKani also grades on auxiliary meanings: a whitelisted one is right
+        // even though it is not among the listed meanings. (A blacklisted one is
+        // already wrong here, since it matches nothing that is accepted.)
+        return (
+          entry.item.subject.meanings.some(
+            (m) => m.acceptedAnswer && m.meaning.toLowerCase() === normalised,
+          ) ||
+          (entry.item.subject.auxiliaryMeanings ?? []).some(
+            (m) => m.type === 'whitelist' && m.meaning.toLowerCase() === normalised,
+          )
         );
       }
       return entry.item.subject.readings.some(

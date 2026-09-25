@@ -25,6 +25,30 @@ export interface Reading {
   acceptedAnswer: boolean;
 }
 
+/** One example sentence WaniKani pairs with a vocabulary word. */
+export interface ContextSentence {
+  ja: string;
+  en: string;
+}
+
+/** A recording of the word (MP3 only; see the backend schema). */
+export interface PronunciationAudio {
+  url: string;
+  contentType: string;
+  gender?: string | null;
+  voiceActorName?: string | null;
+  pronunciation?: string | null;
+}
+
+/**
+ * An extra meaning WaniKani grades on. `whitelist` counts as right even though
+ * it is not listed among the meanings; `blacklist` is a known wrong answer.
+ */
+export interface AuxiliaryMeaning {
+  meaning: string;
+  type: 'whitelist' | 'blacklist';
+}
+
 export interface Subject {
   id: number;
   type: SubjectType;
@@ -38,12 +62,23 @@ export interface Subject {
   readings: Reading[];
   meaningMnemonic?: string | null;
   readingMnemonic?: string | null;
+  meaningHint?: string | null;
+  readingHint?: string | null;
   /** Radicals that build this kanji, or kanji that build this word. */
   componentSubjectIds: number[];
   /** Kanji this radical appears in, or vocabulary using this kanji. */
   amalgamationSubjectIds: number[];
   /** Backfilled once from the kanji-data seed import; null when unknown. */
   jlptLevel?: number | null;
+  /** Vocabulary only. */
+  contextSentences?: ContextSentence[];
+  /** Vocabulary only, e.g. "noun", "godan verb". */
+  partsOfSpeech?: string[];
+  /** Vocabulary only. */
+  pronunciationAudios?: PronunciationAudio[];
+  /** Kanji only: kanji easily mistaken for this one. */
+  visuallySimilarSubjectIds?: number[];
+  auxiliaryMeanings?: AuxiliaryMeaning[];
 }
 
 export interface Assignment {

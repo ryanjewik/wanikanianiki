@@ -139,3 +139,28 @@ export function play(cue: Cue): void {
     // A player can be torn down under us on Android when audio focus is lost.
   }
 }
+
+/**
+ * One reusable player for spoken content -- a word's recorded pronunciation.
+ * Separate from the cues: those are preloaded per sound, while this plays
+ * whatever URL it is handed, swapping its source rather than building a new
+ * player for every tap.
+ */
+let voice: (Player & { replace(source: { uri: string }): void }) | null = null;
+
+/** Plays a recording from a URL. Returns false if it could not be played. */
+export function playRecording(url: string): boolean {
+  if (!audio || !url) return false;
+  try {
+    if (!voice) {
+      voice = audio.createAudioPlayer({ uri: url }) as unknown as typeof voice;
+    } else {
+      voice.replace({ uri: url });
+    }
+    voice?.seekTo(0);
+    voice?.play();
+    return true;
+  } catch {
+    return false;
+  }
+}

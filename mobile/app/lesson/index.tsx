@@ -14,6 +14,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { MascotCoach } from '@/components/MascotCoach';
 import { RiseIn } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { speakSubject, SubjectExtras } from '@/components/SubjectExtras';
 import {
   Card,
   CardBanner,
@@ -26,7 +27,6 @@ import {
 import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
 import { feedback } from '@/feedback';
-import { speakJapanese } from '@/feedback/speech';
 import { useLessonQueue, useStudyActions, useSubjects } from '@/hooks/useStudyData';
 import {
   colors,
@@ -263,7 +263,7 @@ export default function LessonScreen() {
                 <Pressable
                   onPress={() => {
                     feedback.tap();
-                    speakJapanese(spoken);
+                    speakSubject(subject);
                   }}
                   disabled={!spoken}
                   style={[styles.speakButton, !spoken && styles.speakButtonMuted]}
@@ -284,6 +284,8 @@ export default function LessonScreen() {
               </MascotCoach>
             </Card>
           ) : null}
+
+          <SubjectExtras subject={subject} />
 
           {appearsIn.length > 0 ? (
             <Card>
