@@ -95,7 +95,7 @@ export default function DashboardScreen() {
             cards below read as the interface on top of it. Keeping it short
             and edge-to-edge is what makes it a horizon rather than a picture
             someone dropped into a card. */}
-        <MascotBanner variant="wide" height={76} style={styles.banner} />
+        <MascotBanner variant="wide" height={76} fill="cover" style={styles.banner} />
 
         {/* Refused, not offline. Both leave the dashboard on cached data and
             look the same from here, so without this a missing key would pass
