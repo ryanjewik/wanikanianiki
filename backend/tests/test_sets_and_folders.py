@@ -149,3 +149,81 @@ async def test_an_automatic_group_name_never_collides(monkeypatch):
 
     assert await repo.unique_set_name(None, user_id=1, name="Import Sep 25") == "Import Sep 25 (3)"
     assert await repo.unique_set_name(None, user_id=1, name="Lesson 1") == "Lesson 1"
+
+
+# -- choosing where an import goes -----------------------------------------
+
+ROW = {"key": "r1", "kanjiFurigana": "大人", "furiganaOnly": "おとな", "english": "adult"}
+
+
+def _source(**extra):
+    base = dict(id=4, set_id=None, label=None, uploaded_at=NOW, jlpt_level=3)
+    base.update(extra)
+    return SimpleNamespace(**base)
+
+
+@pytest.fixture
+def confirm_calls(monkeypatch):
+    """Fakes the writes behind confirm and records what they were asked for."""
+    seen = {"sets": [], "set_id": None}
+
+    async def fake_create_set(_session, *, user_id, name, description=None):
+        row = SimpleNamespace(id=50, user_id=user_id, name=name, jlpt_level=None, folder_id=None)
+        seen["sets"].append(row)
+        return row
+
+    async def fake_unique(_session, *, user_id, name):
+        return name
+
+    async def fake_cards(_session, _rows, *, user_id, source_image_id, set_id):
+        seen["set_id"] = set_id
+        return []
+
+    monkeypatch.setattr(repo, "create_vocab_set", fake_create_set)
+    monkeypatch.setattr(repo, "unique_set_name", fake_unique)
+    monkeypatch.setattr(repo, "create_flashcards", fake_cards)
+    return seen
+
+
+async def test_an_import_can_be_named_and_filed(client, monkeypatch, confirm_calls):
+    monkeypatch.setattr(repo, "get_vocab_source", _async(_source()))
+    monkeypatch.setattr(repo, "get_vocab_folder", _async(SimpleNamespace(id=3, user_id=USER.id)))
+
+    async with client:
+        response = await client.post(
+            "/api/vocab-sources/4/confirm",
+            json={"items": [ROW], "setName": "  Quartet ch2 ", "folderId": 3},
+        )
+
+    assert response.status_code == 200
+    (made,) = confirm_calls["sets"]
+    assert made.name == "Quartet ch2"
+    assert made.folder_id == 3 and made.jlpt_level == 3
+    assert confirm_calls["set_id"] == 50
+
+
+async def test_an_import_can_join_an_existing_set(client, monkeypatch, confirm_calls):
+    monkeypatch.setattr(repo, "get_vocab_source", _async(_source()))
+    monkeypatch.setattr(repo, "get_vocab_set", _async(_set_row(7)))
+
+    async with client:
+        response = await client.post(
+            "/api/vocab-sources/4/confirm", json={"items": [ROW], "setId": 7}
+        )
+
+    assert response.status_code == 200
+    assert confirm_calls["sets"] == []
+    assert confirm_calls["set_id"] == 7
+
+
+async def test_an_import_into_someone_elses_set_is_a_404(client, monkeypatch, confirm_calls):
+    monkeypatch.setattr(repo, "get_vocab_source", _async(_source()))
+    monkeypatch.setattr(repo, "get_vocab_set", _async(SimpleNamespace(id=7, user_id=99)))
+
+    async with client:
+        response = await client.post(
+            "/api/vocab-sources/4/confirm", json={"items": [ROW], "setId": 7}
+        )
+
+    assert response.status_code == 404
+    assert confirm_calls["set_id"] is None

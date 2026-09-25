@@ -252,10 +252,19 @@ class VocabSourceResult(CamelModel):
     detail: str | None = None
 
 
-class ConfirmImportRequest(BaseModel):
-    """The rows the user kept after correcting the extraction."""
+class ConfirmImportRequest(CamelModel):
+    """The rows the user kept after correcting the extraction, and where they go.
+
+    `set_id` adds them to an existing set. Without it the page gets a new set,
+    named `set_name` -- or after the page's label or the day when that is blank
+    -- and filed in `folder_id` when one is given. All three are optional, so a
+    client that sends only the rows gets the old behaviour.
+    """
 
     items: list[DetectedItem]
+    set_id: int | None = None
+    set_name: str | None = Field(default=None, max_length=128)
+    folder_id: int | None = None
 
 
 # -- sets, flashcards, SRS -------------------------------------------------

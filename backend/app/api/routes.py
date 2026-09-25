@@ -490,14 +490,23 @@ async def confirm_vocab_source(
     user = await repo.get_default_user(session)
     keep = [item for item in payload.items if item.selected and item.status != "duplicate"]
 
+    # Checked before anything is written, so a stale id from the phone fails
+    # the whole confirm instead of landing the words somewhere unexpected.
+    if payload.set_id is not None:
+        _, chosen = await _owned_set(session, payload.set_id)
+        source.set_id = chosen.id
+    elif payload.folder_id is not None:
+        await _owned_folder(session, payload.folder_id)
+
     # Every import lands in a group. A page photographed into a set already
-    # has one; a page from the Import tab gets its own, named after its label
-    # or the day, and tagged with the JLPT tier the page was imported as. Made
-    # here rather than at upload so an upload that is never confirmed leaves
-    # no empty group behind.
+    # has one, as does a page the user pointed at an existing set; otherwise it
+    # gets its own -- named by the user, or after its label or the day -- and
+    # tagged with the JLPT tier the page was imported as. Made here rather
+    # than at upload so an upload that is never confirmed leaves no empty
+    # group behind.
     if keep and source.set_id is None:
         stamp = source.uploaded_at.astimezone(timezone.utc) if source.uploaded_at else None
-        base = source.label or (
+        base = (payload.set_name or "").strip() or source.label or (
             f"Import {stamp:%b} {stamp.day}" if stamp else "Imported words"
         )
         group = await repo.create_vocab_set(
@@ -506,6 +515,7 @@ async def confirm_vocab_source(
             name=await repo.unique_set_name(session, user_id=user.id, name=base),
         )
         group.jlpt_level = source.jlpt_level
+        group.folder_id = payload.folder_id
         source.set_id = group.id
         await session.flush()
 
