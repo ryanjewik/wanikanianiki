@@ -18,6 +18,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
+import { FuriganaText } from '@/components/Furigana';
 import { AllCaughtUpArt, CheckMark, CorrectMark, IncorrectMark, OfflineArt } from '@/components/icons';
 import { finishKana, LanguageInput } from '@/components/LanguageInput';
 import { Mascot, type Pose } from '@/components/Mascot';
@@ -28,6 +29,7 @@ import {
   Card,
   ChunkyButton,
   EmptyState,
+  InlineButton,
   Pill,
   SectionHeading,
   SessionProgressBar,
@@ -62,6 +64,15 @@ interface QueueEntry {
 
 const palette = subjectPalette.vocabulary;
 
+/**
+ * Furigana rides on the kanji until a card has been answered right this many
+ * times in a row. A brand-new word is being learned, not recalled, and making
+ * the reading a second puzzle only slows that down; once it has held twice the
+ * kanji stands alone. SM-2's `repetitions` is exactly that run — it resets on a
+ * miss, so a lapse brings the reading back.
+ */
+const FURIGANA_UNTIL_REPETITIONS = 2;
+
 export default function QuizScreen() {
   const router = useRouter();
   const { data: due, loading, error } = useDueFlashcards();
@@ -84,56 +95,74 @@ export default function QuizScreen() {
   const answered = stats.correct + stats.incorrect;
   const total = (entries?.length ?? 0) + stats.correct;
 
-  const onSubmit = React.useCallback(() => {
-    if (!current || verdict) return;
+  /**
+   * Grades the current card. `gaveUp` is the "I don't know" path: recorded as
+   * a miss exactly like a wrong answer — the server grades an empty answer as
+   * wrong, so the schedule treats it the same — but it reveals rather than
+   * scolds. Nothing was typed wrong; there is no mistake to buzz at.
+   */
+  const grade = React.useCallback(
+    (gaveUp: boolean) => {
+      if (!current || verdict) return;
 
-    // A production card accepts the reading as well as the written form, so
-    // romaji converted to kana is a real answer, not a near miss.
-    const production = current.card.skillType === 'production';
-    const typed = production ? finishKana(answer) : answer;
-    if (typed !== answer) setAnswer(typed);
-    const ok = matches(typed, current.card.acceptedAnswers);
+      // A production card accepts the reading as well as the written form, so
+      // romaji converted to kana is a real answer, not a near miss.
+      const production = current.card.skillType === 'production';
+      const typed = gaveUp ? '' : production ? finishKana(answer) : answer;
+      if (!gaveUp && !typed.trim()) return;
+      if (typed !== answer) setAnswer(typed);
+      const ok = !gaveUp && matches(typed, current.card.acceptedAnswers);
 
-    setVerdict(ok ? 'correct' : 'incorrect');
-    setPose(ok ? 'correct' : 'wrong');
+      setVerdict(ok ? 'correct' : 'incorrect');
+      setPose(ok ? 'correct' : 'wrong');
 
-    if (ok) {
-      feedback.correct();
-      // A milestone chimes on top of the correct cue rather than replacing it,
-      // so a run of five still confirms the answer first.
-      if (register(true)) feedback.streak();
-    } else {
-      feedback.wrong();
-      shake();
-      register(false);
-    }
+      if (ok) {
+        feedback.correct();
+        // A milestone chimes on top of the correct cue rather than replacing it,
+        // so a run of five still confirms the answer first.
+        if (register(true)) feedback.streak();
+      } else if (gaveUp) {
+        feedback.reveal();
+        register(false);
+      } else {
+        feedback.wrong();
+        shake();
+        register(false);
+      }
 
-    // Only the first attempt at a card is the graded one.
-    if (!current.submitted) {
-      void answerFlashcard(current.card.srsStateId, typed);
-      setStats((prev) =>
-        ok
-          ? { ...prev, correct: prev.correct + 1 }
-          : { ...prev, incorrect: prev.incorrect + 1, missed: [...prev.missed, current.card] },
+      // Only the first attempt at a card is the graded one.
+      if (!current.submitted) {
+        void answerFlashcard(current.card.srsStateId, typed);
+        setStats((prev) =>
+          ok
+            ? { ...prev, correct: prev.correct + 1 }
+            : { ...prev, incorrect: prev.incorrect + 1, missed: [...prev.missed, current.card] },
+        );
+      }
+
+      // A miss holds longer than a hit: the answer is on screen, and that reveal
+      // is the only teaching moment the card gets.
+      setTimeout(
+        () => {
+          setVerdict(null);
+          setAnswer('');
+          setPose('idle');
+          setEntries((rest) => {
+            if (!rest) return rest;
+            const [, ...remaining] = rest;
+            if (remaining.length > 0 || !ok) feedback.advance();
+            return ok ? remaining : [...remaining, { ...rest[0], submitted: true }];
+          });
+        },
+        // Giving up holds longest: that reveal is the whole lesson for this card.
+        ok ? 600 : gaveUp ? 2200 : 1600,
       );
-    }
+    },
+    [answer, answerFlashcard, current, register, shake, verdict],
+  );
 
-    // A miss holds longer than a hit: the answer is on screen, and that reveal
-    // is the only teaching moment the card gets.
-    setTimeout(
-      () => {
-        setVerdict(null);
-        setAnswer('');
-        setPose('idle');
-        setEntries((rest) => {
-          if (!rest) return rest;
-          const [, ...remaining] = rest;
-          return ok ? remaining : [...remaining, { ...rest[0], submitted: true }];
-        });
-      },
-      ok ? 600 : 1600,
-    );
-  }, [answer, answerFlashcard, current, register, shake, verdict]);
+  const onSubmit = React.useCallback(() => grade(false), [grade]);
+  const onGiveUp = React.useCallback(() => grade(true), [grade]);
 
   if (loading) return <View style={styles.screen} />;
 
@@ -210,7 +239,21 @@ export default function QuizScreen() {
           <Text style={styles.promptLabel}>
             {production ? 'Write it in Japanese' : "What's the meaning?"}
           </Text>
-          <Text style={production ? styles.promptEnglish : styles.promptGlyph}>{card.prompt}</Text>
+          {production ? (
+            <Text style={styles.promptEnglish}>{card.prompt}</Text>
+          ) : (
+            <FuriganaText
+              text={card.prompt}
+              furigana={{ [card.prompt]: card.furiganaOnly }}
+              show={
+                card.repetitions < FURIGANA_UNTIL_REPETITIONS &&
+                Boolean(card.furiganaOnly) &&
+                card.furiganaOnly !== card.prompt
+              }
+              style={styles.promptGlyph}
+              readingSize={18}
+            />
+          )}
           <View style={styles.promptMeta}>
             <Pill
               label={current.submitted ? 'retry' : card.repetitions === 0 ? 'new' : `${card.intervalDays}d`}
@@ -296,11 +339,12 @@ export default function QuizScreen() {
           </Pressable>
         </Animated.View>
 
-        <Text style={styles.inputHint}>
-          {production
-            ? 'Kanji or kana — either form counts'
-            : 'Type the English meaning'}
-        </Text>
+        <View style={styles.hintRow}>
+          <Text style={styles.inputHint}>
+            {production ? 'Kanji or kana — either form counts' : 'Type the English meaning'}
+          </Text>
+          {verdict ? null : <InlineButton label="I don't know" emphasis="quiet" onPress={onGiveUp} />}
+        </View>
 
         <Card style={styles.sessionCard}>
           <SectionHeading
@@ -464,10 +508,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
   inputHint: {
     ...typeScale.metaSmall,
     color: colors.inkFaint,
-    textAlign: 'center',
+    flexShrink: 1,
   },
 
   sessionCard: {
