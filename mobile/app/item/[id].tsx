@@ -21,10 +21,9 @@ import {
   StageLadder,
   StatTile,
 } from '@/components/ui';
-import { findSubject } from '@/data/fixtures';
 import { formatDueIn } from '@/data/sync';
 import type { Subject } from '@/data/types';
-import { useSubject } from '@/hooks/useStudyData';
+import { useSubject, useSubjects } from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -43,6 +42,9 @@ export default function ItemDetailScreen() {
   const router = useRouter();
   const subjectId = Number(id);
   const { data } = useSubject(Number.isFinite(subjectId) ? subjectId : null);
+  // Before the early return, so the hook order never changes between renders.
+  const { data: components } = useSubjects(data?.subject.componentSubjectIds ?? []);
+  const { data: usedIn } = useSubjects(data?.subject.amalgamationSubjectIds ?? []);
 
   if (!data) return <View style={styles.screen} />;
 
@@ -60,12 +62,8 @@ export default function ItemDetailScreen() {
   const kunyomi = subject.readings.find((r) => r.type === 'kunyomi');
   const plainReading = subject.readings.find((r) => r.type === 'vocabulary');
 
-  const components = subject.componentSubjectIds
-    .map(findSubject)
-    .filter((s): s is Subject => Boolean(s));
-  const usedIn = subject.amalgamationSubjectIds
-    .map(findSubject)
-    .filter((s): s is Subject => Boolean(s));
+  const parts: Subject[] = components ?? [];
+  const appearsIn: Subject[] = usedIn ?? [];
 
   const typeTitle =
     subject.type === 'kanji' ? 'Kanji Detail' : subject.type === 'radical' ? 'Radical Detail' : 'Word Detail';
@@ -100,9 +98,9 @@ export default function ItemDetailScreen() {
                 <Text style={styles.alsoLine}>also: {otherMeanings.join(', ')}</Text>
               ) : null}
 
-              {components.length > 0 ? (
+              {parts.length > 0 ? (
                 <View style={styles.componentRow}>
-                  {components.map((component) => (
+                  {parts.map((component) => (
                     <Pressable
                       key={component.id}
                       onPress={() => router.push(`/item/${component.id}`)}
@@ -119,7 +117,7 @@ export default function ItemDetailScreen() {
                     </Pressable>
                   ))}
                   <Text style={styles.componentCount}>
-                    {components.length} {subject.type === 'kanji' ? 'radicals' : 'kanji'}
+                    {parts.length} {subject.type === 'kanji' ? 'radicals' : 'kanji'}
                   </Text>
                 </View>
               ) : null}
@@ -186,21 +184,21 @@ export default function ItemDetailScreen() {
           </View>
         </Card>
 
-        {usedIn.length > 0 ? (
+        {appearsIn.length > 0 ? (
           <Card variant="bordered">
             <SectionHeading
               title="Shows up in"
-              trailing={`${usedIn.length} words ›`}
+              trailing={`${appearsIn.length} words ›`}
               trailingColor={colors.vocabulary}
             />
             <View>
-              {usedIn.map((word, index) => (
+              {appearsIn.map((word, index) => (
                 <Pressable
                   key={word.id}
                   onPress={() => router.push(`/item/${word.id}`)}
                   onPressIn={feedback.select}
                 >
-                  <View style={[styles.wordRow, index < usedIn.length - 1 && styles.rowDivider]}>
+                  <View style={[styles.wordRow, index < appearsIn.length - 1 && styles.rowDivider]}>
                     <Text style={styles.wordGlyph}>{word.characters}</Text>
                     <Text style={styles.wordMeaning}>
                       {word.meanings[0]?.meaning.toLowerCase() ?? ''}

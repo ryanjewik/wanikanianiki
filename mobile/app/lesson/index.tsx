@@ -9,6 +9,7 @@
 import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import { MascotCoach } from '@/components/MascotCoach';
 import { RiseIn } from '@/components/motion';
@@ -22,12 +23,11 @@ import {
   StepDots,
   TextButton,
 } from '@/components/ui';
-import { findSubject } from '@/data/fixtures';
 import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
 import { feedback } from '@/feedback';
 import { speakJapanese } from '@/feedback/speech';
-import { useLessonQueue, useStudyActions } from '@/hooks/useStudyData';
+import { useLessonQueue, useStudyActions, useSubjects } from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -36,6 +36,11 @@ import {
   subjectPalette,
   type as typeScale,
 } from '@/theme/tokens';
+
+/** How far a swipe has to travel before it turns the page. */
+const SWIPE_DISTANCE = 70;
+/** "Shows up in" shows this many; a common kanji is in dozens of words. */
+const USED_IN_LIMIT = 8;
 
 export default function LessonScreen() {
   const router = useRouter();
@@ -62,6 +67,13 @@ export default function LessonScreen() {
   React.useEffect(() => {
     scroller.current?.scrollTo({ y: 0, animated: false });
   }, [index]);
+
+  // Looked up before any early return: hooks run in the same order every
+  // render. Empty while the queue loads.
+  const { data: components } = useSubjects(current?.subject.componentSubjectIds ?? []);
+  const { data: usedIn } = useSubjects(
+    (current?.subject.amalgamationSubjectIds ?? []).slice(0, USED_IN_LIMIT),
+  );
 
   const advance = React.useCallback(() => {
     if (index + 1 >= items.length) {
@@ -92,7 +104,9 @@ export default function LessonScreen() {
   }, [index, items.length, router]);
 
   const onGotIt = React.useCallback(async () => {
-    if (current) {
+    // Swiping back re-reads an item already taught; moving on from it again
+    // must not send a second start for the same assignment.
+    if (current && !taught.current.includes(current)) {
       taught.current.push(current);
       await completeLesson(current.assignment);
     }
@@ -110,6 +124,31 @@ export default function LessonScreen() {
     advance();
   }, [current, advance]);
 
+  /** Back one item, to read it again. View-only: it was already taught. */
+  const onBack = React.useCallback(() => {
+    if (index === 0) return;
+    feedback.back();
+    setIndex((i) => i - 1);
+  }, [index]);
+
+  /**
+   * Swipe left to move on -- the same as "Got it" -- and right to go back.
+   * Horizontal only, and only past a clear threshold, so a vertical scroll
+   * through a long mnemonic never reads as a page turn.
+   */
+  const swipe = React.useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .activeOffsetX([-24, 24])
+        .failOffsetY([-14, 14])
+        .onEnd((event) => {
+          if (event.translationX < -SWIPE_DISTANCE) void onGotIt();
+          else if (event.translationX > SWIPE_DISTANCE) onBack();
+        }),
+    [onBack, onGotIt],
+  );
+
   if (!current) return <View style={styles.screen} />;
 
   const { subject } = current;
@@ -126,13 +165,14 @@ export default function LessonScreen() {
     subject.type === 'vocabulary'
       ? (subject.characters ?? '')
       : (subject.readings.find((r) => r.primary) ?? subject.readings[0])?.reading ?? '';
-  const components = subject.componentSubjectIds
-    .map(findSubject)
-    .filter((s): s is Subject => Boolean(s));
-  const usedIn = subject.amalgamationSubjectIds
-    .map(findSubject)
-    .filter((s): s is Subject => Boolean(s))
-    .slice(0, 2);
+  const parts: Subject[] = components ?? [];
+  const appearsIn: Subject[] = usedIn ?? [];
+  const appearsInLabel =
+    subject.type === 'radical'
+      ? 'Used in kanji'
+      : subject.type === 'kanji'
+        ? 'Used in vocabulary'
+        : 'Shows up in';
 
   return (
     <View style={styles.screen}>
@@ -150,112 +190,133 @@ export default function LessonScreen() {
         }
       />
 
-      <ScrollView ref={scroller} contentContainerStyle={styles.content}>
-        {/* Keyed on the subject so each new item's card rises in, rather than
-            its contents swapping under a stationary frame. */}
-        <RiseIn key={subject.id}>
-          <Card flush>
-            <CardBanner
-              type={subject.type}
-              label={`${typeLabel} · level ${subject.level}`}
-              trailing="meaning first"
-            />
-            <View style={styles.subjectBody}>
-              <Text style={styles.subjectGlyph}>{subject.characters}</Text>
+      <GestureDetector gesture={swipe}>
+        <ScrollView ref={scroller} contentContainerStyle={styles.content}>
+          {/* Keyed on the subject so each new item's card rises in, rather than
+              its contents swapping under a stationary frame. */}
+          <RiseIn key={subject.id}>
+            <Card flush>
+              <CardBanner
+                type={subject.type}
+                label={`${typeLabel} · level ${subject.level}`}
+                trailing="meaning first"
+              />
+              <View style={styles.subjectBody}>
+                <Text style={styles.subjectGlyph}>{subject.characters}</Text>
 
-              {components.length > 0 ? (
-                <View style={styles.equation}>
-                  {components.map((component, position) => (
-                    <React.Fragment key={component.id}>
-                      {position > 0 ? <Text style={styles.operator}>+</Text> : null}
-                      <View style={[styles.equationChip, { backgroundColor: subjectPalette[component.type].solid }]}>
-                        <Text style={styles.equationChipText}>{component.characters}</Text>
-                      </View>
-                    </React.Fragment>
-                  ))}
-                  <Text style={styles.operator}>=</Text>
-                  <View style={[styles.equationChip, { backgroundColor: palette.solid }]}>
-                    <Text style={styles.equationChipText}>{subject.characters}</Text>
+                {parts.length > 0 ? (
+                  <View style={styles.equation}>
+                    {parts.map((component, position) => (
+                      <React.Fragment key={component.id}>
+                        {position > 0 ? <Text style={styles.operator}>+</Text> : null}
+                        <View style={[styles.equationChip, { backgroundColor: subjectPalette[component.type].solid }]}>
+                          <Text style={styles.equationChipText}>{component.characters}</Text>
+                        </View>
+                      </React.Fragment>
+                    ))}
+                    <Text style={styles.operator}>=</Text>
+                    <View style={[styles.equationChip, { backgroundColor: palette.solid }]}>
+                      <Text style={styles.equationChipText}>{subject.characters}</Text>
+                    </View>
                   </View>
-                </View>
-              ) : null}
+                ) : null}
 
-              <Text style={styles.meaning}>{primaryMeaning}</Text>
-            </View>
-          </Card>
-        </RiseIn>
+                <Text style={styles.meaning}>{primaryMeaning}</Text>
+              </View>
+            </Card>
+          </RiseIn>
 
-        {subject.meaningMnemonic ? (
-          <Card style={styles.mnemonicCard}>
-            {/* A mnemonic is the one place in the app where something is being
-                explained to you rather than tested, so it is the one place the
-                mascot should be doing the talking. */}
-            <MascotCoach
-              label="Mnemonic"
-              tone={subject.type}
-              size={84}
-              speed={0.6}
-              pose="idle"
-            >
-              <Text style={styles.mnemonicText}>{subject.meaningMnemonic}</Text>
-            </MascotCoach>
-          </Card>
-        ) : null}
-
-        {subject.readings.length > 0 ? (
-          <Card>
-            <Overline style={styles.groupLabel}>Readings</Overline>
-            <View style={styles.readingRow}>
-              {onyomi ? <ReadingChip reading={onyomi.reading} label="ON'YOMI" tone="radical" /> : null}
-              {kunyomi ? (
-                <ReadingChip reading={kunyomi.reading} label="KUN'YOMI" tone="vocabulary" />
-              ) : null}
-              {plainReading ? (
-                <ReadingChip reading={plainReading.reading} label="READING" tone="vocabulary" />
-              ) : null}
-              {/* Reads the item aloud via the platform speech engine — free, and
-                  works offline once a Japanese voice pack is installed.
-
-                  What gets spoken is not the glyph: a kanji in isolation has no
-                  one pronunciation, so a kanji or radical is read by its
-                  primary reading and only a vocabulary word reads as itself. */}
-              <Pressable
-                onPress={() => {
-                  feedback.tap();
-                  speakJapanese(spoken);
-                }}
-                disabled={!spoken}
-                style={[styles.speakButton, !spoken && styles.speakButtonMuted]}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Read aloud"
+          {subject.meaningMnemonic ? (
+            <Card style={styles.mnemonicCard}>
+              {/* A mnemonic is the one place in the app where something is being
+                  explained to you rather than tested, so it is the one place the
+                  mascot should be doing the talking. */}
+              <MascotCoach
+                label="Mnemonic"
+                tone={subject.type}
+                size={84}
+                speed={0.6}
+                pose="idle"
               >
-                <Text style={styles.speakGlyph}>♪</Text>
-              </Pressable>
-            </View>
-          </Card>
-        ) : null}
+                <Text style={styles.mnemonicText}>{subject.meaningMnemonic}</Text>
+              </MascotCoach>
+            </Card>
+          ) : null}
 
-        {usedIn.length > 0 ? (
-          <Card>
-            <Overline style={styles.groupLabel}>Shows up in</Overline>
-            <View style={styles.usedInRow}>
-              {usedIn.map((word) => (
-                <View key={word.id} style={styles.usedInTile}>
-                  <Text style={styles.usedInWord}>{word.characters}</Text>
-                  <Text style={styles.usedInGloss}>
-                    {word.readings[0]?.reading} · {word.meanings[0]?.meaning.toLowerCase()}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </Card>
-        ) : null}
-      </ScrollView>
+          {subject.readings.length > 0 ? (
+            <Card>
+              <Overline style={styles.groupLabel}>Readings</Overline>
+              <View style={styles.readingRow}>
+                {onyomi ? <ReadingChip reading={onyomi.reading} label="ON'YOMI" tone="radical" /> : null}
+                {kunyomi ? (
+                  <ReadingChip reading={kunyomi.reading} label="KUN'YOMI" tone="vocabulary" />
+                ) : null}
+                {plainReading ? (
+                  <ReadingChip reading={plainReading.reading} label="READING" tone="vocabulary" />
+                ) : null}
+                {/* Reads the item aloud via the platform speech engine — free, and
+                    works offline once a Japanese voice pack is installed.
+
+                    What gets spoken is not the glyph: a kanji in isolation has no
+                    one pronunciation, so a kanji or radical is read by its
+                    primary reading and only a vocabulary word reads as itself. */}
+                <Pressable
+                  onPress={() => {
+                    feedback.tap();
+                    speakJapanese(spoken);
+                  }}
+                  disabled={!spoken}
+                  style={[styles.speakButton, !spoken && styles.speakButtonMuted]}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Read aloud"
+                >
+                  <Text style={styles.speakGlyph}>♪</Text>
+                </Pressable>
+              </View>
+            </Card>
+          ) : null}
+
+          {subject.readingMnemonic ? (
+            <Card style={styles.mnemonicCard}>
+              <MascotCoach label="Reading mnemonic" tone={subject.type} size={84} speed={0.6} pose="idle">
+                <Text style={styles.mnemonicText}>{subject.readingMnemonic}</Text>
+              </MascotCoach>
+            </Card>
+          ) : null}
+
+          {appearsIn.length > 0 ? (
+            <Card>
+              <Overline style={styles.groupLabel}>
+                {appearsInLabel}
+                {subject.amalgamationSubjectIds.length > appearsIn.length
+                  ? ` · ${appearsIn.length} of ${subject.amalgamationSubjectIds.length}`
+                  : ''}
+              </Overline>
+              <View style={styles.usedInRow}>
+                {appearsIn.map((word) => (
+                  <View key={word.id} style={styles.usedInTile}>
+                    <Text style={styles.usedInWord}>{word.characters ?? word.slug}</Text>
+                    <Text style={styles.usedInGloss} numberOfLines={2}>
+                      {(word.readings.find((r) => r.primary) ?? word.readings[0])?.reading}
+                      {word.readings.length > 0 ? ' · ' : ''}
+                      {(word.meanings.find((m) => m.primary) ?? word.meanings[0])?.meaning.toLowerCase()}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </Card>
+          ) : null}
+        </ScrollView>
+      </GestureDetector>
 
       <View style={styles.footer}>
         <ChunkyButton label="Got it — next" tone={subject.type} onPress={onGotIt} />
-        <TextButton label="Show me this one again later" onPress={onDefer} />
+        <View style={styles.footerLinks}>
+          {index > 0 ? <TextButton label="‹ Previous" onPress={onBack} /> : <View />}
+          <TextButton label="Show me this one again later" onPress={onDefer} />
+        </View>
+        <Text style={styles.swipeHint}>Swipe left to go on, right to go back</Text>
       </View>
     </View>
   );
@@ -317,10 +378,11 @@ const styles = StyleSheet.create({
     color: colors.ink,
   },
 
+  // Not a row: the coach inside lays itself out as one. A row here shrank the
+  // coach to the width of its art, leaving the text column zero pixels wide --
+  // which is why no mnemonic ever appeared, only the crabigator.
   mnemonicCard: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingVertical: 9,
+    paddingVertical: 11,
     paddingHorizontal: 13,
   },
   artSlot: {
@@ -369,10 +431,12 @@ const styles = StyleSheet.create({
 
   usedInRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 9,
   },
   usedInTile: {
-    flex: 1,
+    flexBasis: '47%',
+    flexGrow: 1,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.control,
@@ -394,5 +458,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.gutter,
     paddingVertical: 12,
     gap: 7,
+  },
+  footerLinks: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  swipeHint: {
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+    textAlign: 'center',
   },
 });

@@ -70,7 +70,6 @@ function useAsync<T>(load: () => Promise<T>, deps: React.DependencyList): AsyncS
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, nonce]);
 
   const reload = React.useCallback(() => setNonce((n) => n + 1), []);
@@ -152,6 +151,20 @@ export function useSubject(subjectId: number | null) {
       return { subject: local, assignment: await db.getAssignmentForSubject(subjectId) };
     }
 
+    // Not mirrored yet -- a word reached from "Shows up in" usually is not.
+    // Ask the server before settling for the samples.
+    if (api.isBackendConfigured) {
+      try {
+        const [fetched] = await api.fetchSubjects([subjectId]);
+        if (fetched) {
+          await db.upsertSubjects([fetched]).catch(() => undefined);
+          return { subject: fetched, assignment: await db.getAssignmentForSubject(subjectId) };
+        }
+      } catch {
+        // Offline: fall through to the samples.
+      }
+    }
+
     const sample = fixtures.findSubject(subjectId);
     if (!sample) return null;
 
@@ -160,6 +173,43 @@ export function useSubject(subjectId: number | null) {
     );
     return { subject: sample, assignment: queued?.assignment ?? null };
   }, [subjectId]);
+}
+
+/**
+ * Several subjects by id, in the order asked for — an item's parts and the
+ * words it appears in.
+ *
+ * The local mirror first, then the server for whatever it lacks (written back
+ * so the next lookup is local), and the bundled samples only when no server is
+ * configured. The lesson and item screens used to go straight to the samples,
+ * so on a real account "radicals + … =" and "Shows up in" were almost always
+ * empty: the samples hold a single level.
+ */
+export function useSubjects(ids: number[]) {
+  const key = ids.join(',');
+  return useAsync<Subject[]>(async () => {
+    if (ids.length === 0) return [];
+
+    const byId = new Map((await db.getSubjectsByIds(ids)).map((s) => [s.id, s]));
+    const missing = ids.filter((id) => !byId.has(id));
+
+    if (missing.length > 0 && api.isBackendConfigured) {
+      try {
+        const fetched = await api.fetchSubjects(missing);
+        fetched.forEach((s) => byId.set(s.id, s));
+        await db.upsertSubjects(fetched).catch(() => undefined);
+      } catch {
+        // Offline: show what the mirror has rather than nothing.
+      }
+    } else if (!api.isBackendConfigured) {
+      for (const id of missing) {
+        const sample = fixtures.findSubject(id);
+        if (sample) byId.set(id, sample);
+      }
+    }
+
+    return ids.map((id) => byId.get(id)).filter((s): s is Subject => Boolean(s));
+  }, [key]);
 }
 
 /**
