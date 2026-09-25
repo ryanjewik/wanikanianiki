@@ -1,8 +1,7 @@
 """The photo-import endpoints, end to end against real SQL.
 
-Covers the contract `mobile/src/data/api.ts` is written against: upload
-returns immediately with a source id, the client polls until the rows appear,
-and confirm commits only what the user kept.
+Covers the contract `mobile/src/data/api.ts` is written against: one upload
+returns the rows, and confirm commits only what the user kept.
 
 Skipped unless `TEST_DATABASE_URL` is set — see
 `tests/test_repository_integration.py` for why that is a separate variable.
@@ -64,8 +63,8 @@ async def client(monkeypatch):
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
-    # One session for the whole test, so writes made by a background task are
-    # visible to the next request without depending on transaction timing.
+    # One session for the whole test, so each request sees the last one's
+    # writes without depending on transaction timing.
     session = async_sessionmaker(engine, expire_on_commit=False)()
     async with session.begin():
         await repo.upsert_user(
@@ -87,14 +86,7 @@ async def client(monkeypatch):
 
     await session.close()
     await engine.dispose()
-    # The background task builds its own engine off the app's session factory;
-    # dispose it too or its connections outlive the test's event loop.
-    from app.db.session import dispose_engine
-
-    await dispose_engine()
     get_settings.cache_clear()
-    ocr_service._CACHE.clear()
-    ocr_service._FAILURES.clear()
 
 
 def _stub_extraction(monkeypatch, rows):
@@ -106,6 +98,16 @@ def _stub_extraction(monkeypatch, rows):
     )
 
 
+async def _upload(client, **data) -> dict:
+    response = await client.post(
+        "/api/vocab-sources",
+        files={"image": ("p.png", PNG, "image/png")},
+        data=data,
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 ROWS = [
     ExtractedRow(kanji_furigana="食べる", furigana_only="たべる",
                  english="to eat", ambiguous=False),
@@ -114,7 +116,7 @@ ROWS = [
 ]
 
 
-async def test_upload_returns_immediately_then_rows_appear(client, monkeypatch):
+async def test_upload_returns_the_rows_in_one_request(client, monkeypatch):
     _stub_extraction(monkeypatch, ROWS)
 
     upload = await client.post(
@@ -123,18 +125,11 @@ async def test_upload_returns_immediately_then_rows_appear(client, monkeypatch):
         data={"jlpt_level": "5"},
     )
 
-    # 202, not 200: the work has been accepted, not finished.
-    assert upload.status_code == 202
-    body = upload.json()
-    source_id = body["sourceId"]
-    assert body["status"] == "pending"
-    assert body["items"] == []
-
-    # TestClient runs background tasks before returning, so by now it is done.
-    poll = await client.get(f"/api/vocab-sources/{source_id}")
-    assert poll.status_code == 200
-    result = poll.json()
+    assert upload.status_code == 200
+    result = upload.json()
+    assert isinstance(result["sourceId"], int)
     assert result["status"] == "processed"
+    assert result["detail"] is None
 
     kanji = {item["kanjiFurigana"] for item in result["items"]}
     assert kanji == {"食べる", "辛い"}
@@ -150,12 +145,8 @@ async def test_upload_returns_immediately_then_rows_appear(client, monkeypatch):
 async def test_confirm_commits_only_the_kept_rows(client, monkeypatch):
     _stub_extraction(monkeypatch, ROWS)
 
-    source_id = (
-        await client.post(
-            "/api/vocab-sources", files={"image": ("p.png", PNG, "image/png")}
-        )
-    ).json()["sourceId"]
-    items = (await client.get(f"/api/vocab-sources/{source_id}")).json()["items"]
+    upload = await _upload(client)
+    source_id, items = upload["sourceId"], upload["items"]
 
     # The user resolves the ambiguous reading and keeps both rows.
     for item in items:
@@ -181,12 +172,8 @@ async def test_confirm_commits_only_the_kept_rows(client, monkeypatch):
 async def test_deselected_rows_are_not_imported(client, monkeypatch):
     _stub_extraction(monkeypatch, ROWS)
 
-    source_id = (
-        await client.post(
-            "/api/vocab-sources", files={"image": ("p.png", PNG, "image/png")}
-        )
-    ).json()["sourceId"]
-    items = (await client.get(f"/api/vocab-sources/{source_id}")).json()["items"]
+    upload = await _upload(client)
+    source_id, items = upload["sourceId"], upload["items"]
 
     created = (
         await client.post(
@@ -201,20 +188,12 @@ async def test_deselected_rows_are_not_imported(client, monkeypatch):
 async def test_reimporting_the_same_page_marks_duplicates(client, monkeypatch):
     _stub_extraction(monkeypatch, ROWS)
 
-    first = (
-        await client.post(
-            "/api/vocab-sources", files={"image": ("p.png", PNG, "image/png")}
-        )
-    ).json()["sourceId"]
-    items = (await client.get(f"/api/vocab-sources/{first}")).json()["items"]
-    await client.post(f"/api/vocab-sources/{first}/confirm", json={"items": items})
+    first = await _upload(client)
+    await client.post(
+        f"/api/vocab-sources/{first['sourceId']}/confirm", json={"items": first["items"]}
+    )
 
-    second = (
-        await client.post(
-            "/api/vocab-sources", files={"image": ("p.png", PNG, "image/png")}
-        )
-    ).json()["sourceId"]
-    again = (await client.get(f"/api/vocab-sources/{second}")).json()["items"]
+    again = (await _upload(client))["items"]
 
     eat = next(i for i in again if i["kanjiFurigana"] == "食べる")
     assert eat["status"] == "duplicate"
@@ -236,34 +215,6 @@ async def test_an_empty_upload_is_rejected(client):
     assert response.status_code == 400
 
 
-async def test_polling_an_unknown_source_is_a_404(client):
-    assert (await client.get("/api/vocab-sources/9999")).status_code == 404
-
-
-async def test_a_lost_buffer_fails_rather_than_hanging_on_pending(client, monkeypatch):
-    """The image buffer is process-local.
-
-    If the extraction runs somewhere the bytes are not — which is exactly what
-    happens the day `ocr-fn` becomes its own function — the row must fail
-    visibly, not sit on `pending` while the app polls forever.
-    """
-    _stub_extraction(monkeypatch, ROWS)
-    from app.services import storage
-
-    # Drop the bytes between upload and extraction. monkeypatch restores it.
-    monkeypatch.setattr(storage, "hold", lambda *a, **k: None)
-
-    source_id = (
-        await client.post(
-            "/api/vocab-sources", files={"image": ("p.png", PNG, "image/png")}
-        )
-    ).json()["sourceId"]
-
-    result = (await client.get(f"/api/vocab-sources/{source_id}")).json()
-    assert result["status"] == "failed"
-    assert "Upload it again" in result["detail"]
-
-
 async def test_extraction_failure_is_reported_not_raised(client, monkeypatch):
     """A vendor failure must reach the client as `failed`, not a 500."""
     def _boom(settings):
@@ -271,13 +222,7 @@ async def test_extraction_failure_is_reported_not_raised(client, monkeypatch):
 
     monkeypatch.setattr(ocr_service, "_client", _boom)
 
-    source_id = (
-        await client.post(
-            "/api/vocab-sources", files={"image": ("p.png", PNG, "image/png")}
-        )
-    ).json()["sourceId"]
-
-    result = (await client.get(f"/api/vocab-sources/{source_id}")).json()
+    result = await _upload(client)
     assert result["status"] == "failed"
     assert "too large" in result["detail"]
     assert result["items"] == []
@@ -291,14 +236,8 @@ async def test_set_items_lists_what_was_imported_into_the_set(client, monkeypatc
         await client.post("/api/vocab-sets", json={"name": "Quartet I, Lesson 1"})
     ).json()["id"]
 
-    source_id = (
-        await client.post(
-            "/api/vocab-sources",
-            files={"image": ("p.png", PNG, "image/png")},
-            data={"set_id": str(set_id)},
-        )
-    ).json()["sourceId"]
-    items = (await client.get(f"/api/vocab-sources/{source_id}")).json()["items"]
+    upload = await _upload(client, set_id=str(set_id))
+    source_id, items = upload["sourceId"], upload["items"]
     for item in items:
         item["selected"] = True
         if item["status"] == "ambiguous":

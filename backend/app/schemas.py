@@ -206,11 +206,10 @@ class VocabItem(CamelModel):
 
 
 class VocabSourceResult(CamelModel):
-    """What the upload returns, and what polling returns afterwards.
+    """What the upload returns once the page has been read.
 
-    `items` is empty while `status` is `pending`. The client uploads, gets a
-    `sourceId` back immediately, and polls this shape until the rows appear —
-    a vision call takes far too long to hold an HTTP request open for.
+    `status` is `processed` with the rows in `items`, or `failed` with the
+    reason in `detail`. The phone keeps `sourceId` to confirm against.
     """
 
     source_id: int

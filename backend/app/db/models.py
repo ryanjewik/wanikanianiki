@@ -251,11 +251,9 @@ class VocabSource(Base):
     # being read out of order — extraction finishes when it finishes.
     position: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
 
-    # Where the original photo is kept, once anywhere durable keeps it.
-    # Null today: the bytes are buffered in memory for the length of the
-    # extraction and then dropped, because nothing reads them afterwards — the
-    # review screen renders the device's own copy. This gets populated when
-    # `ocr-fn` separates and the photo has to cross a process boundary.
+    # Where the original photo is kept, if anywhere ever does. Always null:
+    # the photo goes to the model inside the upload request and is dropped
+    # when it ends, and the review screen renders the device's own copy.
     image_uri: Mapped[str | None] = mapped_column(Text)
 
     # pending | processed | failed. Left as free text rather than an enum for

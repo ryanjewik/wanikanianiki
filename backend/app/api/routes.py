@@ -15,7 +15,6 @@ from datetime import date, datetime, timezone
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -59,7 +58,7 @@ from app.schemas import JlptTier as JlptTierOut
 from app.schemas import LessonBundle as LessonBundleOut
 from app.schemas import LessonQueue as LessonQueueOut
 from app.schemas import Question as QuestionOut
-from app.services import events, jlpt, srs, storage
+from app.services import events, jlpt, srs
 from app.services import grammar as grammar_service
 from app.services import ocr as ocr_service
 from app.services import sync as sync_service
@@ -378,19 +377,17 @@ async def submit_review(
 
 
 # -- photo import ----------------------------------------------------------
-# The vision call takes far longer than a request should, so the upload only
-# records the page and returns; the client polls the GET below until the rows
-# appear. `vocab_sources.status` is the state machine that makes that work.
+# One request: the photo goes in, the model reads it, the rows come back. The
+# phone holds them while the user reviews, and sends back what it keeps on
+# confirm — so nothing about the page, image or draft, outlives the request.
 
 
 @router.post(
     "/api/vocab-sources",
     response_model=VocabSourceResult,
-    status_code=status.HTTP_202_ACCEPTED,
     tags=["import"],
 )
 async def upload_vocab_source(
-    background: BackgroundTasks,
     image: UploadFile = File(...),
     jlpt_level: int | None = Form(None),
     label: str | None = Form(None),
@@ -399,17 +396,14 @@ async def upload_vocab_source(
     settings: Settings = Depends(settings_dep),
     session: AsyncSession = Depends(db_session),
 ) -> VocabSourceResult:
-    """Accept a page photo and start reading it.
+    """Read a page photo and return its rows for review.
 
-    Returns `202` with a `sourceId` and `pending` immediately; the extraction
-    runs after the response is sent.
+    Holds the connection while the model reads, usually tens of seconds and at
+    most `VISION_TIMEOUT_SECONDS`; the Lambda's own timeout sits above that. A
+    page the model cannot read comes back as `status: failed` with a `detail`
+    to show, not as an HTTP error — the source row still records the attempt.
 
-    Not a platform limit — a Lambda Function URL will hold a request for up to
-    fifteen minutes. It is that a phone should not be asked to. A minute-long
-    connection on mobile data dies to a network switch, and both iOS and
-    Android suspend a backgrounded app mid-request. Waiting synchronously would
-    also bill a Lambda for a minute of doing nothing, which is the opposite of
-    why any of this is serverless.
+    Nothing is written to the deck here. That waits for confirm.
     """
     if not settings.has_vision:
         raise HTTPException(
@@ -427,8 +421,8 @@ async def upload_vocab_source(
         )
 
     try:
-        media_type = storage.check_media_type(image.content_type or "")
-    except storage.UnsupportedImageType as exc:
+        media_type = ocr_service.check_media_type(image.content_type or "")
+    except ocr_service.UnsupportedImageType as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
         ) from exc
@@ -456,54 +450,10 @@ async def upload_vocab_source(
         set_id=set_id,
         position=position,
     )
-    source_id = source.id
+    items, failure = await ocr_service.read_source(session, source, data, media_type)
 
-    # The bytes are wanted once, by the extraction, and nothing reads them
-    # afterwards — the review screen shows the device's own copy of the photo.
-    # So they are buffered in memory rather than written anywhere. See
-    # `services/storage.py` for what changes when `ocr-fn` becomes separate.
-    storage.hold(source_id, data, media_type)
-
-    # Commit before scheduling, not after. The extraction runs in its own
-    # session — it has to, since the request's is closed by then — and that
-    # session can only see committed rows. Leaving this to the dependency's
-    # teardown makes the handoff depend on whether FastAPI exits `yield`
-    # dependencies before or after background tasks, which is not a detail to
-    # build on.
-    await session.commit()
-
-    # Runs after the response is flushed. Under Lambda this becomes an SQS
-    # message and `ocr_handler` picks it up instead — same service function.
-    background.add_task(_run_extraction, source_id)
-
-    return VocabSourceResult(source_id=source_id, status="pending", items=[])
-
-
-async def _run_extraction(source_id: int) -> None:
-    """Own transaction: the request's session is closed by the time this runs."""
-    from app.db.session import session_scope
-
-    async with session_scope() as session:
-        await ocr_service.process_source(session, source_id)
-
-
-@router.get(
-    "/api/vocab-sources/{source_id}",
-    response_model=VocabSourceResult,
-    tags=["import"],
-)
-async def get_vocab_source(
-    source_id: int,
-    session: AsyncSession = Depends(db_session),
-) -> VocabSourceResult:
-    """What the client polls. Rows appear once `status` reaches `processed`."""
-    source = await repo.get_vocab_source(session, source_id)
-    if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown source")
-
-    items, failure = ocr_service.take_result(source_id)
     return VocabSourceResult(
-        source_id=source_id,
+        source_id=source.id,
         status=source.status,
         items=items,
         detail=failure,
@@ -541,10 +491,6 @@ async def confirm_vocab_source(
         # import lands as one named group without the user tagging anything.
         set_id=source.set_id,
     )
-
-    # The draft has served its purpose; holding it would leak for every import.
-    ocr_service.discard_result(source_id)
-    storage.discard(source_id)
 
     if created:
         # Committed first: the lesson worker reads in its own transaction and

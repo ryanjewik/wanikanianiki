@@ -236,6 +236,12 @@ async def test_refusal_surfaces_as_a_readable_failure():
             "too big", response=_response(400), body=None), "rejected"),
         (anthropic.APIConnectionError(
             request=httpx.Request("POST", "https://api.anthropic.com")), "Could not reach"),
+        # With no SDK retries an overload reaches the user, so it has to read
+        # as "try again" rather than as a bare status code.
+        (anthropic.APIStatusError(
+            "overloaded", response=_response(529), body=None), "busy"),
+        (anthropic.InternalServerError(
+            "oops", response=_response(500), body=None), "busy"),
     ],
 )
 async def test_vendor_errors_become_messages_a_user_can_read(error, expected):
@@ -413,13 +419,15 @@ async def test_a_missing_workspace_id_says_how_to_fix_it():
 def test_the_vision_client_is_bounded():
     """The SDK default is ten minutes, which on Lambda is billed waiting.
 
-    It also has to stay under the app's polling window, or the client gives up
-    on work the server is still doing.
+    And one attempt only: the SDK retries a timeout too, and the same page
+    re-sent takes as long again, so its default of two retries could run
+    three full windows past the Lambda's own timeout.
     """
     from app.services.ocr import _client
 
-    built = _client(settings(vision_timeout_seconds=120.0))
-    assert built.timeout == 120.0
+    built = _client(settings(vision_timeout_seconds=240.0))
+    assert built.timeout == 240.0
+    assert built.max_retries == 0
 
 
 async def test_an_empty_page_is_not_an_error():

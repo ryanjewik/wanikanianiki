@@ -89,9 +89,10 @@ column, and ◆◇ markers. Rows with no printed meaning are dropped at extracti
 and a word listed twice on one page collapses to a single row.
 
 **Measured against the user's real textbook pages**, not synthetic ones:
-28/28 rows in 18.9s, 44/44 in 21.8s, 28 rows in 16.6s. The 120s
-`VISION_TIMEOUT_SECONDS` is set from that measurement — roughly 5.5× headroom,
-not a guess.
+28/28 rows in 18.9s, 44/44 in 21.8s, 28 rows in 16.6s. `VISION_TIMEOUT_SECONDS`
+is 240s — about 11× that — with SDK retries off, and the API Lambda's 300s
+timeout sits above it. The upload returns the rows in the same request; the
+photo and the draft are never kept (see §3).
 
 ### SRS
 
@@ -259,7 +260,7 @@ Expo 57 docs before writing code — Expo has changed.
 |---|---|
 | `app/(tabs)/index.tsx` — dashboard | real (`useDashboard`, `useActivityStrip`) |
 | `app/(tabs)/study.tsx` — study hub | real, both tracks |
-| `app/(tabs)/import.tsx` — photo import | real upload/poll/confirm |
+| `app/(tabs)/import.tsx` — photo import | real upload/confirm |
 | `app/(tabs)/items.tsx` — level browser | real (`useLevelItems`) |
 | `app/sets/index.tsx` — set browser | real |
 | `app/sets/[id].tsx` — one set, notecards | real |
@@ -426,9 +427,11 @@ the server refuses it and reloads once it is accepted. Verified end to end on th
 emulator against a local API. The Terraform validates (Terraform 1.16.4, AWS
 provider 6.66.0) and makes the function URL public only with `api_public=true`.
 
-**Still blocking photo import on Lambda:** drafts live in process memory
-(`ocr.py` `_CACHE`), so an upload and its polls can land in different
-containers. Everything else works from a public URL.
+**Photo import works on Lambda** (2026-09-25). It was broken: drafts lived in
+process memory, so a poll could land in a container that never saw the
+upload and show an empty page. Now the upload reads the page and returns the
+rows in one request, and the phone holds them until confirm — no photo
+buffer, no draft cache, no poll endpoint, no `ocr_handler`.
 
 ### 4. Smaller, in the lesson system
 

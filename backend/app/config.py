@@ -66,12 +66,12 @@ class Settings(BaseSettings):
     # prompt is tuned against a model, and a silent upgrade re-tunes it.
     vision_model: str = "claude-opus-5"
 
-    # Must stay comfortably *below* the client's polling window, or the app
-    # gives up on work the server is still doing and the user sees a failure
-    # for an import that then quietly succeeds. It also bounds the damage of a
-    # hung call: without it the SDK waits ten minutes, which on Lambda is ten
-    # minutes of billed idle.
-    vision_timeout_seconds: float = 120.0
+    # The phone waits on the upload for this long at most. Generous, because a
+    # dense page is written out row by row and a slow read is still a good one;
+    # bounded, because the SDK's own default is ten minutes of billed idle.
+    # Must stay below the API Lambda's timeout (`infra/lambda.tf`), or AWS kills
+    # the request before this can turn into a readable error.
+    vision_timeout_seconds: float = 240.0
 
     # Grammar enrichment. Pinned for the same reason `vision_model` is: the
     # prompt is tuned against a model and a silent upgrade re-tunes it.

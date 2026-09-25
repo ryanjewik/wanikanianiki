@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 
 import anthropic
 from pydantic import BaseModel, Field
@@ -40,6 +41,26 @@ class VisionUnavailable(RuntimeError):
 
 class ExtractionFailed(RuntimeError):
     """The page could not be read. The message is safe to show a user."""
+
+
+# What a phone camera actually produces, and what the vision API accepts.
+SUPPORTED_MEDIA_TYPES = frozenset(
+    {"image/jpeg", "image/png", "image/webp", "image/gif"}
+)
+
+
+class UnsupportedImageType(ValueError):
+    """The upload was not an image the vision API accepts."""
+
+
+def check_media_type(media_type: str) -> str:
+    """Reject at the door, before a row is written or the model is called."""
+    if media_type not in SUPPORTED_MEDIA_TYPES:
+        raise UnsupportedImageType(
+            f"{media_type!r} is not a supported image type "
+            f"({', '.join(sorted(SUPPORTED_MEDIA_TYPES))})"
+        )
+    return media_type
 
 
 # -- what we ask the model for --------------------------------------------
@@ -191,6 +212,11 @@ def _client(settings: Settings) -> anthropic.AsyncAnthropic:
         # is ten minutes, which on Lambda is ten minutes of billed waiting and
         # long past the point the client has stopped watching.
         timeout=settings.vision_timeout_seconds,
+        # One attempt. The SDK's default of two retries also fires on a
+        # timeout, and the same page re-sent takes as long again — three full
+        # windows back to back is past the Lambda's own limit. A quick failure
+        # goes back to the phone instead, where re-uploading is one tap.
+        max_retries=0,
         default_headers=headers or None,
     )
 
@@ -261,6 +287,12 @@ async def extract_page(
     except anthropic.APIConnectionError as exc:
         raise ExtractionFailed("Could not reach the extraction service.") from exc
     except anthropic.APIStatusError as exc:
+        # No SDK retries, so an overload reaches here rather than being
+        # absorbed. It is the one failure a retry a moment later usually fixes.
+        if exc.status_code == 529 or exc.status_code >= 500:
+            raise ExtractionFailed(
+                "The extraction service is busy. Try again in a moment."
+            ) from exc
         raise ExtractionFailed(f"Extraction service error ({exc.status_code}).") from exc
 
     # A refusal returns HTTP 200 with no parsed output, so it has to be checked
@@ -360,41 +392,29 @@ def _completeness(item: DetectedItem) -> tuple[int, int, int]:
     )
 
 
-async def process_source(session, source_id: int, *, settings=None, client=None) -> None:
-    """Extract one pending upload, in place.
+async def read_source(
+    session,
+    source,
+    image: bytes,
+    media_type: str,
+    *,
+    settings: Settings | None = None,
+    client: anthropic.AsyncAnthropic | None = None,
+) -> tuple[list[DetectedItem], str | None]:
+    """Read one uploaded page and hand the rows straight back.
 
-    Owns the whole state transition: reads the stored image, extracts, marks
-    duplicates against the deck, and moves the row to `processed` or `failed`.
-    A failure is recorded rather than raised, because the caller is a
-    background task or a queue consumer with nobody to hand an exception to —
-    the client learns about it by polling and seeing `failed`.
+    Returns `(rows, None)` on success or `([], reason)` on failure, and moves
+    `source.status` to `processed` or `failed` to match. A failure is returned
+    rather than raised so the caller can still commit the status change.
 
-    The extracted rows are deliberately *not* written to `vocab_items` here.
-    Nothing enters the deck until the user has reviewed it; this only advances
-    the source's status so the review screen can render.
+    Nothing is kept afterwards — not the photo, not the rows. The rows are a
+    draft the phone holds while the user reviews them, and it sends back the
+    ones it keeps on confirm. Keeping either here is what broke the moment two
+    requests could land in different Lambda containers.
     """
     from app.db import repository as repo
-    from app.services import storage
 
-    source = await repo.get_vocab_source(session, source_id)
-    if source is None:
-        logger.warning("Vision extraction asked for unknown source %s", source_id)
-        return
-
-    held = storage.take(source_id)
-    if held is None:
-        # The buffer is process-local, so this means the upload was handled by
-        # a different process than this one — which is exactly the case that
-        # needs durable storage. Fail visibly rather than silently doing nothing.
-        source.status = "failed"
-        _FAILURES[source_id] = (
-            "The uploaded page is no longer available. Upload it again."
-        )
-        logger.warning("No buffered image for source %s", source_id)
-        return
-
-    image, media_type = held
-
+    started = time.monotonic()
     try:
         items = await extract_page(
             image,
@@ -403,34 +423,19 @@ async def process_source(session, source_id: int, *, settings=None, client=None)
             settings=settings,
             client=client,
         )
-        known = await repo.get_known_written_forms(session)
-        _CACHE[source_id] = mark_duplicates(items, known)
-        source.status = "processed"
-        logger.info("Extracted %d rows from source %s", len(items), source_id)
     except (ExtractionFailed, VisionUnavailable) as exc:
         source.status = "failed"
-        _FAILURES[source_id] = str(exc)
-        logger.warning("Extraction failed for source %s: %s", source_id, exc)
+        logger.warning(
+            "Extraction failed for source %s after %.1fs: %s",
+            source.id, time.monotonic() - started, exc,
+        )
+        return [], str(exc)
 
-
-# Extracted-but-unconfirmed rows, held until the user commits or discards them.
-#
-# Process-local on purpose. These are a draft the user is still editing, not
-# durable state — losing them means re-uploading a photo, not losing anything
-# in the deck. Persisting them would mean a table whose rows are meaningless
-# the moment the review screen closes. The catch is that it only holds while
-# one process serves both the extraction and the poll; the moment `ocr-fn`
-# becomes a separate function from `api-fn`, this has to become a JSONB column
-# on `vocab_sources`.
-_CACHE: dict[int, list[DetectedItem]] = {}
-_FAILURES: dict[int, str] = {}
-
-
-def take_result(source_id: int) -> tuple[list[DetectedItem], str | None]:
-    """Read back an extraction, leaving it in place for repeated polls."""
-    return _CACHE.get(source_id, []), _FAILURES.get(source_id)
-
-
-def discard_result(source_id: int) -> None:
-    _CACHE.pop(source_id, None)
-    _FAILURES.pop(source_id, None)
+    # Logged so the timeouts can be set from real pages rather than guessed.
+    logger.info(
+        "Extracted %d rows from source %s in %.1fs (%d bytes)",
+        len(items), source.id, time.monotonic() - started, len(image),
+    )
+    known = await repo.get_known_written_forms(session)
+    source.status = "processed"
+    return mark_duplicates(items, known), None

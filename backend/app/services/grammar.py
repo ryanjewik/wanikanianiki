@@ -27,11 +27,8 @@ row with `enriched` still false — a human confirming them is what flips it, an
 `/api/grammar-entries/{id}` will not serve unconfirmed grammar as context. That
 is the rule photo import already follows.
 
-Unlike photo import this runs inside the request rather than as a background
-task with polling. A page read is a vision call over a photograph and takes tens
-of seconds; this is one short structured answer, and the polling machinery in
-`ocr.py` — with its process-local cache that breaks the moment extraction and
-API are separate functions — is not worth inheriting for a call this size.
+Like photo import, this runs inside the request: one model call, answer
+returned in the response, nothing kept between requests.
 """
 
 from __future__ import annotations

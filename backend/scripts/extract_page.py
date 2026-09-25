@@ -29,8 +29,12 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.config import get_settings  # noqa: E402
-from app.services.ocr import ExtractionFailed, VisionUnavailable, extract_page  # noqa: E402
-from app.services.storage import SUPPORTED_MEDIA_TYPES  # noqa: E402
+from app.services.ocr import (  # noqa: E402
+    SUPPORTED_MEDIA_TYPES,
+    ExtractionFailed,
+    VisionUnavailable,
+    extract_page,
+)
 
 
 def _expand(patterns: list[str]) -> list[Path]:
