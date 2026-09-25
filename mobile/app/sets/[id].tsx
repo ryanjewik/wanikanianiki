@@ -25,6 +25,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import {
   AmbiguityBanner,
@@ -40,6 +41,7 @@ import {
   Card,
   ChunkyButton,
   EmptyState,
+  InlineButton,
   Overline,
   ProgressBar,
   SectionHeading,
@@ -336,10 +338,8 @@ export default function SetDetailScreen() {
 
         {count > 0 ? (
           <>
-            <Overline style={styles.hint}>Tap a card to turn it over</Overline>
-            {items?.map((item) => (
-              <Notecard key={item.id} item={item} />
-            ))}
+            <Overline style={styles.hint}>Tap to turn over · swipe for the next card</Overline>
+            {items ? <NotecardDeck items={items} /> : null}
 
             <ChunkyButton
               label="Quiz me on what's due"
@@ -383,6 +383,67 @@ export default function SetDetailScreen() {
   );
 }
 
+/** How far a swipe has to travel before it changes card. */
+const SWIPE_DISTANCE = 60;
+
+/**
+ * The set as a deck: one card at a time, swiped through.
+ *
+ * It used to be every card stacked in a list, which reads as a table of words
+ * rather than as flashcards, and gave nothing to swipe between. Swipe left for
+ * the next card and right for the previous one; the buttons do the same for
+ * anyone who would rather tap. Each new card starts face up — the Japanese —
+ * because a card that arrives already turned over has given its answer away.
+ */
+function NotecardDeck({ items }: { items: VocabItem[] }) {
+  const [position, setPosition] = React.useState(0);
+  const index = Math.min(position, items.length - 1);
+
+  const go = React.useCallback(
+    (step: 1 | -1) => {
+      const next = index + step;
+      if (next < 0 || next >= items.length) return;
+      if (step > 0) feedback.advance();
+      else feedback.back();
+      setPosition(next);
+    },
+    [index, items.length],
+  );
+
+  const swipe = React.useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-14, 14])
+        .onEnd((event) => {
+          if (event.translationX < -SWIPE_DISTANCE) go(1);
+          else if (event.translationX > SWIPE_DISTANCE) go(-1);
+        }),
+    [go],
+  );
+
+  const item = items[index];
+  if (!item) return null;
+
+  return (
+    <View style={styles.deck}>
+      <GestureDetector gesture={swipe}>
+        <View>
+          <Notecard key={item.id} item={item} />
+        </View>
+      </GestureDetector>
+      <View style={styles.deckNav}>
+        <InlineButton label="‹ Previous" emphasis="quiet" onPress={() => go(-1)} />
+        <Text style={styles.deckCount}>
+          {index + 1} / {items.length}
+        </Text>
+        <InlineButton label="Next ›" emphasis="quiet" onPress={() => go(1)} />
+      </View>
+    </View>
+  );
+}
+
 /**
  * One word, front and back.
  *
@@ -398,7 +459,10 @@ function Notecard({ item }: { item: VocabItem }) {
   // was the one tap in the app that reported nothing at all.
   return (
     <Pressable
-      onPress={() => setFlipped((previous) => !previous)}
+      onPress={() => {
+        if (!flipped) feedback.reveal();
+        setFlipped((previous) => !previous);
+      }}
       onPressIn={feedback.toggle}
     >
       {({ pressed }) => (
@@ -506,6 +570,18 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
+  deck: {
+    gap: 10,
+  },
+  deckNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  deckCount: {
+    ...typeScale.captionBold,
+    color: colors.inkSoft,
+  },
   notecard: {
     minHeight: 108,
     justifyContent: 'space-between',
