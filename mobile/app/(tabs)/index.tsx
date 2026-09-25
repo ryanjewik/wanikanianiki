@@ -79,7 +79,7 @@ export default function DashboardScreen() {
     <View style={styles.screen}>
       <ScreenHeader
         branded
-        title="KANJI WORKSHOP"
+        title="WaniKaniAniki"
         trailing={<ProfileAvatar onPress={() => router.push('/profile')} />}
       />
 

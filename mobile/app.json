@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Kanji Workshop",
+    "name": "WaniKaniAniki",
     "slug": "wanikanianiki",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -45,8 +45,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Kanji Workshop needs your photo library to import vocabulary from textbook pages.",
-          "cameraPermission": "Kanji Workshop needs the camera to scan textbook vocabulary pages."
+          "photosPermission": "WaniKaniAniki needs your photo library to import vocabulary from textbook pages.",
+          "cameraPermission": "WaniKaniAniki needs the camera to scan textbook vocabulary pages."
         }
       ],
       "expo-audio",
