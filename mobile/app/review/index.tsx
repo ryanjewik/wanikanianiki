@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
+import { toKana } from 'wanakana';
 
 import { CheckMark, CorrectMark, IncorrectMark } from '@/components/icons';
 import { finishKana, LanguageInput } from '@/components/LanguageInput';
@@ -53,6 +54,50 @@ interface QueueEntry {
   half: Half;
 }
 
+/**
+ * Which reading a kanji's reading question is after. WaniKani teaches one
+ * reading type per kanji and marks only that type accepted, so the prompt can
+ * say which -- the same thing WaniKani's own review header tells you.
+ * Vocabulary has just "the reading", and radicals none at all.
+ */
+function wantedReadingType(subject: StudyItem['subject']): 'onyomi' | 'kunyomi' | null {
+  if (subject.type !== 'kanji') return null;
+  const accepted = subject.readings.find((r) => r.acceptedAnswer && r.primary) ??
+    subject.readings.find((r) => r.acceptedAnswer);
+  return accepted?.type === 'onyomi' || accepted?.type === 'kunyomi' ? accepted.type : null;
+}
+
+/**
+ * An answer that is right for a different question, worth a second try
+ * rather than a strike -- WaniKani shakes the card on exactly these:
+ *
+ * - a kanji's other reading type: 山 wants さん, and やま is a real reading of
+ *   it, just not the one being tested;
+ * - the reading typed into the meaning field ("yama" for "mountain").
+ *
+ * Returns what to tell the learner, or null for an ordinary answer.
+ */
+function nearMiss(entry: QueueEntry, typed: string): string | null {
+  const answer = typed.trim();
+  if (!answer) return null;
+  const { readings } = entry.item.subject;
+
+  if (entry.half === 'reading') {
+    const other = readings.find((r) => !r.acceptedAnswer && r.reading === answer);
+    if (!other) return null;
+    const wanted = wantedReadingType(entry.item.subject);
+    if (wanted === 'onyomi') return "That's the kun'yomi. This one wants the on'yomi reading.";
+    if (wanted === 'kunyomi') return "That's the on'yomi. This one wants the kun'yomi reading.";
+    return "That's a reading, just not the one being asked for. Try again.";
+  }
+
+  const asKana = toKana(answer.toLowerCase());
+  if (readings.some((r) => r.reading === asKana || r.reading === answer)) {
+    return "That's the reading — this one wants the meaning.";
+  }
+  return null;
+}
+
 export default function ReviewScreen() {
   const router = useRouter();
   const { data: queue } = useReviewQueue();
@@ -62,6 +107,11 @@ export default function ReviewScreen() {
   const [answer, setAnswer] = React.useState('');
   const [verdict, setVerdict] = React.useState<Verdict | null>(null);
   const [pose, setPose] = React.useState<Pose>('idle');
+  /**
+   * A nudge rather than a verdict: the answer was a real answer to a different
+   * question. See `nearMiss`.
+   */
+  const [nudge, setNudge] = React.useState<string | null>(null);
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as StudyItem[] });
   const { line, register } = useAnswerRun();
   const { style: shakeStyle, shake } = useShake();
@@ -110,6 +160,21 @@ export default function ReviewScreen() {
     if (typed !== answer) setAnswer(typed);
 
     const ok = grade(current, typed);
+
+    // Right answer, wrong question: shake and ask again, as WaniKani does,
+    // instead of charging a strike for something the learner actually knew.
+    // Only after grading -- 酒's meaning "sake" sounds exactly like its
+    // reading さけ, and a correct answer must never be turned back.
+    if (!ok) {
+      const redirect = nearMiss(current, typed);
+      if (redirect) {
+        setNudge(redirect);
+        shake();
+        feedback.back();
+        return;
+      }
+    }
+    setNudge(null);
     setVerdict(ok ? 'correct' : 'incorrect');
     setPose(ok ? 'correct' : 'wrong');
 
@@ -135,6 +200,7 @@ export default function ReviewScreen() {
     setTimeout(() => {
       setVerdict(null);
       setAnswer('');
+      setNudge(null);
       // The only thing that ends the reaction now — under `holdReaction` the
       // mascot cycles until the next card replaces it.
       setPose('idle');
@@ -236,12 +302,15 @@ export default function ReviewScreen() {
   const done = stats.correct + stats.incorrect;
   const accuracy = done > 0 ? Math.round((stats.correct / done) * 100) : 100;
 
+  const wanted = wantedReadingType(subject);
   const promptLabel =
     current.half === 'meaning'
       ? "What's the meaning?"
-      : subject.type === 'vocabulary'
-        ? "What's the reading?"
-        : "What's the reading?";
+      : wanted === 'onyomi'
+        ? "What's the on'yomi reading?"
+        : wanted === 'kunyomi'
+          ? "What's the kun'yomi reading?"
+          : "What's the reading?";
 
   const headerLabel = `${subject.type === 'vocabulary' ? 'Vocabulary' : subject.type === 'kanji' ? 'Kanji' : 'Radical'} ${
     current.half === 'meaning' ? 'Meaning' : 'Reading'
@@ -318,8 +387,11 @@ export default function ReviewScreen() {
           </Pressable>
         </Animated.View>
 
-        <Text style={styles.inputHint}>
-          {current.half === 'reading' ? 'Kana input · romaji converts as you type' : 'Type the English meaning'}
+        <Text style={[styles.inputHint, nudge ? styles.nudge : null]}>
+          {nudge ??
+            (current.half === 'reading'
+              ? 'Kana input · romaji converts as you type'
+              : 'Type the English meaning')}
         </Text>
 
         <Card style={styles.sessionCard}>
@@ -429,6 +501,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.button,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  nudge: {
+    ...typeScale.captionBold,
+    color: colors.warningInk,
   },
   inputHint: {
     marginTop: 10,
