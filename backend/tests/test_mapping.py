@@ -180,3 +180,50 @@ def test_radical_without_glyph_uses_character_image():
     assert subject.characters is None
     # SVG is preferred over the PNG regardless of order.
     assert subject.character_image_url.endswith(".svg")
+
+
+def test_a_vocabulary_subject_keeps_what_the_lesson_screen_shows():
+    """Sync used to drop context sentences, parts of speech, audio, similar
+    kanji and auxiliary meanings. Only the MP3 of each recording is kept."""
+    resource = {
+        "id": 2467,
+        "object": "vocabulary",
+        "data": {
+            "characters": "大人",
+            "level": 1,
+            "slug": "大人",
+            "meanings": [{"meaning": "Adult", "primary": True, "accepted_answer": True}],
+            "readings": [{"reading": "おとな", "primary": True, "accepted_answer": True}],
+            "context_sentences": [
+                {"en": "I'm an adult now.", "ja": "もう大人です。"},
+                {"en": "", "ja": "空"},
+            ],
+            "parts_of_speech": ["noun", "no adjective"],
+            "pronunciation_audios": [
+                {
+                    "url": "https://files.wanikani.com/a.mp3",
+                    "content_type": "audio/mpeg",
+                    "metadata": {"gender": "female", "voice_actor_name": "Kyoko"},
+                },
+                {"url": "https://files.wanikani.com/a.webm", "content_type": "audio/webm"},
+            ],
+            "auxiliary_meanings": [
+                {"meaning": "Grown Up", "type": "whitelist"},
+                {"meaning": "Big Person", "type": "blacklist"},
+            ],
+        },
+    }
+
+    subject = parse_subject(resource)
+
+    assert [(c.ja, c.en) for c in subject.context_sentences] == [
+        ("もう大人です。", "I'm an adult now.")
+    ]
+    assert subject.parts_of_speech == ["noun", "no adjective"]
+    assert [a.url for a in subject.pronunciation_audios] == ["https://files.wanikani.com/a.mp3"]
+    assert subject.pronunciation_audios[0].voice_actor_name == "Kyoko"
+    assert [(m.meaning, m.type) for m in subject.auxiliary_meanings] == [
+        ("Grown Up", "whitelist"),
+        ("Big Person", "blacklist"),
+    ]
+    assert subject.visually_similar_subject_ids == []

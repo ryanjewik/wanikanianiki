@@ -86,6 +86,24 @@ class Subject(Base):
     # Backfilled once from the kanji-data seed import; null until then.
     jlpt_level: Mapped[int | None] = mapped_column(Integer)
 
+    # The rest of what WaniKani sends for a subject. Empty lists, not nulls:
+    # a radical genuinely has no context sentences, a kanji no audio.
+    context_sentences: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    parts_of_speech: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    pronunciation_audios: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    visually_similar_subject_ids: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    auxiliary_meanings: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+
     # WaniKani's own `data_updated_at`, used as the `updated_after` cursor.
     data_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     synced_at: Mapped[datetime] = mapped_column(

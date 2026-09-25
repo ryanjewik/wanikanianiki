@@ -65,6 +65,35 @@ class Reading(CamelModel):
     accepted_answer: bool
 
 
+class ContextSentence(CamelModel):
+    """One example sentence WaniKani pairs with a vocabulary word."""
+
+    ja: str
+    en: str
+
+
+class PronunciationAudio(CamelModel):
+    """A recording of the word, as WaniKani hosts it.
+
+    Only the MP3 of each recording is kept: every platform the app runs on
+    plays it, and the WebM/Ogg twins would just double the payload.
+    """
+
+    url: str
+    content_type: str
+    gender: str | None = None
+    voice_actor_name: str | None = None
+    pronunciation: str | None = None
+
+
+class AuxiliaryMeaning(CamelModel):
+    """An extra meaning WaniKani grades on: `whitelist` counts as right,
+    `blacklist` is a known wrong answer that should not be accepted."""
+
+    meaning: str
+    type: Literal["whitelist", "blacklist"]
+
+
 class Subject(CamelModel):
     id: int
     type: SubjectType
@@ -83,6 +112,11 @@ class Subject(CamelModel):
     component_subject_ids: list[int] = []
     amalgamation_subject_ids: list[int] = []
     jlpt_level: int | None = None
+    context_sentences: list[ContextSentence] = []
+    parts_of_speech: list[str] = []
+    pronunciation_audios: list[PronunciationAudio] = []
+    visually_similar_subject_ids: list[int] = []
+    auxiliary_meanings: list[AuxiliaryMeaning] = []
 
 
 # -- progress --------------------------------------------------------------

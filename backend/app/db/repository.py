@@ -121,6 +121,13 @@ async def upsert_subjects(
             "reading_hint": s.reading_hint,
             "component_subject_ids": s.component_subject_ids,
             "amalgamation_subject_ids": s.amalgamation_subject_ids,
+            "context_sentences": [c.model_dump(by_alias=False) for c in s.context_sentences],
+            "parts_of_speech": s.parts_of_speech,
+            "pronunciation_audios": [
+                a.model_dump(by_alias=False) for a in s.pronunciation_audios
+            ],
+            "visually_similar_subject_ids": s.visually_similar_subject_ids,
+            "auxiliary_meanings": [m.model_dump(by_alias=False) for m in s.auxiliary_meanings],
             "data_updated_at": updated_at.get(s.id),
             "synced_at": datetime.now(timezone.utc),
         }
@@ -138,7 +145,9 @@ async def upsert_subjects(
                 "type", "characters", "character_image_url", "level", "slug",
                 "meanings", "readings", "meaning_mnemonic", "reading_mnemonic",
                 "meaning_hint", "reading_hint", "component_subject_ids",
-                "amalgamation_subject_ids", "data_updated_at", "synced_at",
+                "amalgamation_subject_ids", "context_sentences", "parts_of_speech",
+                "pronunciation_audios", "visually_similar_subject_ids",
+                "auxiliary_meanings", "data_updated_at", "synced_at",
             )
         },
     )
@@ -185,6 +194,11 @@ def _to_subject(row: SubjectRow) -> Subject:
         component_subject_ids=row.component_subject_ids or [],
         amalgamation_subject_ids=row.amalgamation_subject_ids or [],
         jlpt_level=row.jlpt_level,
+        context_sentences=row.context_sentences or [],
+        parts_of_speech=row.parts_of_speech or [],
+        pronunciation_audios=row.pronunciation_audios or [],
+        visually_similar_subject_ids=row.visually_similar_subject_ids or [],
+        auxiliary_meanings=row.auxiliary_meanings or [],
     )
 
 
