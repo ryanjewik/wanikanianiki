@@ -359,6 +359,33 @@ class VocabItem(Base):
 
 
 
+class VocabFolder(Base):
+    """One level above sets: "Quartet I" holding its lessons.
+
+    Deliberately one level. Folders inside folders is more tapping for an
+    arrangement a textbook series already fits in two levels.
+    """
+
+    __tablename__ = "vocab_folders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_vocab_folders_user_id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_vocab_folders_user_name"),
+    )
+
+
 class VocabSet(Base):
     """A named group of vocabulary — "Quartet I, Lesson 1", "N3 verbs".
 
@@ -375,6 +402,16 @@ class VocabSet(Base):
 
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+
+    # Null is "unfiled". Deleting the folder unfiles the set; it never deletes
+    # it -- see the migration.
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vocab_folders.id", name="fk_vocab_sets_folder_id", ondelete="SET NULL"),
+        index=True,
+    )
+    # The tier this group is studied as. Set from the import's own tier when
+    # an import creates the group, and changeable afterwards.
+    jlpt_level: Mapped[int | None] = mapped_column(Integer)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -12,7 +12,7 @@ from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -29,6 +29,7 @@ from app.db.models import (
     SyncMeta,
     User,
     VocabAnswer,
+    VocabFolder,
     VocabItem,
     VocabReviewLog,
     VocabSet,
@@ -52,6 +53,7 @@ from app.schemas import (
     GrammarExampleInput,
     Subject,
 )
+from app.schemas import VocabFolder as VocabFolderOut
 from app.schemas import VocabItem as VocabItemOut
 from app.schemas import VocabSet as VocabSetOut
 from app.services.dates import DEFAULT_TIMEZONE, is_valid_timezone, timezone_name
@@ -534,9 +536,118 @@ async def list_vocab_sets(session: AsyncSession, user_id: int) -> list[VocabSetO
                 page_count=page["total"],
                 pages_pending=page["pending"],
                 pages_failed=page["failed"],
+                folder_id=row.folder_id,
+                jlpt_level=row.jlpt_level,
             )
         )
     return out
+
+
+async def unique_set_name(session: AsyncSession, *, user_id: int, name: str) -> str:
+    """`name`, or `name (2)`, `name (3)`... -- set names are unique per user,
+    and an automatically named group must never collide with one already
+    there."""
+    candidate, n = name, 1
+    while await get_vocab_set_by_name(session, user_id=user_id, name=candidate):
+        n += 1
+        candidate = f"{name} ({n})"
+    return candidate
+
+
+async def update_vocab_set(
+    session: AsyncSession,
+    row: VocabSet,
+    *,
+    name: str | None = None,
+    folder_id: int | None = None,
+    jlpt_level: int | None = None,
+    fields: set[str],
+) -> VocabSet:
+    """Apply only the fields the caller sent; see `VocabSetUpdate`."""
+    if "name" in fields and name is not None:
+        row.name = name
+    if "folder_id" in fields:
+        row.folder_id = folder_id
+    if "jlpt_level" in fields:
+        row.jlpt_level = jlpt_level
+    await session.flush()
+    return row
+
+
+async def merge_vocab_sets(session: AsyncSession, source: VocabSet, target: VocabSet) -> int:
+    """Move every word and page from `source` into `target`, then delete it.
+
+    A word already in both keeps its one membership in the target -- the
+    primary key on (set, word) would refuse a second. Returns how many words
+    the target gained.
+    """
+    already = set(
+        (
+            await session.execute(
+                select(VocabSetItem.vocab_item_id).where(VocabSetItem.set_id == target.id)
+            )
+        ).scalars()
+    )
+    moving = (
+        await session.execute(select(VocabSetItem).where(VocabSetItem.set_id == source.id))
+    ).scalars().all()
+
+    gained = 0
+    for membership in moving:
+        if membership.vocab_item_id not in already:
+            session.add(VocabSetItem(set_id=target.id, vocab_item_id=membership.vocab_item_id))
+            gained += 1
+    await session.execute(
+        update(VocabSource).where(VocabSource.set_id == source.id).values(set_id=target.id)
+    )
+    await session.flush()
+    await session.delete(source)
+    await session.flush()
+    return gained
+
+
+# -- folders ----------------------------------------------------------------
+
+
+async def list_vocab_folders(session: AsyncSession, user_id: int) -> list[VocabFolderOut]:
+    counts = dict(
+        (
+            await session.execute(
+                select(VocabSet.folder_id, func.count())
+                .where(VocabSet.user_id == user_id, VocabSet.folder_id.is_not(None))
+                .group_by(VocabSet.folder_id)
+            )
+        ).all()
+    )
+    rows = await session.execute(
+        select(VocabFolder).where(VocabFolder.user_id == user_id).order_by(VocabFolder.name)
+    )
+    return [
+        VocabFolderOut(
+            id=row.id, name=row.name, created_at=row.created_at, set_count=counts.get(row.id, 0)
+        )
+        for row in rows.scalars()
+    ]
+
+
+async def get_vocab_folder(session: AsyncSession, folder_id: int) -> VocabFolder | None:
+    return await session.get(VocabFolder, folder_id)
+
+
+async def get_vocab_folder_by_name(
+    session: AsyncSession, *, user_id: int, name: str
+) -> VocabFolder | None:
+    result = await session.execute(
+        select(VocabFolder).where(VocabFolder.user_id == user_id, VocabFolder.name == name)
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_vocab_folder(session: AsyncSession, *, user_id: int, name: str) -> VocabFolder:
+    row = VocabFolder(user_id=user_id, name=name)
+    session.add(row)
+    await session.flush()
+    return row
 
 
 async def list_vocab_set_items(session: AsyncSession, set_id: int) -> list[VocabItemOut]:
@@ -678,18 +789,50 @@ async def create_flashcards(
 
 
 async def get_due_flashcards(
-    session: AsyncSession, user_id: int, *, limit: int = 100, now: datetime | None = None
+    session: AsyncSession,
+    user_id: int,
+    *,
+    limit: int = 100,
+    now: datetime | None = None,
+    set_id: int | None = None,
+    folder_id: int | None = None,
+    jlpt_level: int | None = None,
 ) -> list[Flashcard]:
-    """Cards due, soonest first, with everything needed to study offline."""
+    """Cards due, soonest first, with everything needed to study offline.
+
+    Narrowed, when asked, to one set, the sets in one folder, or one JLPT tier.
+    A word counts as a tier's when the word itself carries that tier or any
+    set it belongs to is tagged with it -- the import tags each word, and
+    tagging the group later should not need every word retagged to take
+    effect.
+    """
     now = now or datetime.now(timezone.utc)
 
-    result = await session.execute(
+    statement = (
         select(SrsState, VocabItem)
         .join(VocabItem, VocabItem.id == SrsState.vocab_item_id)
         .where(SrsState.user_id == user_id, SrsState.due_at <= now)
-        .order_by(SrsState.due_at)
-        .limit(limit)
     )
+    if set_id is not None or folder_id is not None:
+        in_scope = select(VocabSetItem.vocab_item_id).join(
+            VocabSet, VocabSet.id == VocabSetItem.set_id
+        )
+        if set_id is not None:
+            in_scope = in_scope.where(VocabSet.id == set_id)
+        if folder_id is not None:
+            in_scope = in_scope.where(VocabSet.folder_id == folder_id)
+        statement = statement.where(VocabItem.id.in_(in_scope))
+    if jlpt_level is not None:
+        tagged_sets = (
+            select(VocabSetItem.vocab_item_id)
+            .join(VocabSet, VocabSet.id == VocabSetItem.set_id)
+            .where(VocabSet.jlpt_level == jlpt_level)
+        )
+        statement = statement.where(
+            or_(VocabItem.jlpt_level == jlpt_level, VocabItem.id.in_(tagged_sets))
+        )
+
+    result = await session.execute(statement.order_by(SrsState.due_at).limit(limit))
     rows = result.all()
     if not rows:
         return []

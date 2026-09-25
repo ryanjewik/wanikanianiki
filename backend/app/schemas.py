@@ -279,11 +279,40 @@ class VocabSet(CamelModel):
     page_count: int = 0
     pages_pending: int = 0
     pages_failed: int = 0
+    folder_id: int | None = None
+    jlpt_level: int | None = None
 
 
 class VocabSetCreate(BaseModel):
     name: str
     description: str | None = None
+
+
+class VocabSetUpdate(CamelModel):
+    """A partial edit. A field left out is unchanged; a field sent as null is
+    cleared -- `folderId: null` unfiles the set, `jlptLevel: null` untags it.
+    The route tells the two apart with `model_fields_set`."""
+
+    name: str | None = Field(None, min_length=1, max_length=128)
+    folder_id: int | None = None
+    jlpt_level: int | None = Field(None, ge=1, le=5)
+
+
+class VocabSetMerge(CamelModel):
+    """Fold this set into another: its words and pages move, then it goes."""
+
+    into_set_id: int
+
+
+class VocabFolder(CamelModel):
+    id: int
+    name: str
+    created_at: datetime
+    set_count: int = 0
+
+
+class VocabFolderWrite(CamelModel):
+    name: str = Field(..., min_length=1, max_length=128)
 
 
 class Flashcard(CamelModel):
