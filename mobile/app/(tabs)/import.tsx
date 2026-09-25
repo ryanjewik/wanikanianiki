@@ -97,12 +97,9 @@ export default function ImportScreen() {
 
       try {
         if (api.isBackendConfigured) {
-          // The upload returns before the page has been read; the rows arrive
-          // on a later poll. See `pollVocabSource`.
-          const accepted = await api.uploadVocabPhoto(uri, tier);
-          setSourceId(accepted.sourceId);
-
-          const result = await api.pollVocabSource(accepted.sourceId);
+          // One request: it returns once the page has been read.
+          const result = await api.uploadVocabPhoto(uri, tier);
+          setSourceId(result.sourceId);
           if (result.status === 'failed') {
             Alert.alert(
               "Couldn't read that page",

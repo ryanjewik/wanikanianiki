@@ -233,14 +233,17 @@ export interface VocabSourceResult {
   detail: string | null;
 }
 
+/** Past the server's own limits; see `uploadVocabPhoto`. */
+const UPLOAD_TIMEOUT_MS = 330_000;
+
 /**
- * Hands a textbook photo to the ingestion service.
+ * Sends a textbook photo to be read, and waits for the rows.
  *
- * Returns as soon as the upload lands, with nothing extracted yet. Reading a
- * page is a vision-model call taking tens of seconds, and a phone should not
- * hold a connection open that long: mobile data drops it on a network switch,
- * and both iOS and Android suspend a backgrounded app mid-request. The rows
- * arrive via `pollVocabSource` below.
+ * One request: the server hands the photo to the model and answers with what
+ * it read — about 20 seconds for a real page. `status` is `processed` with the
+ * rows in `items`, or `failed` with a reason in `detail`. The server keeps
+ * neither the photo nor the rows, so this screen holds them until confirm; if
+ * the connection drops mid-read, uploading again is the retry.
  */
 export async function uploadVocabPhoto(
   imageUri: string,
@@ -262,54 +265,32 @@ export async function uploadVocabPhoto(
   if (options.setId !== undefined) form.append('set_id', String(options.setId));
   if (options.position !== undefined) form.append('position', String(options.position));
 
-  const response = await fetch(`${API_BASE_URL}/api/vocab-sources`, {
-    method: 'POST',
-    headers: await authHeader(),
-    body: form,
-  });
-  reportAuth(response.status);
+  // Past the server's own limits — the model call's 240 s and the Lambda's
+  // 300 s — so a slow page comes back as the server's readable `failed`. This
+  // only fires on a connection that went silent without closing.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
 
-  if (!response.ok) {
-    throw new ApiError(`Photo import failed with ${response.status}`, response.status);
-  }
-  return (await response.json()) as VocabSourceResult;
-}
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/vocab-sources`, {
+      method: 'POST',
+      headers: await authHeader(),
+      body: form,
+      signal: controller.signal,
+    });
+    reportAuth(response.status);
 
-/** One poll. `status` stays `pending` until the extraction finishes. */
-export function fetchVocabSource(
-  sourceId: number,
-  signal?: AbortSignal,
-): Promise<VocabSourceResult> {
-  return request<VocabSourceResult>(`/api/vocab-sources/${sourceId}`, { signal });
-}
-
-/**
- * Polls until the page has been read, or gives up.
- *
- * Fixed interval rather than backoff: extraction takes a fairly predictable
- * tens of seconds, and the user is watching a spinner the whole time, so a
- * widening gap would only add latency to the moment that actually matters.
- *
- * The default window is deliberately longer than the server's own
- * `VISION_TIMEOUT_SECONDS` (120s). If it were shorter, a slow extraction would
- * show the user a failure and *then* quietly succeed — the row would reach
- * `processed` with nobody watching. Giving up after the server already has
- * means the only thing this can time out on is a server that never answered.
- */
-export async function pollVocabSource(
-  sourceId: number,
-  { intervalMs = 2000, timeoutMs = 300_000 }: { intervalMs?: number; timeoutMs?: number } = {},
-): Promise<VocabSourceResult> {
-  const deadline = Date.now() + timeoutMs;
-
-  for (;;) {
-    const result = await fetchVocabSource(sourceId);
-    if (result.status !== 'pending') return result;
-
-    if (Date.now() >= deadline) {
+    if (!response.ok) {
+      throw new ApiError(`Photo import failed with ${response.status}`, response.status);
+    }
+    return (await response.json()) as VocabSourceResult;
+  } catch (error) {
+    if (controller.signal.aborted) {
       throw new ApiError('The page is taking longer than expected to read', 504);
     }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -367,11 +348,7 @@ export async function importPagesIntoSet(
   const results: VocabSourceResult[] = [];
 
   for (const [index, uri] of imageUris.entries()) {
-    const accepted = await uploadVocabPhoto(uri, jlptLevel, {
-      setId,
-      position: index,
-    });
-    results.push(await pollVocabSource(accepted.sourceId));
+    results.push(await uploadVocabPhoto(uri, jlptLevel, { setId, position: index }));
     onProgress?.(index + 1, imageUris.length);
   }
 
