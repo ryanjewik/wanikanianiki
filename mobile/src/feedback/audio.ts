@@ -15,6 +15,8 @@
  * quiet one. Every entry point is wrapped, and the engine simply reports
  * itself unavailable.
  */
+import { Platform } from 'react-native';
+
 export type Cue =
   | 'tap'
   | 'select'
@@ -96,14 +98,19 @@ export function prime(): void {
   primed = true;
 
   try {
-    // `playsInSilentMode: false` is the deliberate choice. These are interface
-    // sounds, not content — a phone on silent should stay silent, and an app
-    // that overrides the hardware switch to play a blip is one people mute in
-    // settings and never turn back on.
+    // The silent switch means different things on the two platforms. On iOS
+    // it is the hardware mute switch, and a phone switched to silent should
+    // stay silent. On Android the ringer mode governs the *ringer*; media --
+    // which is what every app's sound is -- follows the media volume. Passing
+    // false there makes expo-audio refuse to play anything at all while the
+    // phone is on vibrate, which silenced WaniKani's recordings along with the
+    // blips. The in-app Sound switch is how the cues get turned off.
+    //
+    // The mode is session-wide, so the recordings follow the same rule.
     //
     // `mixWithOthers` so studying over a podcast does not stop the podcast.
     void audio.setAudioModeAsync({
-      playsInSilentMode: false,
+      playsInSilentMode: Platform.OS === 'android',
       shouldPlayInBackground: false,
       interruptionMode: 'mixWithOthers',
     });

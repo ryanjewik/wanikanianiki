@@ -6,11 +6,12 @@
  *   back     chevron + title + trailing meta     (detail, browser, import)
  *   plain    title + trailing meta               (session summary)
  */
-import { useRouter } from 'expo-router';
+import { useRouter, useSegments } from 'expo-router';
 import * as React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { HomeIcon } from '@/components/icons';
 import { MascotAvatar } from '@/components/Mascot';
 import { feedback } from '@/feedback';
 import { colors, jp, type as typeScale } from '@/theme/tokens';
@@ -48,6 +49,20 @@ export function ScreenHeader({
 }: ScreenHeaderProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // Every screen outside the tabs gets a way straight home. Decided here from
+  // the route rather than opted into per screen, so a new screen cannot ship
+  // without one -- and a session several screens deep (lesson, practice,
+  // summary) is one tap from the dashboard instead of a run of backs.
+  const segments = useSegments();
+  const showHome = segments[0] !== '(tabs)';
+
+  const handleHome = React.useCallback(() => {
+    feedback.back();
+    // Pops back to the tabs if they are underneath, which they always are
+    // after a normal launch; replaces the screen if something opened the app
+    // straight onto a deep link.
+    router.dismissTo('/');
+  }, [router]);
 
   const handleBack = React.useCallback(() => {
     feedback.back();
@@ -62,6 +77,18 @@ export function ScreenHeader({
           {showBack ? (
             <Pressable onPress={handleBack} hitSlop={12}>
               <Text style={styles.backChevron}>‹</Text>
+            </Pressable>
+          ) : null}
+
+          {showHome ? (
+            <Pressable
+              onPress={handleHome}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Home"
+              style={({ pressed }) => [styles.homeButton, pressed && styles.pressed]}
+            >
+              <HomeIcon size={20} />
             </Pressable>
           ) : null}
 
@@ -135,6 +162,18 @@ const styles = StyleSheet.create({
     fontFamily: typeScale.screenTitle.fontFamily,
     color: colors.inkSoft,
     marginRight: 1,
+  },
+  homeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.ground,
+    marginRight: 2,
+  },
+  pressed: {
+    opacity: 0.55,
   },
   mark: {
     width: 26,
