@@ -2,9 +2,11 @@
  * Your sets — the deck browser's front door.
  *
  * A set is how a person organises their own deck: "Quartet I, Lesson 1", "N3
- * verbs". The backend has had sets since the flashcard migration, but nothing
- * in the app ever named one, which made multi-page import unreachable — pages
- * could only ever land loose in the deck.
+ * verbs". Every import lands in one — a page photographed into a set joins it,
+ * and a page from the Import tab gets a set of its own — and sets can be filed
+ * into folders (one level: "Quartet I" holding its lessons) and tagged with a
+ * JLPT tier. The chips at the top filter by both, and "Quiz these" studies
+ * exactly what the filters show.
  *
  * Sets are named here and filled on the detail screen, because naming a group
  * and photographing into it are separate moments: you know what the lesson is
@@ -23,25 +25,37 @@ import {
   View,
 } from 'react-native';
 
+import { FilterChips, type ChipOption } from '@/components/FilterChips';
 import { EmptyDeckArt, OfflineArt } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Card, ChunkyButton, EmptyState, InlineButton, Pill } from '@/components/ui';
+import { Card, ChunkyButton, EmptyState, InlineButton, Overline, Pill } from '@/components/ui';
 import * as api from '@/data/api';
-import type { VocabSet } from '@/data/types';
+import type { VocabFolder, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
-import { useVocabSets } from '@/hooks/useStudyData';
+import { useVocabFolders, useVocabSets } from '@/hooks/useStudyData';
 import { colors, radius, spacing, type as typeScale } from '@/theme/tokens';
 
-/** Matches the backend's `vocab_sets.name` column, so a long name fails here. */
+/** Matches the backend's name columns, so a long name fails here first. */
 const NAME_MAX_LENGTH = 128;
+
+type FolderFilter = 'all' | 'unfiled' | number;
+type JlptFilter = 'all' | number;
+
+/** What the naming card is for: a new set, a new folder, or renaming one. */
+type Naming = { kind: 'set' } | { kind: 'folder' } | { kind: 'rename'; folder: VocabFolder };
+
+const JLPT_TIERS = [5, 4, 3, 2, 1] as const;
 
 export default function SetsScreen() {
   const router = useRouter();
   const { data: sets, loading, error, reload } = useVocabSets();
+  const { data: folders, reload: reloadFolders } = useVocabFolders();
 
-  const [naming, setNaming] = React.useState(false);
+  const [naming, setNaming] = React.useState<Naming | null>(null);
   const [name, setName] = React.useState('');
   const [saving, setSaving] = React.useState(false);
+  const [folderFilter, setFolderFilter] = React.useState<FolderFilter>('all');
+  const [jlptFilter, setJlptFilter] = React.useState<JlptFilter>('all');
 
   /**
    * Counts change while you are away — a page finishes reading, or an import
@@ -51,35 +65,140 @@ export default function SetsScreen() {
   useFocusEffect(
     React.useCallback(() => {
       reload();
-    }, [reload]),
+      reloadFolders();
+    }, [reload, reloadFolders]),
   );
 
   const trimmed = name.trim();
 
-  const createSet = React.useCallback(async () => {
-    if (!trimmed || saving) return;
+  const closeNaming = React.useCallback(() => {
+    setNaming(null);
+    setName('');
+  }, []);
+
+  const submitName = React.useCallback(async () => {
+    if (!naming || !trimmed || saving) return;
     setSaving(true);
     try {
-      const created = await api.createVocabSet(trimmed);
-      setName('');
-      setNaming(false);
-      // Straight into the new set: it is empty, and adding pages is the only
-      // thing you can do next.
-      router.push(`/sets/${created.id}`);
+      if (naming.kind === 'set') {
+        const created = await api.createVocabSet(trimmed);
+        // A set made while a folder is showing belongs in that folder.
+        if (typeof folderFilter === 'number') {
+          await api.updateVocabSet(created.id, { folderId: folderFilter });
+        }
+        closeNaming();
+        // Straight into the new set: it is empty, and adding pages is the only
+        // thing you can do next.
+        router.push(`/sets/${created.id}`);
+      } else if (naming.kind === 'folder') {
+        const created = await api.createVocabFolder(trimmed);
+        closeNaming();
+        feedback.correct();
+        reloadFolders();
+        setFolderFilter(created.id);
+      } else {
+        await api.renameVocabFolder(naming.folder.id, trimmed);
+        closeNaming();
+        feedback.correct();
+        reloadFolders();
+      }
     } catch (cause) {
-      // 409 is the one failure worth naming precisely — the constraint is on
-      // (user, name), so the fix is a different name rather than a retry.
+      // 409 is the one failure worth naming precisely — names are unique per
+      // user, so the fix is a different name rather than a retry.
       const duplicate = cause instanceof api.ApiError && cause.status === 409;
+      const noun = naming.kind === 'set' ? 'set' : 'folder';
+      feedback.wrong();
       Alert.alert(
-        duplicate ? 'That name is taken' : "Couldn't create the set",
+        duplicate ? 'That name is taken' : `Couldn't save the ${noun}`,
         duplicate
-          ? `You already have a set called "${trimmed}".`
+          ? `You already have a ${noun} called "${trimmed}".`
           : 'Check that the app can reach your backend, then try again.',
       );
     } finally {
       setSaving(false);
     }
-  }, [router, saving, trimmed]);
+  }, [closeNaming, folderFilter, naming, reloadFolders, router, saving, trimmed]);
+
+  /** Long-press on a folder chip: rename it, or delete it (its sets stay). */
+  const manageFolder = React.useCallback(
+    (key: FolderFilter) => {
+      const folder = folders?.find((f) => f.id === key);
+      if (!folder) return;
+      feedback.toggle();
+      Alert.alert(folder.name, undefined, [
+        {
+          text: 'Rename',
+          onPress: () => {
+            setName(folder.name);
+            setNaming({ kind: 'rename', folder });
+          },
+        },
+        {
+          text: 'Delete folder',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.deleteVocabFolder(folder.id);
+              feedback.back();
+              if (folderFilter === folder.id) setFolderFilter('all');
+              reloadFolders();
+              reload();
+            } catch {
+              Alert.alert("Couldn't delete the folder", 'Check your connection and try again.');
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    },
+    [folderFilter, folders, reload, reloadFolders],
+  );
+
+  const folderOptions: ChipOption<FolderFilter>[] = [
+    { key: 'all', label: 'All' },
+    { key: 'unfiled', label: 'Unfiled' },
+    ...(folders ?? []).map((f) => ({ key: f.id as FolderFilter, label: f.name })),
+  ];
+  const jlptOptions: ChipOption<JlptFilter>[] = [
+    { key: 'all', label: 'All levels' },
+    ...JLPT_TIERS.map((n) => ({ key: n as JlptFilter, label: `N${n}` })),
+  ];
+
+  const visible = (sets ?? []).filter(
+    (set) =>
+      (folderFilter === 'all' ||
+        (folderFilter === 'unfiled' ? set.folderId === null : set.folderId === folderFilter)) &&
+      (jlptFilter === 'all' || set.jlptLevel === jlptFilter),
+  );
+
+  // Grouped by folder when showing everything; one flat list otherwise.
+  const sections: { title: string | null; sets: VocabSet[] }[] =
+    folderFilter === 'all'
+      ? [
+          ...(folders ?? []).map((f) => ({
+            title: f.name,
+            sets: visible.filter((s) => s.folderId === f.id),
+          })),
+          {
+            title: folders && folders.length > 0 ? 'Unfiled' : null,
+            sets: visible.filter((s) => s.folderId === null),
+          },
+        ].filter((section) => section.sets.length > 0)
+      : [{ title: null, sets: visible }];
+
+  const quizVisible = React.useCallback(() => {
+    const params: Record<string, string> = {};
+    if (typeof folderFilter === 'number') params.folderId = String(folderFilter);
+    if (jlptFilter !== 'all') params.jlpt = String(jlptFilter);
+    router.push({ pathname: '/quiz', params });
+  }, [folderFilter, jlptFilter, router]);
+
+  const namingTitle =
+    naming?.kind === 'set'
+      ? 'Name this set'
+      : naming?.kind === 'folder'
+        ? 'Name this folder'
+        : 'Rename folder';
 
   return (
     <View style={styles.screen}>
@@ -92,33 +211,27 @@ export default function SetsScreen() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {naming ? (
           <Card variant="bordered" style={styles.namingCard}>
-            <Text style={styles.namingLabel}>Name this set</Text>
+            <Text style={styles.namingLabel}>{namingTitle}</Text>
             <TextInput
               value={name}
               onChangeText={setName}
-              placeholder="Quartet I, Lesson 1"
+              placeholder={naming.kind === 'set' ? 'Quartet I, Lesson 1' : 'Quartet I'}
               placeholderTextColor={colors.inkDisabled}
               style={styles.input}
               maxLength={NAME_MAX_LENGTH}
               autoFocus
               returnKeyType="done"
-              onSubmitEditing={createSet}
+              onSubmitEditing={submitName}
             />
             <View style={styles.namingActions}>
-              <InlineButton
-                label="Cancel"
-                emphasis="quiet"
-                onPress={() => {
-                  setNaming(false);
-                  setName('');
-                }}
-              />
+              <InlineButton label="Cancel" emphasis="quiet" onPress={closeNaming} />
               <ChunkyButton
-                label={saving ? 'Creating…' : 'Create'}
+                label={saving ? 'Saving…' : naming.kind === 'rename' ? 'Rename' : 'Create'}
                 tone="vocabulary"
                 size="small"
+                chevron={false}
                 disabled={!trimmed || saving}
-                onPress={createSet}
+                onPress={submitName}
                 style={styles.createButton}
               />
             </View>
@@ -128,9 +241,28 @@ export default function SetsScreen() {
             label="New set"
             tone="vocabulary"
             size="small"
-            onPress={() => setNaming(true)}
+            onPress={() => setNaming({ kind: 'set' })}
           />
         )}
+
+        {sets && sets.length > 0 ? (
+          <Card variant="bordered" style={styles.filterCard}>
+            <FilterChips
+              label="Folder · long-press one to rename or delete it"
+              options={folderOptions}
+              selected={folderFilter}
+              onSelect={setFolderFilter}
+              onLongPress={manageFolder}
+              trailing={{ label: '+ Folder', onPress: () => setNaming({ kind: 'folder' }) }}
+            />
+            <FilterChips
+              label="JLPT level"
+              options={jlptOptions}
+              selected={jlptFilter}
+              onSelect={setJlptFilter}
+            />
+          </Card>
+        ) : null}
 
         {loading && !sets ? (
           <View style={styles.loading}>
@@ -150,16 +282,43 @@ export default function SetsScreen() {
           </Card>
         ) : null}
 
-        {sets?.map((set) => (
-          <SetRow key={set.id} set={set} onPress={() => router.push(`/sets/${set.id}`)} />
+        {sections.map((section) => (
+          <View key={section.title ?? 'all'} style={styles.section}>
+            {section.title ? <Overline style={styles.sectionTitle}>{section.title}</Overline> : null}
+            {section.sets.map((set) => (
+              <SetRow key={set.id} set={set} onPress={() => router.push(`/sets/${set.id}`)} />
+            ))}
+          </View>
         ))}
+
+        {visible.length > 0 ? (
+          <ChunkyButton
+            // "Unfiled" is a browsing view only: the quiz has no unfiled scope,
+            // so the label says it studies everything rather than claiming
+            // "these".
+            label={
+              typeof folderFilter === 'number' || jlptFilter !== 'all'
+                ? "Quiz these — what's due"
+                : "Quiz me on what's due"
+            }
+            tone="neutral"
+            size="small"
+            onPress={quizVisible}
+          />
+        ) : null}
+
+        {sets && sets.length > 0 && visible.length === 0 ? (
+          <Card>
+            <Text style={styles.noMatch}>No sets match these filters.</Text>
+          </Card>
+        ) : null}
 
         {sets && sets.length === 0 && !error ? (
           <Card>
             <EmptyState
               art={<EmptyDeckArt />}
               title="No sets yet"
-              body="A set groups the pages of one lesson together, so a five-page import lands as one deck instead of thirty loose words."
+              body="A set groups the pages of one lesson together, so a five-page import lands as one deck instead of thirty loose words. Pages imported from the Import tab get a set of their own."
             />
           </Card>
         ) : null}
@@ -196,6 +355,13 @@ function SetRow({ set, onPress }: { set: VocabSet; onPress: () => void }) {
               {pageNote ? ` · ${pageNote}` : ''}
             </Text>
 
+            {set.jlptLevel ? (
+              <Pill
+                label={`N${set.jlptLevel}`}
+                color={colors.radicalInk}
+                background={colors.radicalTint}
+              />
+            ) : null}
             {set.pagesPending > 0 ? (
               <Pill
                 label={`${set.pagesPending} reading`}
@@ -264,7 +430,21 @@ const styles = StyleSheet.create({
   },
   createButton: {
     borderRadius: radius.tile,
-    paddingHorizontal: 18,
+  },
+
+  filterCard: {
+    gap: 12,
+  },
+  section: {
+    gap: spacing.stack,
+  },
+  sectionTitle: {
+    marginTop: 6,
+  },
+  noMatch: {
+    ...typeScale.caption,
+    color: colors.inkSoft,
+    textAlign: 'center',
   },
 
   setCard: {

@@ -295,6 +295,28 @@ export interface VocabSet {
   pageCount: number;
   pagesPending: number;
   pagesFailed: number;
+  /** Null when the set is unfiled. */
+  folderId: number | null;
+  /** The tier this group is studied as; null when untagged. */
+  jlptLevel: number | null;
+}
+
+/** One level above sets: "Quartet I" holding its lessons. */
+export interface VocabFolder {
+  id: number;
+  name: string;
+  createdAt: string;
+  setCount: number;
+}
+
+/**
+ * Which cards a flashcard session draws from. Every field optional; none at
+ * all is the whole deck.
+ */
+export interface FlashcardScope {
+  setId?: number;
+  folderId?: number;
+  jlpt?: number;
 }
 
 /**

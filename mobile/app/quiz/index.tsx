@@ -13,11 +13,12 @@
  * of the server's grader kept in step so the two never disagree in front of
  * you.
  */
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
+import { FilterChips, type ChipOption } from '@/components/FilterChips';
 import { FuriganaText } from '@/components/Furigana';
 import { AllCaughtUpArt, CheckMark, CorrectMark, IncorrectMark, OfflineArt } from '@/components/icons';
 import { finishKana, LanguageInput } from '@/components/LanguageInput';
@@ -36,9 +37,14 @@ import {
   StatTile,
 } from '@/components/ui';
 import { matches } from '@/data/grading';
-import type { Flashcard } from '@/data/types';
+import type { Flashcard, FlashcardScope } from '@/data/types';
 import { feedback } from '@/feedback';
-import { useDueFlashcards, useStudyActions } from '@/hooks/useStudyData';
+import {
+  useDueFlashcards,
+  useStudyActions,
+  useVocabFolders,
+  useVocabSets,
+} from '@/hooks/useStudyData';
 import {
   colors,
   controlBorder,
@@ -75,7 +81,15 @@ const FURIGANA_UNTIL_REPETITIONS = 2;
 
 export default function QuizScreen() {
   const router = useRouter();
-  const { data: due, loading, error } = useDueFlashcards();
+  // Scope arrives from the link -- "Quiz this set", or the browser's filters --
+  // and can be changed on the scope bar until the first answer.
+  const params = useLocalSearchParams<{ setId?: string; folderId?: string; jlpt?: string }>();
+  const [scope, setScope] = React.useState<FlashcardScope>(() => ({
+    setId: params.setId ? Number(params.setId) : undefined,
+    folderId: params.folderId ? Number(params.folderId) : undefined,
+    jlpt: params.jlpt ? Number(params.jlpt) : undefined,
+  }));
+  const { data: due, loading, error } = useDueFlashcards(100, scope);
   const { answerFlashcard } = useStudyActions();
 
   const [entries, setEntries] = React.useState<QueueEntry[] | null>(null);
@@ -86,10 +100,15 @@ export default function QuizScreen() {
   const { line, register } = useAnswerRun();
   const { style: shakeStyle, shake } = useShake();
 
+  // A new scope replaces the queue -- but only before anything is answered;
+  // after that the session is committed to the cards it started with.
+  const loadedFor = React.useRef<Flashcard[] | null>(null);
   React.useEffect(() => {
-    if (!due || entries) return;
+    if (!due || loadedFor.current === due) return;
+    if (entries && stats.correct + stats.incorrect > 0) return;
+    loadedFor.current = due;
     setEntries(due.map((card) => ({ card, submitted: false })));
-  }, [due, entries]);
+  }, [due, entries, stats.correct, stats.incorrect]);
 
   const current = entries?.[0];
   const answered = stats.correct + stats.incorrect;
@@ -164,7 +183,9 @@ export default function QuizScreen() {
   const onSubmit = React.useCallback(() => grade(false), [grade]);
   const onGiveUp = React.useCallback(() => grade(true), [grade]);
 
-  if (loading) return <View style={styles.screen} />;
+  // Blank only on the first load: a scope change keeps the screen (and its
+  // scope bar) up while the new cards arrive, instead of flashing empty.
+  if (loading && !due) return <View style={styles.screen} />;
 
   // No backend, or no connection: the deck has no local mirror to fall back on.
   if (error || (!due && !entries)) {
@@ -187,6 +208,7 @@ export default function QuizScreen() {
     // on this deck.
     return (
       <Shell onBack={() => router.back()}>
+        {answered === 0 ? <ScopeBar scope={scope} onChange={setScope} /> : null}
         <Card variant="bordered">
           <EmptyState
             art={<AllCaughtUpArt />}
@@ -194,7 +216,9 @@ export default function QuizScreen() {
             body={
               answered > 0
                 ? `${stats.correct} of ${answered} right. The ones you missed come back sooner.`
-                : 'No imported words are due right now. Import a page to add some.'
+                : scope.setId || scope.folderId || scope.jlpt
+                  ? 'Nothing is due in this selection. Try a wider one above.'
+                  : 'No imported words are due right now. Import a page to add some.'
             }
           />
         </Card>
@@ -235,6 +259,7 @@ export default function QuizScreen() {
       </ScreenHeader>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {answered === 0 ? <ScopeBar scope={scope} onChange={setScope} /> : null}
         <Card style={styles.promptCard}>
           <Text style={styles.promptLabel}>
             {production ? 'Write it in Japanese' : "What's the meaning?"}
@@ -394,6 +419,64 @@ export default function QuizScreen() {
   );
 }
 
+/**
+ * What this session studies: the whole deck, one set, one folder, or one JLPT
+ * tier. Shown until the first answer -- after that, swapping the cards out from
+ * under a running session would lose its place.
+ */
+function ScopeBar({
+  scope,
+  onChange,
+}: {
+  scope: FlashcardScope;
+  onChange: (scope: FlashcardScope) => void;
+}) {
+  const { data: sets } = useVocabSets();
+  const { data: folders } = useVocabFolders();
+
+  if (scope.setId !== undefined) {
+    const set = sets?.find((s) => s.id === scope.setId);
+    return (
+      <Card variant="bordered" style={styles.scopeCard}>
+        <View style={styles.scopeRow}>
+          <Text style={styles.scopeText} numberOfLines={1}>
+            Studying {set ? `"${set.name}"` : 'one set'} only
+          </Text>
+          <InlineButton label="Whole deck" emphasis="quiet" onPress={() => onChange({})} />
+        </View>
+      </Card>
+    );
+  }
+
+  const folderOptions: ChipOption<number>[] = [
+    { key: 0, label: 'All sets' },
+    ...(folders ?? []).map((f) => ({ key: f.id, label: f.name })),
+  ];
+  const tierOptions: ChipOption<number>[] = [
+    { key: 0, label: 'All levels' },
+    ...[5, 4, 3, 2, 1].map((n) => ({ key: n, label: `N${n}` })),
+  ];
+
+  return (
+    <Card variant="bordered" style={styles.scopeCard}>
+      {folders && folders.length > 0 ? (
+        <FilterChips
+          label="Folder"
+          options={folderOptions}
+          selected={scope.folderId ?? 0}
+          onSelect={(key) => onChange({ ...scope, folderId: key === 0 ? undefined : key })}
+        />
+      ) : null}
+      <FilterChips
+        label="JLPT level"
+        options={tierOptions}
+        selected={scope.jlpt ?? 0}
+        onSelect={(key) => onChange({ ...scope, jlpt: key === 0 ? undefined : key })}
+      />
+    </Card>
+  );
+}
+
 function Shell({ children, onBack }: { children: React.ReactNode; onBack: () => void }) {
   return (
     <View style={styles.screen}>
@@ -420,6 +503,20 @@ const styles = StyleSheet.create({
     gap: spacing.stack,
   },
 
+  scopeCard: {
+    gap: 10,
+  },
+  scopeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  scopeText: {
+    ...typeScale.captionBold,
+    color: colors.inkMuted,
+    flexShrink: 1,
+  },
   promptCard: {
     alignItems: 'center',
     paddingVertical: 24,

@@ -18,6 +18,7 @@ import type {
   DayActivitySummary,
   DetectedItem,
   Flashcard,
+  FlashcardScope,
   FlashcardOutcome,
   GrammarEnrichment,
   GrammarEntry,
@@ -29,6 +30,7 @@ import type {
   ReviewAnswer,
   Subject,
   VocabItem,
+  VocabFolder,
   VocabSet,
 } from './types';
 
@@ -377,6 +379,45 @@ export function createVocabSet(name: string, description?: string): Promise<Voca
  * a set deliberately shows everything in it, including what is not due — that
  * is the difference between reading a deck and being quizzed on it.
  */
+/**
+ * A partial edit: a field left out is unchanged, a field sent as null is
+ * cleared (`folderId: null` unfiles, `jlptLevel: null` untags).
+ */
+export function updateVocabSet(
+  setId: number,
+  patch: { name?: string; folderId?: number | null; jlptLevel?: number | null },
+): Promise<VocabSet> {
+  return request<VocabSet>(`/api/vocab-sets/${setId}`, { method: 'PATCH', body: patch });
+}
+
+/** Folds a set into another: its words and pages move, then it is deleted. */
+export function mergeVocabSet(setId: number, intoSetId: number): Promise<VocabSet> {
+  return request<VocabSet>(`/api/vocab-sets/${setId}/merge`, {
+    method: 'POST',
+    body: { intoSetId },
+  });
+}
+
+export function fetchVocabFolders(signal?: AbortSignal): Promise<VocabFolder[]> {
+  return request<VocabFolder[]>('/api/vocab-folders', { signal });
+}
+
+export function createVocabFolder(name: string): Promise<VocabFolder> {
+  return request<VocabFolder>('/api/vocab-folders', { method: 'POST', body: { name } });
+}
+
+export function renameVocabFolder(folderId: number, name: string): Promise<VocabFolder> {
+  return request<VocabFolder>(`/api/vocab-folders/${folderId}`, {
+    method: 'PATCH',
+    body: { name },
+  });
+}
+
+/** Removes a folder. Its sets are unfiled, never deleted. */
+export function deleteVocabFolder(folderId: number): Promise<void> {
+  return request<void>(`/api/vocab-folders/${folderId}`, { method: 'DELETE' });
+}
+
 export function fetchVocabSetItems(setId: number, signal?: AbortSignal): Promise<VocabItem[]> {
   return request<VocabItem[]>(`/api/vocab-sets/${setId}/items`, { signal });
 }
@@ -411,9 +452,14 @@ export async function importPagesIntoSet(
 /** Imported vocabulary due now. Never WaniKani items — those are a separate queue. */
 export function fetchDueFlashcards(
   limit = 100,
+  scope: FlashcardScope = {},
   signal?: AbortSignal,
 ): Promise<Flashcard[]> {
-  return request<Flashcard[]>(`/api/flashcards/due?limit=${limit}`, { signal });
+  const params = [`limit=${limit}`];
+  if (scope.setId !== undefined) params.push(`set_id=${scope.setId}`);
+  if (scope.folderId !== undefined) params.push(`folder_id=${scope.folderId}`);
+  if (scope.jlpt !== undefined) params.push(`jlpt=${scope.jlpt}`);
+  return request<Flashcard[]>(`/api/flashcards/due?${params.join('&')}`, { signal });
 }
 
 /**

@@ -20,6 +20,7 @@ import type {
   DashboardSummary,
   DayActivitySummary,
   Flashcard,
+  FlashcardScope,
   GrammarEntry,
   JlptCoverage,
   LessonBundle,
@@ -30,6 +31,7 @@ import type {
   StudyItem,
   Subject,
   VocabItem,
+  VocabFolder,
   VocabSet,
 } from '@/data/types';
 
@@ -317,11 +319,12 @@ export function useStudyActions() {
  * underway finishes fine, because each card carries its own answers and the
  * outbox queues what you type.
  */
-export function useDueFlashcards(limit = 100) {
+export function useDueFlashcards(limit = 100, scope: FlashcardScope = {}) {
+  const key = `${scope.setId ?? ''}|${scope.folderId ?? ''}|${scope.jlpt ?? ''}`;
   return useAsync<Flashcard[]>(async () => {
     if (!api.isBackendConfigured) return [];
-    return api.fetchDueFlashcards(limit);
-  }, [limit]);
+    return api.fetchDueFlashcards(limit, scope);
+  }, [limit, key]);
 }
 
 /**
@@ -336,6 +339,14 @@ export function useVocabSets() {
   return useAsync<VocabSet[]>(async () => {
     if (!api.isBackendConfigured) return [];
     return api.fetchVocabSets();
+  }, []);
+}
+
+/** Folders, alphabetical, with how many sets each holds. */
+export function useVocabFolders() {
+  return useAsync<VocabFolder[]>(async () => {
+    if (!api.isBackendConfigured) return [];
+    return api.fetchVocabFolders();
   }, []);
 }
 

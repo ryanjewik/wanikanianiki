@@ -23,6 +23,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -35,6 +36,7 @@ import {
   selectedItems,
   toggleItem,
 } from '@/components/ExtractionReview';
+import { FilterChips, type ChipOption } from '@/components/FilterChips';
 import { EmptyDeckArt, OfflineArt } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
@@ -47,9 +49,9 @@ import {
   SectionHeading,
 } from '@/components/ui';
 import * as api from '@/data/api';
-import type { DetectedItem, VocabItem } from '@/data/types';
+import type { DetectedItem, VocabItem, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
-import { useVocabSetItems, useVocabSets } from '@/hooks/useStudyData';
+import { useVocabFolders, useVocabSetItems, useVocabSets } from '@/hooks/useStudyData';
 import { colors, jp, radius, spacing, type as typeScale } from '@/theme/tokens';
 
 /** The tier a page is imported at, cascading to every row it yields. */
@@ -68,7 +70,7 @@ export default function SetDetailScreen() {
   const setId = Number(id);
   const valid = Number.isFinite(setId);
 
-  const { data: sets } = useVocabSets();
+  const { data: sets, reload: reloadSets } = useVocabSets();
   const { data: items, loading, error, reload } = useVocabSetItems(valid ? setId : null);
 
   const [tier, setTier] = React.useState<number | null>(3);
@@ -78,6 +80,15 @@ export default function SetDetailScreen() {
   const [confirming, setConfirming] = React.useState(false);
 
   const set = sets?.find((candidate) => candidate.id === setId) ?? null;
+
+  // New pages default to the tier the set is tagged with, once it is known.
+  const setTierFromSet = React.useRef(false);
+  React.useEffect(() => {
+    if (set && !setTierFromSet.current) {
+      setTierFromSet.current = true;
+      if (set.jlptLevel) setTier(set.jlptLevel);
+    }
+  }, [set]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -342,16 +353,27 @@ export default function SetDetailScreen() {
             {items ? <NotecardDeck items={items} /> : null}
 
             <ChunkyButton
-              label="Quiz me on what's due"
+              label="Quiz this set — what's due"
               tone="neutral"
               size="small"
-              onPress={() => router.push('/quiz')}
+              onPress={() =>
+                router.push({ pathname: '/quiz', params: { setId: String(setId) } })
+              }
               style={styles.quizButton}
             />
             <Text style={styles.quizNote}>
-              The quiz draws every card that is due across your whole deck, not only this set.
+              Only this set's cards that are due. The Study tab quizzes the whole deck.
             </Text>
           </>
+        ) : null}
+
+        {set && sets ? (
+          <OrganiseCard
+            set={set}
+            sets={sets}
+            onChanged={reloadSets}
+            onMerged={(targetId) => router.replace(`/sets/${targetId}`)}
+          />
         ) : null}
 
         {items && count === 0 && !error && !importing && !reviewing ? (
@@ -380,6 +402,198 @@ export default function SetDetailScreen() {
         </View>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * Where this set lives and what it is: its name, its folder, its JLPT tier,
+ * and whether it should be folded into another set.
+ *
+ * Every change is sent as a partial edit, so moving a set between folders
+ * never resends its name, and each lands with a cue -- these are small taps on
+ * a screen that otherwise barely changes, and silence reads as "did nothing".
+ */
+function OrganiseCard({
+  set,
+  sets,
+  onChanged,
+  onMerged,
+}: {
+  set: VocabSet;
+  sets: VocabSet[];
+  onChanged: () => void;
+  onMerged: (targetId: number) => void;
+}) {
+  const { data: folders, reload: reloadFolders } = useVocabFolders();
+  const [editing, setEditing] = React.useState<'rename' | 'folder' | null>(null);
+  const [draft, setDraft] = React.useState('');
+  const [merging, setMerging] = React.useState(false);
+
+  const save = React.useCallback(
+    async (patch: Parameters<typeof api.updateVocabSet>[1]) => {
+      try {
+        await api.updateVocabSet(set.id, patch);
+        feedback.toggle();
+        onChanged();
+      } catch (cause) {
+        const duplicate = cause instanceof api.ApiError && cause.status === 409;
+        feedback.wrong();
+        Alert.alert(
+          duplicate ? 'That name is taken' : "Couldn't save that",
+          duplicate
+            ? 'Another set already has that name.'
+            : 'Check your connection and try again.',
+        );
+      }
+    },
+    [onChanged, set.id],
+  );
+
+  const submitDraft = React.useCallback(async () => {
+    const name = draft.trim();
+    if (!name) return;
+    if (editing === 'rename') {
+      await save({ name });
+    } else if (editing === 'folder') {
+      try {
+        const folder = await api.createVocabFolder(name);
+        reloadFolders();
+        await save({ folderId: folder.id });
+      } catch (cause) {
+        const duplicate = cause instanceof api.ApiError && cause.status === 409;
+        feedback.wrong();
+        Alert.alert(
+          duplicate ? 'That folder exists' : "Couldn't create the folder",
+          duplicate ? 'Pick it from the list instead.' : 'Check your connection and try again.',
+        );
+        return;
+      }
+    }
+    setEditing(null);
+    setDraft('');
+  }, [draft, editing, reloadFolders, save]);
+
+  const mergeInto = React.useCallback(
+    (target: VocabSet) => {
+      Alert.alert(
+        `Merge into "${target.name}"?`,
+        `The ${set.itemCount} ${set.itemCount === 1 ? 'word' : 'words'} in "${set.name}" move into "${target.name}", keeping their schedules, and "${set.name}" is removed.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Merge',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await api.mergeVocabSet(set.id, target.id);
+                feedback.complete();
+                onMerged(target.id);
+              } catch {
+                feedback.wrong();
+                Alert.alert("Couldn't merge", 'Check your connection and try again.');
+              }
+            },
+          },
+        ],
+      );
+    },
+    [onMerged, set],
+  );
+
+  const others = sets.filter((other) => other.id !== set.id);
+  const folderOptions: ChipOption<number>[] = [
+    { key: 0, label: 'No folder' },
+    ...(folders ?? []).map((f) => ({ key: f.id, label: f.name })),
+  ];
+  const tierOptions: ChipOption<number>[] = [
+    { key: 0, label: 'None' },
+    ...[5, 4, 3, 2, 1].map((n) => ({ key: n, label: `N${n}` })),
+  ];
+
+  return (
+    <Card variant="bordered" style={styles.organise}>
+      <SectionHeading title="Organise" />
+
+      {editing ? (
+        <View style={styles.organiseEdit}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={editing === 'rename' ? set.name : 'Folder name'}
+            placeholderTextColor={colors.inkDisabled}
+            style={styles.organiseInput}
+            maxLength={128}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={submitDraft}
+          />
+          <View style={styles.organiseActions}>
+            <InlineButton
+              label="Cancel"
+              emphasis="quiet"
+              onPress={() => {
+                setEditing(null);
+                setDraft('');
+              }}
+            />
+            <InlineButton label={editing === 'rename' ? 'Rename' : 'Create folder'} onPress={submitDraft} />
+          </View>
+        </View>
+      ) : (
+        <View style={styles.organiseActions}>
+          <InlineButton
+            label="Rename set"
+            emphasis="quiet"
+            onPress={() => {
+              setDraft(set.name);
+              setEditing('rename');
+            }}
+          />
+        </View>
+      )}
+
+      <FilterChips
+        label="Folder"
+        options={folderOptions}
+        selected={set.folderId ?? 0}
+        onSelect={(key) => save({ folderId: key === 0 ? null : key })}
+        trailing={{
+          label: '+ New folder',
+          onPress: () => {
+            setDraft('');
+            setEditing('folder');
+          },
+        }}
+      />
+
+      <FilterChips
+        label="JLPT level"
+        options={tierOptions}
+        selected={set.jlptLevel ?? 0}
+        onSelect={(key) => save({ jlptLevel: key === 0 ? null : key })}
+      />
+
+      {others.length > 0 ? (
+        merging ? (
+          <View style={styles.mergeList}>
+            <Text style={styles.mergeLabel}>Merge this set into…</Text>
+            {others.map((other) => (
+              <InlineButton
+                key={other.id}
+                label={`${other.name} · ${other.itemCount} words`}
+                emphasis="quiet"
+                onPress={() => mergeInto(other)}
+              />
+            ))}
+            <InlineButton label="Cancel" emphasis="quiet" onPress={() => setMerging(false)} />
+          </View>
+        ) : (
+          <View style={styles.organiseActions}>
+            <InlineButton label="Merge into another set…" emphasis="quiet" onPress={() => setMerging(true)} />
+          </View>
+        )
+      ) : null}
+    </Card>
   );
 }
 
@@ -570,6 +784,35 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
+  organise: {
+    gap: 12,
+  },
+  organiseEdit: {
+    gap: 8,
+  },
+  organiseInput: {
+    ...typeScale.body,
+    color: colors.ink,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.control,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.surface,
+  },
+  organiseActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  mergeList: {
+    gap: 7,
+    alignItems: 'flex-start',
+  },
+  mergeLabel: {
+    ...typeScale.metaSmall,
+    color: colors.inkSoft,
+  },
   deck: {
     gap: 10,
   },
