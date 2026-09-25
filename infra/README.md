@@ -125,8 +125,9 @@ demands `Authorization: Bearer <API_KEY>`, compared in constant time, and the
 key in its secure storage, entered once on the My profile screen (the crabigator avatar on the dashboard);
 it is never part of the app bundle.
 
-**One thing still breaks on Lambda: photo import.** Extraction drafts live in
-process memory (`_CACHE` in `app/services/ocr.py`), and the client's polls can
-land in a different container from the upload that produced them — the import
-then looks stuck. Everything else works. Moving the drafts into Postgres fixes
-it; until then, import photos against the local API.
+**Photo import runs in one request.** The upload holds the connection while
+the model reads the page (up to `VISION_TIMEOUT_SECONDS`, 240 s) and returns
+the rows; nothing is kept between requests, so it works from any container.
+The `api` function's 300 s timeout in `lambda.tf` is sized to sit above that —
+raise both together. Each extraction logs its duration, so CloudWatch shows
+how close real pages come.

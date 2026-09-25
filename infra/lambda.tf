@@ -1,9 +1,6 @@
 # Three functions off one zip (backend/scripts/build_lambda.py). They differ only in
 # handler, timeout and concurrency — see backend/app/lambda_handler.py for why each
 # number is what it is.
-#
-# `ocr_handler` is not deployed: it is blocked on durable image storage, and
-# the API's in-process background task is the working path until that lands.
 
 locals {
   artifact    = "${path.module}/../backend/build/lambda.zip"
@@ -12,9 +9,11 @@ locals {
   functions = {
     api = {
       handler = "app.lambda_handler.handler"
-      # A photo upload runs its extraction in the same invocation (Mangum waits
-      # for background tasks), so this sits above VISION_TIMEOUT_SECONDS.
-      timeout  = 180
+      # A photo upload holds the request while the model reads the page, for
+      # up to VISION_TIMEOUT_SECONDS (240, backend/app/config.py). This has to
+      # sit above that, or AWS kills the request before the backend can turn
+      # a slow page into an error the phone can show.
+      timeout  = 300
       memory   = 1024
       reserved = -1
       role     = "api"
