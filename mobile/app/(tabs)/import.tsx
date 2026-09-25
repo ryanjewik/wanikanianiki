@@ -12,8 +12,9 @@
  * duplicated.
  */
 import * as ImagePicker from 'expo-image-picker';
+import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   AmbiguityBanner,
@@ -23,6 +24,8 @@ import {
   selectedItems,
   toggleItem,
 } from '@/components/ExtractionReview';
+import { showDialog } from '@/components/Dialog';
+import { FilterChips, type ChipOption } from '@/components/FilterChips';
 import { EmptyDeckArt } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
@@ -34,8 +37,9 @@ import {
 } from '@/components/ui';
 import * as api from '@/data/api';
 import { DETECTED_ITEMS, DETECTED_TOTAL, IMPORT_PAGE_LABEL } from '@/data/fixtures';
-import type { DetectedItem, StudyMode } from '@/data/types';
+import type { DetectedItem, StudyMode, VocabFolder, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
+import { useVocabFolders, useVocabSets } from '@/hooks/useStudyData';
 import {
   colors,
   radius,
@@ -46,6 +50,17 @@ import {
 
 /** The tier the user picks at upload time, cascading to every extracted row. */
 const JLPT_TIERS: (number | null)[] = [5, 4, 3, 2, 1, null];
+
+/** What the server calls a page confirmed without a name: "Import Sep 25". */
+function defaultSetName(): string {
+  const now = new Date();
+  return `Import ${now.toLocaleString('en-US', { month: 'short' })} ${now.getDate()}`;
+}
+
+/** Where the confirmed words go: a new set (named, maybe filed) or one you have. */
+type Destination =
+  | { kind: 'new'; name: string; folderId: number | null }
+  | { kind: 'existing'; setId: number | null };
 
 /** Why an upload failed, in terms of what to do about it. */
 function importErrorMessage(error: unknown): string {
@@ -61,6 +76,14 @@ function importErrorMessage(error: unknown): string {
 }
 
 export default function ImportScreen() {
+  const router = useRouter();
+  const { data: sets, reload: reloadSets } = useVocabSets();
+  const { data: folders, reload: reloadFolders } = useVocabFolders();
+  const [destination, setDestination] = React.useState<Destination>({
+    kind: 'new',
+    name: '',
+    folderId: null,
+  });
   const [imageUri, setImageUri] = React.useState<string | null>(null);
   const [items, setItems] = React.useState<DetectedItem[] | null>(null);
   /** Set once the upload is accepted; the confirm call is keyed on it. */
@@ -83,12 +106,13 @@ export default function ImportScreen() {
           : await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (!permission.granted) {
-        Alert.alert(
-          'Permission needed',
-          source === 'camera'
-            ? 'Allow camera access to scan a textbook page.'
-            : 'Allow photo access to pick a textbook page.',
-        );
+        showDialog({
+          title: 'Permission needed',
+          message:
+            source === 'camera'
+              ? 'Allow camera access to scan a textbook page.'
+              : 'Allow photo access to pick a textbook page.',
+        });
         return;
       }
 
@@ -114,10 +138,12 @@ export default function ImportScreen() {
           const result = await api.uploadVocabPhoto(uri, tier);
           setSourceId(result.sourceId);
           if (result.status === 'failed') {
-            Alert.alert(
-              "Couldn't read that page",
-              result.detail ?? 'Try a straighter, better-lit photo of the page.',
-            );
+            feedback.wrong();
+            showDialog({
+              title: "Couldn't read that page",
+              message: result.detail ?? 'Try a straighter, better-lit photo of the page.',
+              tone: 'error',
+            });
             setImageUri(null);
             return;
           }
@@ -135,7 +161,12 @@ export default function ImportScreen() {
         // rows, which made a rejected upload look like a page that had been
         // read — twelve plausible words, some "already in your deck" — while
         // the real page never reached the server.
-        Alert.alert("Couldn't import that page", importErrorMessage(error));
+        feedback.wrong();
+        showDialog({
+          title: "Couldn't import that page",
+          message: importErrorMessage(error),
+          tone: 'error',
+        });
         setImageUri(null);
       } finally {
         setBusy(false);
@@ -154,6 +185,75 @@ export default function ImportScreen() {
 
   const selected = items ? selectedItems(items) : [];
   const ambiguous = items ? ambiguousItems(items) : [];
+  const needsSet = destination.kind === 'existing' && destination.setId === null;
+
+  const commit = React.useCallback(async () => {
+    // Send the rows back, not their ids: the user may have corrected a reading
+    // or resolved an ambiguity, and the edited text is the point of the
+    // review step.
+    const words = (n: number) => `${n} word${n === 1 ? '' : 's'}`;
+    const target =
+      destination.kind === 'existing'
+        ? (sets?.find((s) => s.id === destination.setId)?.name ?? 'your set')
+        : destination.name.trim() || defaultSetName();
+
+    if (api.isBackendConfigured && sourceId !== null) {
+      setBusy(true);
+      try {
+        const created = await api.confirmVocabImport(
+          sourceId,
+          selected,
+          destination.kind === 'existing'
+            ? { setId: destination.setId ?? undefined }
+            : { setName: destination.name, folderId: destination.folderId },
+        );
+        feedback.complete();
+        showDialog({
+          title: 'Imported',
+          message: `${words(created.length)} added to "${target}".`,
+          tone: 'success',
+          actions: [
+            { label: 'Import more', kind: 'cancel' },
+            {
+              label: 'See flashcards',
+              kind: 'primary',
+              onPress: () =>
+                router.push(
+                  destination.kind === 'existing' && destination.setId !== null
+                    ? `/sets/${destination.setId}`
+                    : '/sets',
+                ),
+            },
+          ],
+        });
+        reloadSets();
+      } catch (cause) {
+        feedback.wrong();
+        showDialog({
+          title: 'Import failed',
+          message:
+            cause instanceof api.ApiError && cause.status === 404
+              ? 'That set or folder no longer exists. Pick another and try again.'
+              : 'Those words were not saved. Try again.',
+          tone: 'error',
+        });
+        return;
+      } finally {
+        setBusy(false);
+      }
+    } else {
+      feedback.complete();
+      showDialog({
+        title: 'Imported',
+        message: `${words(selected.length)} added to "${target}".`,
+        tone: 'success',
+      });
+    }
+    setImageUri(null);
+    setItems(null);
+    setSourceId(null);
+    setDestination({ kind: 'new', name: '', folderId: null });
+  }, [destination, reloadSets, router, selected, sets, sourceId]);
 
   return (
     <View style={styles.screen}>
@@ -249,6 +349,14 @@ export default function ImportScreen() {
               />
             ) : null}
 
+            <DestinationCard
+              value={destination}
+              onChange={setDestination}
+              sets={sets ?? []}
+              folders={folders ?? []}
+              onFolderCreated={reloadFolders}
+            />
+
             <Card variant="bordered">
               <SectionHeading title="Study these as" />
               <View style={styles.modeRow}>
@@ -285,39 +393,142 @@ export default function ImportScreen() {
           <ChunkyButton
             label={`Import ${selected.length} item${selected.length === 1 ? '' : 's'}`}
             tone="vocabulary"
-            disabled={selected.length === 0 || ambiguous.length > 0}
-            onPress={async () => {
-              // Send the rows back, not their ids: the user may have corrected
-              // a reading or resolved an ambiguity, and the edited text is the
-              // point of the review step.
-              if (api.isBackendConfigured && sourceId !== null) {
-                setBusy(true);
-                try {
-                  const created = await api.confirmVocabImport(sourceId, selected);
-                  Alert.alert(
-                    'Imported',
-                    `${created.length} word${created.length === 1 ? '' : 's'} added to your deck as ${mode}.`,
-                  );
-                } catch {
-                  Alert.alert('Import failed', 'Those words were not saved. Try again.');
-                  return;
-                } finally {
-                  setBusy(false);
-                }
-              } else {
-                Alert.alert(
-                  'Imported',
-                  `${selected.length} words added to your deck as ${mode}.`,
-                );
-              }
-              setImageUri(null);
-              setItems(null);
-              setSourceId(null);
-            }}
+            disabled={selected.length === 0 || ambiguous.length > 0 || needsSet || busy}
+            onPress={commit}
           />
         </View>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * Where the page's words land, chosen before they are committed: a new set
+ * with a name and a folder of your choosing, or a set you already have.
+ * Leaving the name blank keeps the old default, a set named after the day.
+ */
+function DestinationCard({
+  value,
+  onChange,
+  sets,
+  folders,
+  onFolderCreated,
+}: {
+  value: Destination;
+  onChange: (next: Destination) => void;
+  sets: VocabSet[];
+  folders: VocabFolder[];
+  onFolderCreated: () => void;
+}) {
+  const [folderDraft, setFolderDraft] = React.useState<string | null>(null);
+  const [creating, setCreating] = React.useState(false);
+
+  const createFolder = React.useCallback(async () => {
+    const name = folderDraft?.trim();
+    if (!name || creating || value.kind !== 'new') return;
+    setCreating(true);
+    try {
+      const folder = await api.createVocabFolder(name);
+      feedback.correct();
+      onFolderCreated();
+      onChange({ ...value, folderId: folder.id });
+      setFolderDraft(null);
+    } catch (cause) {
+      const duplicate = cause instanceof api.ApiError && cause.status === 409;
+      feedback.wrong();
+      showDialog({
+        title: duplicate ? 'That folder exists' : "Couldn't create the folder",
+        message: duplicate
+          ? `You already have a folder called "${name}". Pick it from the list.`
+          : 'Check your connection and try again.',
+        tone: 'error',
+      });
+    } finally {
+      setCreating(false);
+    }
+  }, [creating, folderDraft, onChange, onFolderCreated, value]);
+
+  const folderOptions: ChipOption<number>[] = [
+    { key: 0, label: 'No folder' },
+    ...folders.map((f) => ({ key: f.id, label: f.name })),
+  ];
+  const setOptions: ChipOption<number>[] = sets.map((s) => ({ key: s.id, label: s.name }));
+
+  return (
+    <Card variant="bordered" style={styles.destinationCard}>
+      <SectionHeading title="Save to" />
+      <View style={styles.modeRow}>
+        <ModeTile
+          active={value.kind === 'new'}
+          title="New set"
+          subtitle="name it, file it"
+          onPress={() => onChange({ kind: 'new', name: '', folderId: null })}
+        />
+        <ModeTile
+          active={value.kind === 'existing'}
+          title="Existing set"
+          subtitle={sets.length > 0 ? 'add to one you have' : 'none yet'}
+          onPress={() => {
+            if (sets.length > 0) onChange({ kind: 'existing', setId: null });
+          }}
+        />
+      </View>
+
+      {value.kind === 'new' ? (
+        <>
+          <Text style={styles.fieldLabel}>Set name</Text>
+          <TextInput
+            value={value.name}
+            onChangeText={(name) => onChange({ ...value, name })}
+            placeholder={defaultSetName()}
+            placeholderTextColor={colors.inkDisabled}
+            style={styles.input}
+            maxLength={128}
+            returnKeyType="done"
+          />
+
+          <FilterChips
+            label="Folder"
+            options={folderOptions}
+            selected={value.folderId ?? 0}
+            onSelect={(key) => onChange({ ...value, folderId: key === 0 ? null : key })}
+            trailing={{ label: '+ New folder', onPress: () => setFolderDraft('') }}
+          />
+
+          {folderDraft !== null ? (
+            <View style={styles.folderDraft}>
+              <TextInput
+                value={folderDraft}
+                onChangeText={setFolderDraft}
+                placeholder="Quartet I"
+                placeholderTextColor={colors.inkDisabled}
+                style={[styles.input, styles.folderInput]}
+                maxLength={128}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={createFolder}
+              />
+              <ChunkyButton
+                label={creating ? 'Creating…' : 'Create'}
+                tone="vocabulary"
+                size="small"
+                chevron={false}
+                disabled={!folderDraft.trim() || creating}
+                onPress={createFolder}
+                style={styles.folderCreate}
+              />
+            </View>
+          ) : null}
+        </>
+      ) : (
+        <FilterChips
+          label="Add to"
+          options={setOptions}
+          selected={value.setId ?? -1}
+          onSelect={(key) => onChange({ kind: 'existing', setId: key })}
+        />
+      )}
+    </Card>
   );
 }
 
@@ -480,6 +691,36 @@ const styles = StyleSheet.create({
     ...typeScale.metaSmall,
     color: colors.inkSoft,
     lineHeight: 16,
+  },
+
+  destinationCard: {
+    gap: 10,
+  },
+  fieldLabel: {
+    ...typeScale.metaSmall,
+    color: colors.inkSoft,
+    marginBottom: -4,
+  },
+  input: {
+    ...typeScale.body,
+    color: colors.ink,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.control,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.surface,
+  },
+  folderDraft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  folderInput: {
+    flex: 1,
+  },
+  folderCreate: {
+    borderRadius: radius.tile,
   },
 
   footer: {

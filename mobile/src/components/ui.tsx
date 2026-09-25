@@ -203,6 +203,37 @@ export interface ChunkyButtonProps extends Omit<PressableProps, 'style'> {
   style?: ViewStyle;
 }
 
+const LAYOUT_KEYS = [
+  'flex',
+  'flexGrow',
+  'flexShrink',
+  'flexBasis',
+  'width',
+  'minWidth',
+  'maxWidth',
+  'alignSelf',
+  'margin',
+  'marginTop',
+  'marginBottom',
+  'marginLeft',
+  'marginRight',
+  'marginHorizontal',
+  'marginVertical',
+] as const;
+
+/** Splits a style into what places the control and what draws it. */
+function splitLayout(style: ViewStyle | undefined): { outer: ViewStyle; inner: ViewStyle } {
+  const flat = { ...(StyleSheet.flatten(style) ?? {}) } as Record<string, unknown>;
+  const outer: Record<string, unknown> = {};
+  for (const key of LAYOUT_KEYS) {
+    if (key in flat) {
+      outer[key] = flat[key];
+      delete flat[key];
+    }
+  }
+  return { outer: outer as ViewStyle, inner: flat as ViewStyle };
+}
+
 /**
  * The committing control: a 1.5px ink outline over a hard, un-blurred offset
  * shadow. Pressing it collapses the offset, so the button physically presses
@@ -236,8 +267,19 @@ export function ChunkyButton({
     [cue, disabled, onPressIn],
   );
 
+  // Layout props go on the Pressable, which is what the parent lays out: on the
+  // inner view a `flex: 1` or `alignSelf` did nothing, so buttons meant to
+  // share a row equally just sat at their label's width.
+  const { outer, inner } = splitLayout(style);
+
   return (
-    <Pressable disabled={disabled} onPress={onPress} {...rest} onPressIn={handlePressIn}>
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      {...rest}
+      onPressIn={handlePressIn}
+      style={outer}
+    >
       {({ pressed }) => (
         <View
           style={[
@@ -257,7 +299,7 @@ export function ChunkyButton({
               opacity: disabled ? 0.45 : 1,
             },
             shadows.hard,
-            style,
+            inner,
           ]}
         >
           <Text

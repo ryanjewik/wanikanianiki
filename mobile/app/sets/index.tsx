@@ -16,7 +16,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import * as React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,6 +24,7 @@ import {
   View,
 } from 'react-native';
 
+import { showDialog } from '@/components/Dialog';
 import { FilterChips, type ChipOption } from '@/components/FilterChips';
 import { EmptyDeckArt, OfflineArt } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -101,6 +101,11 @@ export default function SetsScreen() {
         closeNaming();
         feedback.correct();
         reloadFolders();
+        showDialog({
+          title: 'Folder renamed',
+          message: `"${naming.folder.name}" is now "${trimmed}".`,
+          tone: 'success',
+        });
       }
     } catch (cause) {
       // 409 is the one failure worth naming precisely — names are unique per
@@ -108,51 +113,83 @@ export default function SetsScreen() {
       const duplicate = cause instanceof api.ApiError && cause.status === 409;
       const noun = naming.kind === 'set' ? 'set' : 'folder';
       feedback.wrong();
-      Alert.alert(
-        duplicate ? 'That name is taken' : `Couldn't save the ${noun}`,
-        duplicate
+      showDialog({
+        title: duplicate ? 'That name is taken' : `Couldn't save the ${noun}`,
+        message: duplicate
           ? `You already have a ${noun} called "${trimmed}".`
           : 'Check that the app can reach your backend, then try again.',
-      );
+        tone: 'error',
+      });
     } finally {
       setSaving(false);
     }
   }, [closeNaming, folderFilter, naming, reloadFolders, router, saving, trimmed]);
 
-  /** Long-press on a folder chip: rename it, or delete it (its sets stay). */
+  const renameFolder = React.useCallback((folder: VocabFolder) => {
+    setName(folder.name);
+    setNaming({ kind: 'rename', folder });
+  }, []);
+
+  /** Asks first; the folder goes but its sets stay, unfiled. */
+  const deleteFolder = React.useCallback(
+    (folder: VocabFolder) => {
+      const count = (sets ?? []).filter((s) => s.folderId === folder.id).length;
+      showDialog({
+        title: `Delete "${folder.name}"?`,
+        message:
+          count > 0
+            ? `Its ${count} ${count === 1 ? 'set stays' : 'sets stay'}, just unfiled. No words are deleted.`
+            : 'It is empty, so nothing else changes.',
+        tone: 'confirm',
+        actions: [
+          { label: 'Keep it', kind: 'cancel' },
+          {
+            label: 'Delete folder',
+            kind: 'destructive',
+            onPress: async () => {
+              try {
+                await api.deleteVocabFolder(folder.id);
+                feedback.back();
+                if (folderFilter === folder.id) setFolderFilter('all');
+                reloadFolders();
+                reload();
+              } catch {
+                feedback.wrong();
+                showDialog({
+                  title: "Couldn't delete the folder",
+                  message: 'Check your connection and try again.',
+                  tone: 'error',
+                });
+              }
+            },
+          },
+        ],
+      });
+    },
+    [folderFilter, reload, reloadFolders, sets],
+  );
+
+  /** Long-press on a folder chip: the same two actions, as a menu. */
   const manageFolder = React.useCallback(
     (key: FolderFilter) => {
       const folder = folders?.find((f) => f.id === key);
       if (!folder) return;
       feedback.toggle();
-      Alert.alert(folder.name, undefined, [
-        {
-          text: 'Rename',
-          onPress: () => {
-            setName(folder.name);
-            setNaming({ kind: 'rename', folder });
-          },
-        },
-        {
-          text: 'Delete folder',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.deleteVocabFolder(folder.id);
-              feedback.back();
-              if (folderFilter === folder.id) setFolderFilter('all');
-              reloadFolders();
-              reload();
-            } catch {
-              Alert.alert("Couldn't delete the folder", 'Check your connection and try again.');
-            }
-          },
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
+      showDialog({
+        title: folder.name,
+        message: 'Rename this folder, or delete it. Deleting keeps its sets.',
+        actions: [
+          { label: 'Rename', kind: 'primary', onPress: () => renameFolder(folder) },
+          { label: 'Delete folder', kind: 'destructive', onPress: () => deleteFolder(folder) },
+          { label: 'Cancel', kind: 'cancel' },
+        ],
+      });
     },
-    [folderFilter, folders, reload, reloadFolders],
+    [deleteFolder, folders, renameFolder],
   );
+
+  const selectedFolder =
+    typeof folderFilter === 'number' ? (folders?.find((f) => f.id === folderFilter) ?? null) : null;
 
   const folderOptions: ChipOption<FolderFilter>[] = [
     { key: 'all', label: 'All' },
@@ -203,7 +240,7 @@ export default function SetsScreen() {
   return (
     <View style={styles.screen}>
       <ScreenHeader
-        title="Your sets"
+        title="Flashcards"
         showBack
         trailingText={sets && sets.length > 0 ? `${sets.length} sets` : undefined}
       />
@@ -248,13 +285,33 @@ export default function SetsScreen() {
         {sets && sets.length > 0 ? (
           <Card variant="bordered" style={styles.filterCard}>
             <FilterChips
-              label="Folder · long-press one to rename or delete it"
+              label="Folder"
               options={folderOptions}
               selected={folderFilter}
               onSelect={setFolderFilter}
               onLongPress={manageFolder}
               trailing={{ label: '+ Folder', onPress: () => setNaming({ kind: 'folder' }) }}
             />
+            {selectedFolder ? (
+              <View style={styles.folderActions}>
+                <ChunkyButton
+                  label="✎  Rename folder"
+                  tone="neutral"
+                  size="small"
+                  chevron={false}
+                  onPress={() => renameFolder(selectedFolder)}
+                  style={styles.folderButton}
+                />
+                <ChunkyButton
+                  label="Delete folder"
+                  tone="neutral"
+                  size="small"
+                  chevron={false}
+                  onPress={() => deleteFolder(selectedFolder)}
+                  style={styles.folderButton}
+                />
+              </View>
+            ) : null}
             <FilterChips
               label="JLPT level"
               options={jlptOptions}
@@ -298,8 +355,8 @@ export default function SetsScreen() {
             // "these".
             label={
               typeof folderFilter === 'number' || jlptFilter !== 'all'
-                ? "Quiz these — what's due"
-                : "Quiz me on what's due"
+                ? 'Vocab practice — these sets'
+                : 'Vocab practice — everything due'
             }
             tone="neutral"
             size="small"
@@ -434,6 +491,14 @@ const styles = StyleSheet.create({
 
   filterCard: {
     gap: 12,
+  },
+  folderActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  folderButton: {
+    flex: 1,
+    borderRadius: radius.tile,
   },
   section: {
     gap: spacing.stack,

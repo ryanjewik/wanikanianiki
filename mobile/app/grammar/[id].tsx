@@ -22,7 +22,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -32,6 +31,7 @@ import {
 } from 'react-native';
 
 import { OfflineArt } from '@/components/icons';
+import { showDialog } from '@/components/Dialog';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
   Card,
@@ -121,10 +121,11 @@ export default function GrammarDetailScreen() {
       if (result.applied) return;
 
       if (result.unrecognised) {
-        Alert.alert(
-          'Not a pattern it recognises',
-          `"${entry.pattern}" did not come back as a grammar point. That is usually a typo — correcting the pattern is more likely to help than asking again.`,
-        );
+        showDialog({
+          title: 'Not a pattern it recognises',
+          message: `"${entry.pattern}" did not come back as a grammar point. That is usually a typo — correcting the pattern is more likely to help than asking again.`,
+          tone: 'error',
+        });
         return;
       }
       if (result.otherSenses.length > 0) {
@@ -134,7 +135,7 @@ export default function GrammarDetailScreen() {
       }
     } catch (cause) {
       const [title, message] = describeEnrichFailure(cause);
-      Alert.alert(title, message);
+      showDialog({ title, message, tone: 'error' });
     } finally {
       setWorking(false);
     }
@@ -156,12 +157,13 @@ export default function GrammarDetailScreen() {
         // The uniqueness rule is (pattern, sense), so this is the one case
         // where the fix is to go to the entry you already have.
         const duplicate = cause instanceof api.ApiError && cause.status === 409;
-        Alert.alert(
-          duplicate ? 'You already have that sense' : 'Could not set the sense',
-          duplicate
+        showDialog({
+          title: duplicate ? 'You already have that sense' : 'Could not set the sense',
+          message: duplicate
             ? `"${entry.pattern}" is already logged under "${sense}".`
             : 'Check that the app can reach your backend, then try again.',
-        );
+          tone: 'error',
+        });
       } finally {
         setWorking(false);
       }
@@ -175,7 +177,11 @@ export default function GrammarDetailScreen() {
     try {
       setEntry(await api.updateGrammarEntry(entry.id, { enriched: true }));
     } catch {
-      Alert.alert('Could not confirm', 'Check your connection, then try again.');
+      showDialog({
+        title: 'Could not confirm',
+        message: 'Check your connection, then try again.',
+        tone: 'error',
+      });
     } finally {
       setWorking(false);
     }
@@ -189,7 +195,11 @@ export default function GrammarDetailScreen() {
       setEntry(await api.updateGrammarEntry(entry.id, { note: trimmed || null }));
       setEditingNote(false);
     } catch {
-      Alert.alert('Could not save that note', 'Check your connection, then try again.');
+      showDialog({
+        title: 'Could not save that note',
+        message: 'Check your connection, then try again.',
+        tone: 'error',
+      });
     } finally {
       setWorking(false);
     }
@@ -197,25 +207,30 @@ export default function GrammarDetailScreen() {
 
   const remove = React.useCallback(() => {
     if (!entry) return;
-    Alert.alert(
-      'Delete this point?',
-      `"${entry.pattern}" and its example sentences go for good. The day stays on your calendar only if something else happened on it.`,
-      [
-        { text: 'Keep', style: 'cancel' },
+    showDialog({
+      title: 'Delete this point?',
+      message: `"${entry.pattern}" and its example sentences go for good. The day stays on your calendar only if something else happened on it.`,
+      tone: 'confirm',
+      actions: [
+        { label: 'Keep', kind: 'cancel' },
         {
-          text: 'Delete',
-          style: 'destructive',
+          label: 'Delete',
+          kind: 'destructive',
           onPress: async () => {
             try {
               await api.deleteGrammarEntry(entry.id);
               router.back();
             } catch {
-              Alert.alert('Could not delete it', 'Check your connection, then try again.');
+              showDialog({
+                title: 'Could not delete it',
+                message: 'Check your connection, then try again.',
+                tone: 'error',
+              });
             }
           },
         },
       ],
-    );
+    });
   }, [entry, router]);
 
   if (loading && !entry) {

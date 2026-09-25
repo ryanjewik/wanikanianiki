@@ -14,6 +14,7 @@ import * as React from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DialogHost } from '@/components/Dialog';
 import { getDatabase } from '@/data/db';
 import { initFeedback } from '@/feedback';
 import { colors } from '@/theme/tokens';
@@ -75,6 +76,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <StatusBar style="dark" />
         <RootStack />
+        <DialogHost />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

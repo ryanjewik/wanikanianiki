@@ -18,7 +18,6 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -36,6 +35,7 @@ import {
   selectedItems,
   toggleItem,
 } from '@/components/ExtractionReview';
+import { showDialog } from '@/components/Dialog';
 import { FilterChips, type ChipOption } from '@/components/FilterChips';
 import { EmptyDeckArt, OfflineArt } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -106,7 +106,7 @@ export default function SetDetailScreen() {
   const addPages = React.useCallback(async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission needed', 'Allow photo access to add pages to this set.');
+      showDialog({ title: 'Permission needed', message: 'Allow photo access to add pages to this set.' });
       return;
     }
 
@@ -138,19 +138,28 @@ export default function SetDetailScreen() {
       ]);
 
       if (failed.length > 0) {
-        Alert.alert(
-          `${failed.length} of ${uris.length} pages couldn't be read`,
-          failed[0].detail ?? 'Try a straighter, better-lit photo of those pages.',
-        );
+        feedback.wrong();
+        showDialog({
+          title: `${failed.length} of ${uris.length} pages couldn't be read`,
+          message: failed[0].detail ?? 'Try a straighter, better-lit photo of those pages.',
+          tone: 'error',
+        });
       } else if (read.length === 0) {
-        Alert.alert('Nothing found', 'Those pages had no vocabulary rows on them.');
+        feedback.wrong();
+        showDialog({
+          title: 'Nothing found',
+          message: 'Those pages had no vocabulary rows on them.',
+          tone: 'error',
+        });
       }
       reload();
     } catch {
-      Alert.alert(
-        "Couldn't finish the import",
-        'Pages that were already read are kept below. Try the rest again.',
-      );
+      feedback.wrong();
+      showDialog({
+        title: "Couldn't finish the import",
+        message: 'Pages that were already read are kept below. Try the rest again.',
+        tone: 'error',
+      });
     } finally {
       setImporting(false);
       setProgress(null);
@@ -219,12 +228,16 @@ export default function SetDetailScreen() {
     setConfirming(false);
     reload();
 
-    Alert.alert(
-      stuck.length === 0 ? 'Added to your deck' : 'Partly added',
-      stuck.length === 0
-        ? `${added} word${added === 1 ? '' : 's'} added to ${set?.name ?? 'this set'}.`
-        : `${added} added. ${stuck.length} page${stuck.length === 1 ? '' : 's'} didn't save and are still below.`,
-    );
+    if (stuck.length === 0) feedback.complete();
+    else feedback.wrong();
+    showDialog({
+      title: stuck.length === 0 ? 'Added to your deck' : 'Partly added',
+      message:
+        stuck.length === 0
+          ? `${added} word${added === 1 ? '' : 's'} added to ${set?.name ?? 'this set'}.`
+          : `${added} added. ${stuck.length} page${stuck.length === 1 ? '' : 's'} didn't save and are still below.`,
+      tone: stuck.length === 0 ? 'success' : 'error',
+    });
   }, [confirming, pages, pendingAmbiguous, pendingSelected, reload, set]);
 
   if (!valid) {
@@ -353,7 +366,7 @@ export default function SetDetailScreen() {
             {items ? <NotecardDeck items={items} /> : null}
 
             <ChunkyButton
-              label="Quiz this set — what's due"
+              label="Vocab practice — this set"
               tone="neutral"
               size="small"
               onPress={() =>
@@ -362,7 +375,8 @@ export default function SetDetailScreen() {
               style={styles.quizButton}
             />
             <Text style={styles.quizNote}>
-              Only this set's cards that are due. The Study tab quizzes the whole deck.
+              Only this set's cards that are due. Vocab practice on the Study tab covers the
+              whole deck.
             </Text>
           </>
         ) : null}
@@ -438,13 +452,16 @@ function OrganiseCard({
       } catch (cause) {
         const duplicate = cause instanceof api.ApiError && cause.status === 409;
         feedback.wrong();
-        Alert.alert(
-          duplicate ? 'That name is taken' : "Couldn't save that",
-          duplicate
+        showDialog({
+          title: duplicate ? 'That name is taken' : "Couldn't save that",
+          message: duplicate
             ? 'Another set already has that name.'
             : 'Check your connection and try again.',
-        );
+          tone: 'error',
+        });
+        return false;
       }
+      return true;
     },
     [onChanged, set.id],
   );
@@ -453,19 +470,24 @@ function OrganiseCard({
     const name = draft.trim();
     if (!name) return;
     if (editing === 'rename') {
-      await save({ name });
+      if (!(await save({ name }))) return;
+      feedback.correct();
     } else if (editing === 'folder') {
       try {
         const folder = await api.createVocabFolder(name);
         reloadFolders();
-        await save({ folderId: folder.id });
+        if (!(await save({ folderId: folder.id }))) return;
+        feedback.correct();
       } catch (cause) {
         const duplicate = cause instanceof api.ApiError && cause.status === 409;
         feedback.wrong();
-        Alert.alert(
-          duplicate ? 'That folder exists' : "Couldn't create the folder",
-          duplicate ? 'Pick it from the list instead.' : 'Check your connection and try again.',
-        );
+        showDialog({
+          title: duplicate ? 'That folder exists' : "Couldn't create the folder",
+          message: duplicate
+            ? 'Pick it from the list instead.'
+            : 'Check your connection and try again.',
+          tone: 'error',
+        });
         return;
       }
     }
@@ -475,27 +497,33 @@ function OrganiseCard({
 
   const mergeInto = React.useCallback(
     (target: VocabSet) => {
-      Alert.alert(
-        `Merge into "${target.name}"?`,
-        `The ${set.itemCount} ${set.itemCount === 1 ? 'word' : 'words'} in "${set.name}" move into "${target.name}", keeping their schedules, and "${set.name}" is removed.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
+      showDialog({
+        title: `Merge into "${target.name}"?`,
+        message: `The ${set.itemCount} ${set.itemCount === 1 ? 'word' : 'words'} in "${set.name}" move into "${target.name}", keeping their schedules, and "${set.name}" is removed.`,
+        tone: 'confirm',
+        actions: [
+          { label: 'Cancel', kind: 'cancel' },
           {
-            text: 'Merge',
-            style: 'destructive',
+            label: 'Merge',
+            kind: 'destructive',
             onPress: async () => {
               try {
                 await api.mergeVocabSet(set.id, target.id);
                 feedback.complete();
+                setMerging(false);
                 onMerged(target.id);
               } catch {
                 feedback.wrong();
-                Alert.alert("Couldn't merge", 'Check your connection and try again.');
+                showDialog({
+                  title: "Couldn't merge",
+                  message: 'Check your connection and try again.',
+                  tone: 'error',
+                });
               }
             },
           },
         ],
-      );
+      });
     },
     [onMerged, set],
   );
@@ -516,10 +544,13 @@ function OrganiseCard({
 
       {editing ? (
         <View style={styles.organiseEdit}>
+          <Text style={styles.mergeLabel}>
+            {editing === 'rename' ? 'New name for this set' : 'Name the new folder'}
+          </Text>
           <TextInput
             value={draft}
             onChangeText={setDraft}
-            placeholder={editing === 'rename' ? set.name : 'Folder name'}
+            placeholder={editing === 'rename' ? set.name : 'Quartet I'}
             placeholderTextColor={colors.inkDisabled}
             style={styles.organiseInput}
             maxLength={128}
@@ -527,30 +558,88 @@ function OrganiseCard({
             returnKeyType="done"
             onSubmitEditing={submitDraft}
           />
-          <View style={styles.organiseActions}>
-            <InlineButton
+          <View style={styles.organiseRow}>
+            <ChunkyButton
               label="Cancel"
-              emphasis="quiet"
+              tone="neutral"
+              size="small"
+              chevron={false}
+              cue="back"
               onPress={() => {
                 setEditing(null);
                 setDraft('');
               }}
+              style={styles.organiseButton}
             />
-            <InlineButton label={editing === 'rename' ? 'Rename' : 'Create folder'} onPress={submitDraft} />
+            <ChunkyButton
+              label={editing === 'rename' ? 'Save name' : 'Create folder'}
+              tone="vocabulary"
+              size="small"
+              chevron={false}
+              disabled={!draft.trim()}
+              onPress={submitDraft}
+              style={styles.organiseButton}
+            />
           </View>
         </View>
-      ) : (
-        <View style={styles.organiseActions}>
-          <InlineButton
-            label="Rename set"
-            emphasis="quiet"
+      ) : merging ? null : (
+        <View style={styles.organiseRow}>
+          <ChunkyButton
+            label="✎  Rename"
+            tone="neutral"
+            size="small"
+            chevron={false}
             onPress={() => {
               setDraft(set.name);
               setEditing('rename');
             }}
+            style={styles.organiseButton}
           />
+          {others.length > 0 ? (
+            <ChunkyButton
+              label="⇄  Merge…"
+              tone="neutral"
+              size="small"
+              chevron={false}
+              onPress={() => setMerging(true)}
+              style={styles.organiseButton}
+            />
+          ) : null}
         </View>
       )}
+
+      {merging ? (
+        <View style={styles.mergeList}>
+          <Text style={styles.mergeLabel}>
+            Pick the set to merge &quot;{set.name}&quot; into. Its words move there.
+          </Text>
+          {others.map((other) => (
+            <Pressable key={other.id} onPress={() => mergeInto(other)} onPressIn={feedback.select}>
+              {({ pressed }) => (
+                <View style={[styles.mergeRow, pressed && styles.mergeRowPressed]}>
+                  <View style={styles.mergeRowBody}>
+                    <Text style={styles.mergeRowName} numberOfLines={1}>
+                      {other.name}
+                    </Text>
+                    <Text style={styles.mergeRowMeta}>
+                      {other.itemCount} {other.itemCount === 1 ? 'word' : 'words'}
+                    </Text>
+                  </View>
+                  <Text style={styles.mergeRowAction}>Merge here ›</Text>
+                </View>
+              )}
+            </Pressable>
+          ))}
+          <ChunkyButton
+            label="Cancel"
+            tone="neutral"
+            size="small"
+            chevron={false}
+            cue="back"
+            onPress={() => setMerging(false)}
+          />
+        </View>
+      ) : null}
 
       <FilterChips
         label="Folder"
@@ -573,26 +662,6 @@ function OrganiseCard({
         onSelect={(key) => save({ jlptLevel: key === 0 ? null : key })}
       />
 
-      {others.length > 0 ? (
-        merging ? (
-          <View style={styles.mergeList}>
-            <Text style={styles.mergeLabel}>Merge this set into…</Text>
-            {others.map((other) => (
-              <InlineButton
-                key={other.id}
-                label={`${other.name} · ${other.itemCount} words`}
-                emphasis="quiet"
-                onPress={() => mergeInto(other)}
-              />
-            ))}
-            <InlineButton label="Cancel" emphasis="quiet" onPress={() => setMerging(false)} />
-          </View>
-        ) : (
-          <View style={styles.organiseActions}>
-            <InlineButton label="Merge into another set…" emphasis="quiet" onPress={() => setMerging(true)} />
-          </View>
-        )
-      ) : null}
     </Card>
   );
 }
@@ -800,14 +869,46 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: colors.surface,
   },
-  organiseActions: {
+  organiseRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
   },
+  organiseButton: {
+    flex: 1,
+    borderRadius: radius.tile,
+  },
   mergeList: {
-    gap: 7,
-    alignItems: 'flex-start',
+    gap: 8,
+  },
+  mergeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.control,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    backgroundColor: colors.surface,
+  },
+  mergeRowPressed: {
+    backgroundColor: colors.hairline,
+  },
+  mergeRowBody: {
+    flex: 1,
+    gap: 2,
+  },
+  mergeRowName: {
+    ...typeScale.section,
+    color: colors.ink,
+  },
+  mergeRowMeta: {
+    ...typeScale.metaSmall,
+    color: colors.inkSoft,
+  },
+  mergeRowAction: {
+    ...typeScale.captionBold,
+    color: colors.vocabulary,
   },
   mergeLabel: {
     ...typeScale.metaSmall,

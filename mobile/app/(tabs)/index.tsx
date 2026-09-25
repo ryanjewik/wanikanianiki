@@ -5,7 +5,7 @@
  * action cards hold the Crabigator: a waving pose for lessons, a walking one
  * for reviews.
  */
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -29,6 +29,7 @@ import {
   isoDate,
   useActivityCalendar,
   useDashboard,
+  useDueFlashcards,
   useJlptCoverage,
   usePracticeQueue,
   useSync,
@@ -48,7 +49,8 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { data, reload } = useDashboard();
   const { data: calendar } = useActivityCalendar();
-  const { data: practice } = usePracticeQueue();
+  const { data: practice, reload: reloadPractice } = usePracticeQueue();
+  const { data: dueCards, reload: reloadDue } = useDueFlashcards();
   const { data: jlpt } = useJlptCoverage();
   const { syncing, refresh } = useSync();
   const auth = useAuthStatus();
@@ -66,14 +68,25 @@ export default function DashboardScreen() {
     }
   }, [auth, reload]);
 
+  // Your own deck's queues change while you are away in a session, and unlike
+  // WaniKani's they are not part of the dashboard payload the sync refreshes.
+  useFocusEffect(
+    React.useCallback(() => {
+      reloadDue();
+      reloadPractice();
+    }, [reloadDue, reloadPractice]),
+  );
+
   // The pull itself gets a tap, and the end of the sync a soft reveal: a
   // refresh that finishes silently leaves you guessing whether it did anything.
   const onRefresh = React.useCallback(async () => {
     feedback.tap();
     await refresh();
     reload();
+    reloadDue();
+    reloadPractice();
     feedback.reveal();
-  }, [refresh, reload]);
+  }, [refresh, reload, reloadDue, reloadPractice]);
 
   if (!data) return <View style={styles.screen} />;
 
@@ -153,10 +166,29 @@ export default function DashboardScreen() {
           />
         </RiseIn>
 
+        {/* Your own deck, beside WaniKani's: the words you imported, on their
+            own schedule. Opens vocab practice over everything that is due. */}
+        <RiseIn delay={110}>
+          <QueueCard
+            title="Vocab Flashcards"
+            count={dueCards?.length ?? 0}
+            tone="vocabulary"
+            blurb={
+              dueCards && dueCards.length > 0
+                ? 'Words you imported that are due again.'
+                : 'Nothing due. Import a page to add words.'
+            }
+            cta="Start Vocab Practice"
+            art={<Mascot pose="blink" size={80} speed={0.6} />}
+            disabled={!dueCards || dueCards.length === 0}
+            onPress={() => router.push('/quiz')}
+          />
+        </RiseIn>
+
         {/* The third track, and the one that was previously invisible from
             here: generated practice had no presence on the home screen at all,
             so the only way to find it was to already know it existed. */}
-        <RiseIn delay={110}>
+        <RiseIn delay={165}>
           <QueueCard
             title="Practice Questions"
             count={practice?.questions ?? 0}
@@ -173,7 +205,7 @@ export default function DashboardScreen() {
           />
         </RiseIn>
 
-        <RiseIn delay={165}>
+        <RiseIn delay={220}>
           <StreakCard streak={data.streak} calendar={calendar} />
         </RiseIn>
 

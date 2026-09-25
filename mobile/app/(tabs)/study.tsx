@@ -1,40 +1,24 @@
 /**
- * Study hub.
+ * Study hub: everything that is yours rather than WaniKani's.
  *
- * The one screen not drawn in the artboards — the tab bar needs a destination,
- * and the design doc is explicit that WaniKani content and AI-generated
- * content are separate study tracks rather than one blended queue. This is
- * where that separation becomes visible: two sections, never a merged list.
+ * WaniKani's lessons and reviews are on the home screen and only there; this
+ * tab is the imported deck, generated practice and grammar, with the sound
+ * and haptics settings at the very bottom where settings belong.
  *
  * Everything here is assembled from the existing primitives, so it stays in
  * the same system as the drawn screens.
  */
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { FeedbackToggles } from '@/components/FeedbackToggles';
-import { AllCaughtUpArt, NothingDueArt, OfflineArt } from '@/components/icons';
+import { OfflineArt } from '@/components/icons';
 import { Mascot } from '@/components/Mascot';
 import { RiseIn } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import {
-  Card,
-  ChunkyButton,
-  EmptyState,
-  Overline,
-  QueueCard,
-  SectionHeading,
-} from '@/components/ui';
-import { formatDueIn } from '@/data/sync';
-import {
-  useDashboard,
-  useDueFlashcards,
-  useLessonQueue,
-  usePracticeQueue,
-  useReviewQueue,
-  useSync,
-} from '@/hooks/useStudyData';
+import { Card, ChunkyButton, Overline, QueueCard, SectionHeading } from '@/components/ui';
+import { useDueFlashcards, usePracticeQueue, useSync } from '@/hooks/useStudyData';
 import {
   colors,
   radius,
@@ -44,24 +28,21 @@ import {
 
 export default function StudyScreen() {
   const router = useRouter();
-  const { data: dashboard } = useDashboard();
-  const { data: lessons } = useLessonQueue();
-  const { data: reviews } = useReviewQueue();
-  const { data: dueCards } = useDueFlashcards();
-  const { data: practice } = usePracticeQueue();
+  const { data: dueCards, reload: reloadDue } = useDueFlashcards();
+  const { data: practice, reload: reloadPractice } = usePracticeQueue();
   const { pendingWrites, result } = useSync();
 
-  const lessonCount = lessons?.length ?? 0;
-  const reviewCount = reviews?.length ?? 0;
   const dueCardCount = dueCards?.length ?? 0;
   const offline = result?.error === 'Offline';
 
-  /**
-   * WaniKani decides what unlocks next server-side, so a long offline stretch
-   * eventually exhausts whatever was cached — worth saying out loud before the
-   * queue simply goes empty.
-   */
-  const backlogLow = offline && lessonCount > 0 && lessonCount <= 5;
+  // Coming back from a session, the counts on the buttons are the first thing
+  // read; they should already say what is left rather than what there was.
+  useFocusEffect(
+    React.useCallback(() => {
+      reloadDue();
+      reloadPractice();
+    }, [reloadDue, reloadPractice]),
+  );
 
   return (
     <View style={styles.screen}>
@@ -84,61 +65,6 @@ export default function StudyScreen() {
           </Card>
         ) : null}
 
-        {backlogLow ? (
-          <Card variant="bordered" style={styles.warningCard}>
-            <Text style={styles.warningText}>
-              Running low on lessons. New ones only unlock once you&apos;re back online — reconnect
-              to get more.
-            </Text>
-          </Card>
-        ) : null}
-
-        <Overline style={styles.trackLabel}>WaniKani track</Overline>
-
-        {reviewCount > 0 ? (
-          <QueueCard
-            title="Reviews"
-            count={reviewCount}
-            tone="radical"
-            blurb="Items whose interval has come due."
-            cta="Start Reviews"
-            art={<Mascot pose="walk" size={80} speed={0.7} />}
-            onPress={() => router.push('/review')}
-          />
-        ) : (
-          <Card>
-            <EmptyState
-              art={dashboard?.lastSyncedAt ? <NothingDueArt /> : <AllCaughtUpArt />}
-              title="Nothing due yet"
-              body={
-                dashboard
-                  ? `Next reviews ${formatDueIn(dashboard.lastSyncedAt)}.`
-                  : 'Nothing left in the queue.'
-              }
-            />
-          </Card>
-        )}
-
-        {lessonCount > 0 ? (
-          <QueueCard
-            title="Lessons"
-            count={lessonCount}
-            tone="kanji"
-            blurb="New radicals, kanji and words unlocked for you."
-            cta="Start Lessons"
-            art={<Mascot pose="wave" size={80} speed={0.7} />}
-            onPress={() => router.push('/lesson')}
-          />
-        ) : (
-          <Card>
-            <EmptyState
-              art={<AllCaughtUpArt />}
-              title="All caught up"
-              body="Nothing left in the lesson queue. Reviews unlock the next batch."
-            />
-          </Card>
-        )}
-
         <Overline style={styles.trackLabel}>Your own deck</Overline>
 
         <Card variant="bordered">
@@ -146,6 +72,7 @@ export default function StudyScreen() {
             title="Imported vocabulary"
             trailing={dueCardCount > 0 ? `${dueCardCount} due ›` : 'Manage ›'}
             trailingColor={colors.vocabulary}
+            onPressTrailing={() => router.push(dueCardCount > 0 ? '/quiz' : '/sets')}
           />
           <Text style={styles.trackBlurb}>
             Words you photographed from a textbook, studied as two-sided flashcards: each word
@@ -154,19 +81,19 @@ export default function StudyScreen() {
             over, so the card can tell whether you actually knew it.
           </Text>
           <Text style={styles.trackBlurb}>
-            They run on their own SM-2 schedule, kept separate from the WaniKani queue above so
-            the two never disagree about the same word.
+            They run on their own SM-2 schedule, kept separate from your WaniKani queue so the
+            two never disagree about the same word.
           </Text>
           <View style={styles.deckActions}>
             <ChunkyButton
-              label="Browse words"
+              label="Flashcards"
               tone="vocabulary"
               size="small"
               onPress={() => router.push('/sets')}
               style={styles.deckButton}
             />
             <ChunkyButton
-              label={dueCardCount > 0 ? `Flashcards (${dueCardCount})` : 'Flashcards'}
+              label={dueCardCount > 0 ? `Vocab practice (${dueCardCount})` : 'Vocab practice'}
               tone="neutral"
               size="small"
               disabled={dueCardCount === 0}
@@ -208,14 +135,6 @@ export default function StudyScreen() {
           </Text>
         </Card>
 
-        <Overline style={styles.trackLabel}>How it feels</Overline>
-
-        <RiseIn delay={60}>
-          <Card variant="bordered">
-            <FeedbackToggles />
-          </Card>
-        </RiseIn>
-
         <Overline style={styles.trackLabel}>Grammar</Overline>
 
         <Card variant="bordered">
@@ -240,6 +159,14 @@ export default function StudyScreen() {
             />
           </View>
         </Card>
+        <Overline style={[styles.trackLabel, styles.settingsLabel]}>How it feels</Overline>
+
+        <RiseIn delay={60}>
+          <Card variant="bordered">
+            <FeedbackToggles />
+          </Card>
+        </RiseIn>
+
       </ScrollView>
     </View>
   );
@@ -261,6 +188,9 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginLeft: 4,
   },
+  settingsLabel: {
+    marginTop: 18,
+  },
 
   offlineCard: {
     flexDirection: 'row',
@@ -279,15 +209,6 @@ const styles = StyleSheet.create({
     ...typeScale.metaSmall,
     color: colors.inkSoft,
     lineHeight: 16,
-  },
-  warningCard: {
-    backgroundColor: colors.warningTint,
-    borderColor: colors.warningBorder,
-  },
-  warningText: {
-    ...typeScale.caption,
-    color: colors.warningInkDeep,
-    lineHeight: 18,
   },
 
 

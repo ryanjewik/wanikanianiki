@@ -346,13 +346,31 @@ export async function uploadVocabPhoto(
 }
 
 /** Commits the rows the user kept after reviewing the OCR result. */
+/**
+ * Where confirmed words go. `setId` joins an existing set; otherwise the page
+ * becomes a new set called `setName` (the server names it after the day when
+ * blank), filed in `folderId`. Leave it out entirely for a page that was
+ * photographed into a set, which already knows where it belongs.
+ */
+export interface ImportDestination {
+  setId?: number;
+  setName?: string;
+  folderId?: number | null;
+}
+
 export function confirmVocabImport(
   sourceId: number,
   items: DetectedItem[],
+  destination: ImportDestination = {},
 ): Promise<VocabItem[]> {
   return request<VocabItem[]>(`/api/vocab-sources/${sourceId}/confirm`, {
     method: 'POST',
-    body: { items },
+    body: {
+      items,
+      setId: destination.setId ?? null,
+      setName: destination.setName?.trim() || null,
+      folderId: destination.folderId ?? null,
+    },
   });
 }
 

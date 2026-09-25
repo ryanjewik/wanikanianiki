@@ -81,7 +81,7 @@ const FURIGANA_UNTIL_REPETITIONS = 2;
 
 export default function QuizScreen() {
   const router = useRouter();
-  // Scope arrives from the link -- "Quiz this set", or the browser's filters --
+  // Scope arrives from the link -- "Vocab practice — this set", or the browser's filters --
   // and can be changed on the scope bar until the first answer.
   const params = useLocalSearchParams<{ setId?: string; folderId?: string; jlpt?: string }>();
   const [scope, setScope] = React.useState<FlashcardScope>(() => ({
@@ -250,7 +250,7 @@ export default function QuizScreen() {
         // Says what it is, not just which way round it is. "Produce" alone
         // never told you this was a flashcard deck on its own schedule; the
         // direction is already spelled out on the prompt card below.
-        title={production ? 'Flashcards · Produce' : 'Flashcards · Recognise'}
+        title={production ? 'Vocab practice · Produce' : 'Vocab practice · Recognise'}
         glyph={palette.glyph}
         glyphColor={palette.solid}
         trailingText={`${stats.correct} / ${total}`}
@@ -480,7 +480,7 @@ function ScopeBar({
 function Shell({ children, onBack }: { children: React.ReactNode; onBack: () => void }) {
   return (
     <View style={styles.screen}>
-      <ScreenHeader title="Quiz" glyph={palette.glyph} glyphColor={palette.solid} />
+      <ScreenHeader title="Vocab practice" glyph={palette.glyph} glyphColor={palette.solid} />
       <ScrollView contentContainerStyle={styles.content}>{children}</ScrollView>
       <View style={styles.footer}>
         <Pressable onPress={onBack} hitSlop={8}>
