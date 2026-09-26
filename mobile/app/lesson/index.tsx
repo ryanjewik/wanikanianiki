@@ -1,17 +1,22 @@
 /**
  * Lesson — artboard 4c.
  *
- * A lesson is study-only until the very end: the user reads the composition,
- * mnemonic and readings, and the single write (`PUT /assignments/{id}/start`)
- * fires when they tap through. That call is queued in the outbox first, so
- * finishing a lesson offline works exactly like finishing one online.
+ * Taught in batches, the way WaniKani teaches: read five items, then a quiz on
+ * their meanings and readings. An item is learned -- its assignment started,
+ * `PUT /assignments/{id}/start` -- only once both halves have been answered
+ * right in the quiz. Reading an item is not learning it; an item you leave
+ * before passing stays in the lesson queue for next time.
+ *
+ * The start goes through the outbox, so finishing a lesson offline works
+ * exactly like finishing one online.
  */
 import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
-import { MascotCoach } from '@/components/MascotCoach';
+import { Mascot, type Pose } from '@/components/Mascot';
+import { MascotCoach, useAnswerRun } from '@/components/MascotCoach';
 import { RiseIn } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { speakSubject, SubjectExtras } from '@/components/SubjectExtras';
@@ -20,10 +25,13 @@ import {
   CardBanner,
   ChunkyButton,
   Overline,
+  Pill,
   ReadingChip,
+  SessionProgressBar,
   StepDots,
   TextButton,
 } from '@/components/ui';
+import { halvesOf, type Half, WkQuestion } from '@/components/WkQuestion';
 import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -39,6 +47,8 @@ import {
 
 /** How far a swipe has to travel before it turns the page. */
 const SWIPE_DISTANCE = 70;
+/** Items read before each quiz -- WaniKani's own default batch. */
+const BATCH_SIZE = 5;
 /** "Shows up in" shows this many; a common kanji is in dozens of words. */
 const USED_IN_LIMIT = 8;
 
@@ -55,8 +65,15 @@ export default function LessonScreen() {
   const current = items[index];
 
   const startedAt = React.useRef(Date.now());
-  /** Items actually taught — a deferred item comes back round and is not one. */
+  /** Items learned: passed in a quiz, and so started on WaniKani. */
   const taught = React.useRef<StudyItem[]>([]);
+
+  /** Reading the batch, or being quizzed on it. */
+  const [phase, setPhase] = React.useState<'teach' | 'quiz'>('teach');
+  /** Items read in this batch and not yet passed -- what the quiz asks. */
+  const [batch, setBatch] = React.useState<StudyItem[]>([]);
+  /** Where this batch began; "Previous" does not reach back past it. */
+  const [batchStart, setBatchStart] = React.useState(0);
 
   /**
    * One scroll view serves every item in the queue, so moving on leaves the
@@ -75,61 +92,90 @@ export default function LessonScreen() {
     (current?.subject.amalgamationSubjectIds ?? []).slice(0, USED_IN_LIMIT),
   );
 
-  const advance = React.useCallback(() => {
-    if (index + 1 >= items.length) {
-      // A lesson has nothing to get wrong, so every item taught is `correct`.
-      // The movement it produces is real all the same: WaniKani takes an
-      // unlocked item to stage 1 when the lesson lands.
-      const session: SessionItem[] = taught.current.map(({ subject, assignment }) => ({
-        subjectId: subject.id,
-        characters: subject.characters ?? '?',
-        meaning: subject.meanings.find((m) => m.primary)?.meaning ?? '',
-        reading: subject.readings.find((r) => r.primary)?.reading ?? '',
-        startingStage: assignment.srsStage,
-        correct: true,
-        note: '',
-      }));
+  /** The session's end: the summary, reporting what was learned. */
+  const finish = React.useCallback(() => {
+    // Every item reported passed its quiz, so each is `correct`. The movement
+    // it produces is real: WaniKani takes an unlocked item to stage 1 when
+    // the lesson lands.
+    const session: SessionItem[] = taught.current.map(({ subject, assignment }) => ({
+      subjectId: subject.id,
+      characters: subject.characters ?? '?',
+      meaning: subject.meanings.find((m) => m.primary)?.meaning ?? '',
+      reading: subject.readings.find((r) => r.primary)?.reading ?? '',
+      startingStage: assignment.srsStage,
+      correct: true,
+      note: '',
+    }));
 
-      recordSession({
-        kind: 'lesson',
-        startedAt: startedAt.current,
-        finishedAt: Date.now(),
-        items: session,
-      });
-      feedback.complete();
-      router.replace('/session-summary');
-      return;
-    }
-    setIndex((i) => i + 1);
-  }, [index, items.length, router]);
+    recordSession({
+      kind: 'lesson',
+      startedAt: startedAt.current,
+      finishedAt: Date.now(),
+      items: session,
+    });
+    feedback.complete();
+    router.replace('/session-summary');
+  }, [router]);
 
-  const onGotIt = React.useCallback(async () => {
-    // Swiping back re-reads an item already taught; moving on from it again
-    // must not send a second start for the same assignment.
-    if (current && !taught.current.includes(current)) {
-      taught.current.push(current);
-      await completeLesson(current.assignment);
-    }
-    // Deliberately `advance` and not the level-up fanfare, even though an item
-    // taught really is an item unlocked. A lesson queue is twenty-odd items
-    // long, and a cue that says "this is a big moment" twenty times in four
-    // minutes stops meaning it. The fanfare is kept for the end of the run.
+  /** Read: into the batch, then the next item -- or the quiz once the batch is full. */
+  const onGotIt = React.useCallback(() => {
+    if (!current) return;
+    // Swiping back re-reads an item already in the batch; it goes in once.
+    const nextBatch = batch.includes(current) ? batch : [...batch, current];
+    setBatch(nextBatch);
+    // Deliberately `advance` and not the level-up fanfare. A lesson queue is
+    // twenty-odd items long, and a cue that says "this is a big moment" twenty
+    // times in four minutes stops meaning it.
     feedback.advance();
-    advance();
-  }, [current, completeLesson, advance]);
+    if (nextBatch.length >= BATCH_SIZE || index + 1 >= items.length) {
+      setPhase('quiz');
+    } else {
+      setIndex((i) => i + 1);
+    }
+  }, [batch, current, index, items.length]);
 
   const onDefer = React.useCallback(() => {
     if (current) setDeferred((rest) => [...rest, current]);
     feedback.advance();
-    advance();
-  }, [current, advance]);
+    // Deferring appends the item, so there is always a next one to show.
+    setIndex((i) => i + 1);
+  }, [current]);
 
-  /** Back one item, to read it again. View-only: it was already taught. */
+  /** Back one item, to read it again -- within this batch. */
   const onBack = React.useCallback(() => {
-    if (index === 0) return;
+    if (index <= batchStart) return;
     feedback.back();
     setIndex((i) => i - 1);
-  }, [index]);
+  }, [batchStart, index]);
+
+  /** Passed both halves: learned, and started on WaniKani. */
+  const onPassed = React.useCallback(
+    (item: StudyItem) => {
+      if (taught.current.includes(item)) return;
+      taught.current.push(item);
+      void completeLesson(item.assignment);
+    },
+    [completeLesson],
+  );
+
+  /** The batch is learned: on to the next five, or the summary. */
+  const onQuizDone = React.useCallback(() => {
+    setBatch([]);
+    setPhase('teach');
+    if (index + 1 >= items.length) {
+      finish();
+      return;
+    }
+    setBatchStart(index + 1);
+    setIndex(index + 1);
+  }, [finish, index, items.length]);
+
+  /** Back from the quiz to read the batch again; passed items stay passed. */
+  const onReread = React.useCallback(() => {
+    setBatch((rest) => rest.filter((item) => !taught.current.includes(item)));
+    setPhase('teach');
+    setIndex(batchStart);
+  }, [batchStart]);
 
   /**
    * Swipe left to move on -- the same as "Got it" -- and right to go back.
@@ -151,7 +197,21 @@ export default function LessonScreen() {
 
   if (!current) return <View style={styles.screen} />;
 
+  if (phase === 'quiz') {
+    return (
+      <LessonQuiz
+        items={batch.filter((item) => !taught.current.includes(item))}
+        onPassed={onPassed}
+        onDone={onQuizDone}
+        onReread={onReread}
+      />
+    );
+  }
+
   const { subject } = current;
+  const lastBeforeQuiz =
+    (batch.includes(current) ? batch.length : batch.length + 1) >= BATCH_SIZE ||
+    index + 1 >= items.length;
   const palette = subjectPalette[subject.type];
   const typeLabel = subject.type === 'vocabulary' ? 'vocabulary' : subject.type;
 
@@ -313,9 +373,13 @@ export default function LessonScreen() {
       </GestureDetector>
 
       <View style={styles.footer}>
-        <ChunkyButton label="Got it — next" tone={subject.type} onPress={onGotIt} />
+        <ChunkyButton
+          label={lastBeforeQuiz ? 'Got it — start the quiz' : 'Got it — next'}
+          tone={subject.type}
+          onPress={onGotIt}
+        />
         <View style={styles.footerLinks}>
-          {index > 0 ? <TextButton label="‹ Previous" onPress={onBack} /> : <View />}
+          {index > batchStart ? <TextButton label="‹ Previous" onPress={onBack} /> : <View />}
           <TextButton label="Show me this one again later" onPress={onDefer} />
         </View>
         <Text style={styles.swipeHint}>Swipe left to go on, right to go back</Text>
@@ -324,7 +388,149 @@ export default function LessonScreen() {
   );
 }
 
+/**
+ * The quiz after a batch: the meaning and the reading of every item just read,
+ * shuffled, each asked until it is answered right. A miss shows the answer and
+ * comes back later in the quiz. When both halves of an item are right it is
+ * learned, there and then -- leaving part-way keeps what was passed.
+ */
+function LessonQuiz({
+  items,
+  onPassed,
+  onDone,
+  onReread,
+}: {
+  items: StudyItem[];
+  onPassed: (item: StudyItem) => void;
+  onDone: () => void;
+  onReread: () => void;
+}) {
+  const [queue, setQueue] = React.useState<{ item: StudyItem; half: Half }[]>(() =>
+    shuffle(items.flatMap((item) => halvesOf(item.subject).map((half) => ({ item, half })))),
+  );
+  const [turn, setTurn] = React.useState(0);
+  const [pose, setPose] = React.useState<Pose>('idle');
+  const [learned, setLearned] = React.useState(0);
+  const [missed, setMissed] = React.useState(0);
+  const { register } = useAnswerRun();
+
+  const current = queue[0];
+
+  // An empty batch (everything passed before a re-read) has nothing to ask.
+  React.useEffect(() => {
+    if (queue.length === 0) onDone();
+  }, [onDone, queue.length]);
+
+  const onGraded = React.useCallback(
+    (ok: boolean) => {
+      setPose(ok ? 'correct' : 'wrong');
+      if (ok) {
+        feedback.correct();
+        if (register(true)) feedback.streak();
+      } else {
+        feedback.wrong();
+        register(false);
+        setMissed((n) => n + 1);
+      }
+    },
+    [register],
+  );
+
+  const onNext = React.useCallback(
+    (ok: boolean) => {
+      if (!current) return;
+      setPose('idle');
+      setTurn((n) => n + 1);
+      const [, ...remaining] = queue;
+      // Both halves right -- no question about this item left -- is learned.
+      if (ok && !remaining.some((q) => q.item === current.item)) {
+        onPassed(current.item);
+        setLearned((n) => n + 1);
+      }
+      setQueue(ok ? remaining : [...remaining, current]);
+    },
+    [current, onPassed, queue],
+  );
+
+  if (!current) return <View style={styles.screen} />;
+
+  const palette = subjectPalette[current.item.subject.type];
+  const questions = items.reduce((n, item) => n + halvesOf(item.subject).length, 0);
+  // Answered right so far; a missed question is still in the queue.
+  const done = questions - queue.length;
+
+  return (
+    <View style={styles.screen}>
+      <ScreenHeader
+        title="Lesson Quiz"
+        glyph={palette.glyph}
+        glyphColor={palette.solid}
+        trailingText={`${learned} / ${items.length} learned`}
+      >
+        <SessionProgressBar correct={done} incorrect={0} total={questions} />
+      </ScreenHeader>
+
+      <ScrollView contentContainerStyle={styles.quizContent} keyboardShouldPersistTaps="handled">
+        <WkQuestion
+          key={turn}
+          subject={current.item.subject}
+          half={current.half}
+          meta={<Pill label="lesson quiz" color={palette.ink} background={palette.tint} />}
+          onGraded={onGraded}
+          onNext={onNext}
+        />
+        <Text style={styles.quizNote}>
+          {missed > 0 ? `${missed} missed so far — they come back until they're right. ` : ''}
+          An item is learned once its meaning and reading are both right. Anything you leave
+          before then stays in your lessons.
+        </Text>
+      </ScrollView>
+
+      <View style={styles.quizFooter}>
+        <Mascot pose={pose} size={64} speed={1} lively holdReaction />
+        <Pressable onPress={onReread} onPressIn={feedback.back} hitSlop={8}>
+          <Text style={styles.quizReread}>‹ Read these again</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+/** Fisher–Yates, so a batch is not quizzed in the order it was read. */
+function shuffle<T>(values: T[]): T[] {
+  const out = [...values];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 const styles = StyleSheet.create({
+  quizContent: {
+    paddingHorizontal: spacing.gutter,
+    paddingTop: 20,
+    paddingBottom: 16,
+  },
+  quizNote: {
+    marginTop: 16,
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+    lineHeight: 16,
+  },
+  quizFooter: {
+    marginTop: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  quizReread: {
+    ...typeScale.meta,
+    color: colors.inkFaint,
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.ground,
