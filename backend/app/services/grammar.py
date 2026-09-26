@@ -80,7 +80,8 @@ class EnrichedGrammar(BaseModel):
         default_factory=list,
         description=(
             "When the pattern has several distinct uses and the request did not "
-            "say which, a short label for each — for ～ものだ: ['general truth', "
+            "say which, a short label for each, a few words and under 60 "
+            "characters — for ～ものだ: ['general truth', "
             "'nostalgic recollection', 'strong advice', 'exclamation']. Leave "
             "empty when the pattern has one use, or when the request already "
             "named the sense. Do not pick one yourself."

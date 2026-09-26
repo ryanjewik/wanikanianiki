@@ -671,7 +671,7 @@ class GrammarEntry(Base):
     # NULLs as distinct under a unique constraint, so a nullable column here
     # would happily accept the same pattern twice with no sense on either.
     sense_label: Mapped[str] = mapped_column(
-        String(64), nullable=False, default="", server_default=text("''")
+        String(256), nullable=False, default="", server_default=text("''")
     )
 
     # -- enrichment output, all optional until it has run ---------------------

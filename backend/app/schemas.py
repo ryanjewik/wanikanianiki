@@ -489,7 +489,7 @@ class GrammarEntryCreate(CamelModel):
     """
 
     pattern: str = Field(min_length=1, max_length=128)
-    sense_label: str = Field("", max_length=64)
+    sense_label: str = Field("", max_length=256)
     learned_on: date
     source: str | None = Field(None, max_length=128)
     note: str | None = None
@@ -503,7 +503,7 @@ class GrammarEntryUpdate(CamelModel):
     enrichment and fixing a typo are the same call.
     """
 
-    sense_label: str | None = Field(None, max_length=64)
+    sense_label: str | None = Field(None, max_length=256)
     meaning: str | None = None
     formation: str | None = None
     style: str | None = Field(None, max_length=32)
