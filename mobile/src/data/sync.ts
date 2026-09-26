@@ -151,13 +151,42 @@ export async function replayPendingWrites(): Promise<number> {
   return replayed;
 }
 
+let inFlight: Promise<SyncResult> | null = null;
+let queued: Promise<SyncResult> | null = null;
+
+/**
+ * One sync at a time. Two overlapping replays would each read the same unsent
+ * rows and post them both -- an answer charged twice -- and syncs start from
+ * several places at once: launch, returning to the app, every answer.
+ *
+ * A call made while one is running gets one more run after it, shared by
+ * everyone who asks in the meantime: the running pass may already have read
+ * the outbox, and an answer queued since would otherwise wait for the next
+ * sync to leave the phone.
+ */
+export function syncNow(): Promise<SyncResult> {
+  if (!inFlight) {
+    inFlight = runSync().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  }
+  queued ??= inFlight
+    .catch(() => undefined)
+    .then(() => {
+      queued = null;
+      return syncNow();
+    });
+  return queued;
+}
+
 /**
  * Full pass: drain the outbox, then pull anything that changed upstream.
  *
  * The outbox goes first so the incoming assignment diff already reflects the
  * user's own answers, rather than overwriting them with stale server state.
  */
-export async function syncNow(): Promise<SyncResult> {
+async function runSync(): Promise<SyncResult> {
   const lastSyncedAt = await getSyncMeta(SYNC_KEY_LAST_SYNCED);
 
   if (!api.isBackendConfigured) {
