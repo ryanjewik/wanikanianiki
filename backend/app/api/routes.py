@@ -49,6 +49,7 @@ from app.schemas import (
     QuestionOutcome,
     ReviewRequest,
     ReviewResult,
+    SetStudy,
     Subject,
     SyncResult,
     VocabFolder,
@@ -705,6 +706,23 @@ async def merge_vocab_set(
     return await _set_out(session, user, target.id)
 
 
+@router.get("/api/vocab-sets/{set_id}/study", response_model=SetStudy, tags=["study"])
+async def study_vocab_set(set_id: int, session: AsyncSession = Depends(db_session)) -> SetStudy:
+    """The set's flashcards you do not know yet, shuffled, with its progress."""
+    user, row = await _owned_set(session, set_id)
+    total, known, cards = await repo.get_set_study(session, user.id, row)
+    return SetStudy(set_id=row.id, name=row.name, card_count=total, known_count=known, cards=cards)
+
+
+@router.post("/api/vocab-sets/{set_id}/reset", response_model=VocabSet, tags=["study"])
+async def reset_vocab_set(set_id: int, session: AsyncSession = Depends(db_session)) -> VocabSet:
+    """Forget which of the set's cards are known, to study it from the top."""
+    user, row = await _owned_set(session, set_id)
+    await repo.reset_set_progress(session, row.id)
+    await session.flush()
+    return await _set_out(session, user, row.id)
+
+
 @router.get("/api/vocab-folders", response_model=list[VocabFolder], tags=["import"])
 async def list_vocab_folders(session: AsyncSession = Depends(db_session)) -> list[VocabFolder]:
     """Folders, alphabetical, with how many sets each holds."""
@@ -841,6 +859,19 @@ async def answer_flashcard(
         )
 
     grade = payload.grade if payload.grade is not None else srs.grade_for(correct)
+
+    # Studied as part of a set: right means known there until the set is reset.
+    # A set that is gone, or never held this word, is ignored rather than
+    # refused -- the answer itself still counts, and an outbox replaying it
+    # after a merge must not be stuck on it.
+    if correct and payload.set_id is not None:
+        set_row = await repo.get_vocab_set(session, payload.set_id)
+        if (
+            set_row is not None
+            and set_row.user_id == state.user_id
+            and await repo.card_in_set(session, set_id=set_row.id, state=state)
+        ):
+            await repo.mark_card_known(session, set_id=set_row.id, srs_state_id=state.id)
 
     schedule = srs.next_schedule(
         ease_factor=state.ease_factor,

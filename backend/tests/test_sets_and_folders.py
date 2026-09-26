@@ -227,3 +227,97 @@ async def test_an_import_into_someone_elses_set_is_a_404(client, monkeypatch, co
 
     assert response.status_code == 404
     assert confirm_calls["set_id"] is None
+
+
+# -- studying a set, Quizlet-style -------------------------------------------
+
+
+async def test_studying_a_set_returns_what_is_left_and_the_progress(client, monkeypatch):
+    monkeypatch.setattr(repo, "get_vocab_set", _async(_set_row(7)))
+    monkeypatch.setattr(repo, "get_set_study", _async((40, 38, [])))
+
+    async with client:
+        response = await client.get("/api/vocab-sets/7/study")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["cardCount"], body["knownCount"], body["cards"]) == (40, 38, [])
+
+
+async def test_someone_elses_set_cannot_be_studied_or_reset(client, monkeypatch):
+    monkeypatch.setattr(repo, "get_vocab_set", _async(SimpleNamespace(id=7, user_id=99)))
+
+    async with client:
+        study = await client.get("/api/vocab-sets/7/study")
+        reset = await client.post("/api/vocab-sets/7/reset")
+
+    assert study.status_code == reset.status_code == 404
+
+
+async def test_resetting_a_set_clears_its_progress(client, monkeypatch):
+    cleared = []
+
+    async def fake_reset(_session, set_id):
+        cleared.append(set_id)
+
+    monkeypatch.setattr(repo, "get_vocab_set", _async(_set_row(7)))
+    monkeypatch.setattr(repo, "reset_set_progress", fake_reset)
+    monkeypatch.setattr(
+        repo, "list_vocab_sets", _async([VocabSet(id=7, name="Set 7", created_at=NOW)])
+    )
+
+    async with client:
+        response = await client.post("/api/vocab-sets/7/reset")
+
+    assert response.status_code == 200
+    assert cleared == [7]
+
+
+@pytest.fixture
+def answering(monkeypatch):
+    """Fakes the card and its schedule write; records what was marked known."""
+    known = []
+    state = SimpleNamespace(
+        id=11, user_id=USER.id, vocab_item_id=5, skill_type="recognition",
+        ease_factor=2.5, interval_days=0, repetitions=0, lapses=0,
+    )
+
+    async def fake_mark(_session, *, set_id, srs_state_id):
+        known.append((set_id, srs_state_id))
+
+    monkeypatch.setattr(repo, "get_srs_state", _async(state))
+    monkeypatch.setattr(repo, "get_accepted_answers", _async(["adult"]))
+    monkeypatch.setattr(repo, "record_vocab_review", _async(None))
+    monkeypatch.setattr(repo, "get_vocab_set", _async(_set_row(7)))
+    monkeypatch.setattr(repo, "mark_card_known", fake_mark)
+    return known
+
+
+async def test_a_right_answer_in_a_set_marks_the_card_known(client, monkeypatch, answering):
+    monkeypatch.setattr(repo, "card_in_set", _async(True))
+
+    async with client:
+        right = await client.post(
+            "/api/flashcards/11/answer", json={"answerGiven": "adult", "setId": 7}
+        )
+        wrong = await client.post(
+            "/api/flashcards/11/answer", json={"answerGiven": "child", "setId": 7}
+        )
+
+    assert right.status_code == wrong.status_code == 200
+    # Only the right one; a miss leaves the card to learn.
+    assert answering == [(7, 11)]
+
+
+async def test_a_set_that_never_held_the_word_is_ignored_not_refused(
+    client, monkeypatch, answering
+):
+    monkeypatch.setattr(repo, "card_in_set", _async(False))
+
+    async with client:
+        response = await client.post(
+            "/api/flashcards/11/answer", json={"answerGiven": "adult", "setId": 7}
+        )
+
+    assert response.status_code == 200
+    assert answering == []

@@ -12,7 +12,8 @@ from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import literal as sa_literal
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -34,6 +35,7 @@ from app.db.models import (
     VocabReviewLog,
     VocabSet,
     VocabSetItem,
+    VocabSetProgress,
     VocabSource,
 )
 from app.db.models import (
@@ -510,6 +512,17 @@ async def list_vocab_sets(session: AsyncSession, user_id: int) -> list[VocabSetO
         .where(VocabSource.set_id.is_not(None))
         .group_by(VocabSource.set_id, VocabSource.status)
     )
+    cards = dict(
+        (
+            await session.execute(
+                select(VocabSetItem.set_id, func.count())
+                .join(SrsState, SrsState.vocab_item_id == VocabSetItem.vocab_item_id)
+                .where(SrsState.user_id == user_id)
+                .group_by(VocabSetItem.set_id)
+            )
+        ).all()
+    )
+    known = await _known_counts(session)
     for set_id, status, count in rows.all():
         bucket = pages.setdefault(set_id, {"total": 0, "pending": 0, "failed": 0})
         bucket["total"] += count
@@ -538,9 +551,95 @@ async def list_vocab_sets(session: AsyncSession, user_id: int) -> list[VocabSetO
                 pages_failed=page["failed"],
                 folder_id=row.folder_id,
                 jlpt_level=row.jlpt_level,
+                card_count=cards.get(row.id, 0),
+                known_count=known.get(row.id, 0),
             )
         )
     return out
+
+
+async def _known_counts(session: AsyncSession) -> dict[int, int]:
+    """Known cards per set, counting only cards whose word is still in it."""
+    rows = await session.execute(
+        select(VocabSetProgress.set_id, func.count())
+        .join(SrsState, SrsState.id == VocabSetProgress.srs_state_id)
+        .join(
+            VocabSetItem,
+            (VocabSetItem.set_id == VocabSetProgress.set_id)
+            & (VocabSetItem.vocab_item_id == SrsState.vocab_item_id),
+        )
+        .group_by(VocabSetProgress.set_id)
+    )
+    return dict(rows.all())
+
+
+async def get_set_study(
+    session: AsyncSession, user_id: int, set_row: VocabSet
+) -> tuple[int, int, list[Flashcard]]:
+    """A set's cards not yet known, shuffled -- plus its card and known counts.
+
+    Every card of every word in the set, not only the ones SM-2 says are due:
+    studying a set means working through the set.
+    """
+    in_set = select(VocabSetItem.vocab_item_id).where(VocabSetItem.set_id == set_row.id)
+    known_ids = set(
+        (
+            await session.execute(
+                select(VocabSetProgress.srs_state_id).where(
+                    VocabSetProgress.set_id == set_row.id
+                )
+            )
+        ).scalars()
+    )
+    rows = (
+        await session.execute(
+            select(SrsState, VocabItem)
+            .join(VocabItem, VocabItem.id == SrsState.vocab_item_id)
+            .where(SrsState.user_id == user_id, VocabItem.id.in_(in_set))
+            .order_by(func.random())
+        )
+    ).all()
+
+    total = len(rows)
+    remaining = [(state, item) for state, item in rows if state.id not in known_ids]
+    if not remaining:
+        return total, total, []
+
+    answers = await session.execute(
+        select(VocabAnswer).where(
+            VocabAnswer.vocab_item_id.in_({item.id for _, item in remaining}),
+            VocabAnswer.accepted.is_(True),
+        )
+    )
+    by_item: dict[int, list[VocabAnswer]] = {}
+    for answer in answers.scalars():
+        by_item.setdefault(answer.vocab_item_id, []).append(answer)
+
+    cards = [_to_flashcard(state, item, by_item.get(item.id, [])) for state, item in remaining]
+    return total, total - len(remaining), cards
+
+
+async def mark_card_known(session: AsyncSession, *, set_id: int, srs_state_id: int) -> None:
+    """Known in this set from now until it is reset. Idempotent."""
+    await session.execute(
+        pg_insert(VocabSetProgress)
+        .values(set_id=set_id, srs_state_id=srs_state_id)
+        .on_conflict_do_nothing(index_elements=["set_id", "srs_state_id"])
+    )
+
+
+async def card_in_set(session: AsyncSession, *, set_id: int, state: SrsState) -> bool:
+    row = await session.execute(
+        select(VocabSetItem.set_id).where(
+            VocabSetItem.set_id == set_id, VocabSetItem.vocab_item_id == state.vocab_item_id
+        )
+    )
+    return row.first() is not None
+
+
+async def reset_set_progress(session: AsyncSession, set_id: int) -> None:
+    """Every card of the set back to unknown. The SM-2 schedule is untouched."""
+    await session.execute(delete(VocabSetProgress).where(VocabSetProgress.set_id == set_id))
 
 
 async def unique_set_name(session: AsyncSession, *, user_id: int, name: str) -> str:
@@ -599,6 +698,17 @@ async def merge_vocab_sets(session: AsyncSession, source: VocabSet, target: Voca
             gained += 1
     await session.execute(
         update(VocabSource).where(VocabSource.set_id == source.id).values(set_id=target.id)
+    )
+    # What you knew in the old set, you know in the merged one.
+    await session.execute(
+        pg_insert(VocabSetProgress)
+        .from_select(
+            ["set_id", "srs_state_id"],
+            select(sa_literal(target.id), VocabSetProgress.srs_state_id).where(
+                VocabSetProgress.set_id == source.id
+            ),
+        )
+        .on_conflict_do_nothing(index_elements=["set_id", "srs_state_id"])
     )
     await session.flush()
     await session.delete(source)

@@ -447,6 +447,31 @@ class VocabSetItem(Base):
     )
 
 
+class VocabSetProgress(Base):
+    """A card you know, within one set -- studied the way Quizlet studies.
+
+    Studying a set shows only the cards not in here, and a right answer puts a
+    card in. It stays until the set is reset. Per set rather than per card: a
+    word in two sets is studied, and known, separately in each.
+
+    Independent of `srs_state`'s schedule, which still moves on every answer
+    and feeds the generated practice; knowing a card here is not a claim about
+    when it is next due there.
+    """
+
+    __tablename__ = "vocab_set_progress"
+
+    set_id: Mapped[int] = mapped_column(
+        ForeignKey("vocab_sets.id", ondelete="CASCADE"), primary_key=True
+    )
+    srs_state_id: Mapped[int] = mapped_column(
+        ForeignKey("srs_state.id", ondelete="CASCADE"), primary_key=True
+    )
+    known_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class VocabAnswer(Base):
     """One thing a person may type and be marked correct.
 

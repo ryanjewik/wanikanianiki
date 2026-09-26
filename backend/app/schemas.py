@@ -290,6 +290,10 @@ class VocabSet(CamelModel):
     pages_failed: int = 0
     folder_id: int | None = None
     jlpt_level: int | None = None
+    # Flashcards: two per word (meaning, and the Japanese), and how many of
+    # them are known in this set -- the Quizlet-style progress.
+    card_count: int = 0
+    known_count: int = 0
 
 
 class VocabSetCreate(BaseModel):
@@ -367,6 +371,18 @@ class FlashcardAnswer(CamelModel):
     correct: bool | None = None
     # SM-2 quality if the UI offers again/hard/good/easy. Otherwise derived.
     grade: int | None = None
+    # The set this was studied in. A right answer marks the card known there.
+    set_id: int | None = None
+
+
+class SetStudy(CamelModel):
+    """A set's flashcards still to learn, shuffled, with its progress."""
+
+    set_id: int
+    name: str
+    card_count: int
+    known_count: int
+    cards: list[Flashcard]
 
 
 class FlashcardOutcome(CamelModel):
