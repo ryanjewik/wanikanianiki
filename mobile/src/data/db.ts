@@ -577,20 +577,26 @@ export async function countPendingWrites(): Promise<number> {
  * grades these against each card to leave out the ones already got right, so
  * coming back picks up where you left off even before the outbox has drained.
  */
-export async function getPendingFlashcardAnswers(): Promise<Map<number, string[]>> {
+export async function getPendingFlashcardAnswers(): Promise<
+  Map<number, { answerGiven: string; setId: number | null }[]>
+> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<{ payload_json: string }>(
     "SELECT payload_json FROM pending_writes WHERE type = 'answer_flashcard' AND synced_at IS NULL AND failed_at IS NULL",
   );
-  const byCard = new Map<number, string[]>();
+  const byCard = new Map<number, { answerGiven: string; setId: number | null }[]>();
   for (const row of rows) {
     try {
-      const { srsStateId, answerGiven } = JSON.parse(row.payload_json) as {
+      const { srsStateId, answerGiven, setId } = JSON.parse(row.payload_json) as {
         srsStateId?: number;
         answerGiven?: string;
+        setId?: number;
       };
       if (typeof srsStateId !== 'number') continue;
-      byCard.set(srsStateId, [...(byCard.get(srsStateId) ?? []), answerGiven ?? '']);
+      byCard.set(srsStateId, [
+        ...(byCard.get(srsStateId) ?? []),
+        { answerGiven: answerGiven ?? '', setId: typeof setId === 'number' ? setId : null },
+      ]);
     } catch {
       // A malformed row is the outbox's problem, not the quiz's.
     }

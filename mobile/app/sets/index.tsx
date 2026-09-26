@@ -5,8 +5,8 @@
  * verbs". Every import lands in one — a page photographed into a set joins it,
  * and a page from the Import tab gets a set of its own — and sets can be filed
  * into folders (one level: "Quartet I" holding its lessons) and tagged with a
- * JLPT tier. The chips at the top filter by both, and "Quiz these" studies
- * exactly what the filters show.
+ * JLPT tier. The chips at the top filter by both. Each set shows how many of
+ * its flashcards you know; flashcards are studied a set at a time.
  *
  * Sets are named here and filled on the detail screen, because naming a group
  * and photographing into it are separate moments: you know what the lesson is
@@ -28,7 +28,15 @@ import { showDialog } from '@/components/Dialog';
 import { FilterChips, type ChipOption } from '@/components/FilterChips';
 import { EmptyDeckArt, OfflineArt } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Card, ChunkyButton, EmptyState, InlineButton, Overline, Pill } from '@/components/ui';
+import {
+  Card,
+  ChunkyButton,
+  EmptyState,
+  InlineButton,
+  Overline,
+  Pill,
+  ProgressBar,
+} from '@/components/ui';
 import * as api from '@/data/api';
 import type { VocabFolder, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -223,13 +231,6 @@ export default function SetsScreen() {
         ].filter((section) => section.sets.length > 0)
       : [{ title: null, sets: visible }];
 
-  const quizVisible = React.useCallback(() => {
-    const params: Record<string, string> = {};
-    if (typeof folderFilter === 'number') params.folderId = String(folderFilter);
-    if (jlptFilter !== 'all') params.jlpt = String(jlptFilter);
-    router.push({ pathname: '/quiz', params });
-  }, [folderFilter, jlptFilter, router]);
-
   const namingTitle =
     naming?.kind === 'set'
       ? 'Name this set'
@@ -348,22 +349,6 @@ export default function SetsScreen() {
           </View>
         ))}
 
-        {visible.length > 0 ? (
-          <ChunkyButton
-            // "Unfiled" is a browsing view only: the quiz has no unfiled scope,
-            // so the label says it studies everything rather than claiming
-            // "these".
-            label={
-              typeof folderFilter === 'number' || jlptFilter !== 'all'
-                ? 'Vocab practice — these sets'
-                : 'Vocab practice — everything due'
-            }
-            tone="neutral"
-            size="small"
-            onPress={quizVisible}
-          />
-        ) : null}
-
         {sets && sets.length > 0 && visible.length === 0 ? (
           <Card>
             <Text style={styles.noMatch}>No sets match these filters.</Text>
@@ -434,6 +419,22 @@ function SetRow({ set, onPress }: { set: VocabSet; onPress: () => void }) {
               />
             ) : null}
           </View>
+
+          {set.cardCount > 0 ? (
+            <View style={styles.progressRow}>
+              <View style={styles.progressTrack}>
+                <ProgressBar
+                  progress={set.knownCount / set.cardCount}
+                  color={set.knownCount >= set.cardCount ? colors.success : colors.vocabulary}
+                />
+              </View>
+              <Text style={styles.progressText}>
+                {set.knownCount >= set.cardCount
+                  ? 'Complete'
+                  : `${set.knownCount}/${set.cardCount} known`}
+              </Text>
+            </View>
+          ) : null}
 
           {set.description ? (
             <Text style={styles.setDescription} numberOfLines={2}>
@@ -540,6 +541,18 @@ const styles = StyleSheet.create({
   },
   setMeta: {
     ...typeScale.meta,
+    color: colors.inkSoft,
+  },
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  progressTrack: {
+    flex: 1,
+  },
+  progressText: {
+    ...typeScale.metaSmall,
     color: colors.inkSoft,
   },
   setDescription: {

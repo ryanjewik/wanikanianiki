@@ -299,6 +299,19 @@ export interface VocabSet {
   folderId: number | null;
   /** The tier this group is studied as; null when untagged. */
   jlptLevel: number | null;
+  /** Flashcards: two per word (meaning, and the Japanese). */
+  cardCount: number;
+  /** How many of them are known in this set, until it is reset. */
+  knownCount: number;
+}
+
+/** A set's flashcards still to learn, shuffled, with its progress. */
+export interface SetStudy {
+  setId: number;
+  name: string;
+  cardCount: number;
+  knownCount: number;
+  cards: Flashcard[];
 }
 
 /** One level above sets: "Quartet I" holding its lessons. */
@@ -477,6 +490,8 @@ export interface FlashcardAnswerWrite {
   /** What the user typed. The server regrades it; the client's verdict is
    *  only ever used to show a result before the write lands. */
   answerGiven: string;
+  /** The set it was studied in; a right answer marks the card known there. */
+  setId?: number;
 }
 
 export interface PendingWrite {

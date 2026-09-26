@@ -18,8 +18,8 @@ import type {
   DayActivitySummary,
   DetectedItem,
   Flashcard,
-  FlashcardScope,
   FlashcardOutcome,
+  FlashcardScope,
   GrammarEnrichment,
   GrammarEntry,
   GrammarExampleInput,
@@ -28,9 +28,10 @@ import type {
   LessonQueueCount,
   QuestionOutcome,
   ReviewAnswer,
+  SetStudy,
   Subject,
-  VocabItem,
   VocabFolder,
+  VocabItem,
   VocabSet,
 } from './types';
 
@@ -408,6 +409,16 @@ export function updateVocabSet(
   return request<VocabSet>(`/api/vocab-sets/${setId}`, { method: 'PATCH', body: patch });
 }
 
+/** A set's flashcards not yet known, shuffled, with how far through it you are. */
+export function fetchSetStudy(setId: number, signal?: AbortSignal): Promise<SetStudy> {
+  return request<SetStudy>(`/api/vocab-sets/${setId}/study`, { signal });
+}
+
+/** Every card of the set back to unknown, to study it from the top. */
+export function resetVocabSet(setId: number): Promise<VocabSet> {
+  return request<VocabSet>(`/api/vocab-sets/${setId}/reset`, { method: 'POST' });
+}
+
 /** Folds a set into another: its words and pages move, then it is deleted. */
 export function mergeVocabSet(setId: number, intoSetId: number): Promise<VocabSet> {
   return request<VocabSet>(`/api/vocab-sets/${setId}/merge`, {
@@ -489,7 +500,7 @@ export function fetchDueFlashcards(
  */
 export function answerFlashcard(
   srsStateId: number,
-  answer: { answerGiven?: string; correct?: boolean; grade?: number },
+  answer: { answerGiven?: string; correct?: boolean; grade?: number; setId?: number },
 ): Promise<FlashcardOutcome> {
   return request<FlashcardOutcome>(`/api/flashcards/${srsStateId}/answer`, {
     method: 'POST',

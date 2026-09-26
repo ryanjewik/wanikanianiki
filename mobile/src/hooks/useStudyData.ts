@@ -21,7 +21,6 @@ import type {
   DashboardSummary,
   DayActivitySummary,
   Flashcard,
-  FlashcardScope,
   GrammarEntry,
   JlptCoverage,
   LessonBundle,
@@ -29,6 +28,7 @@ import type {
   LevelItem,
   ReviewAnswer,
   SessionSummary,
+  SetStudy,
   StudyItem,
   Subject,
   VocabItem,
@@ -294,12 +294,15 @@ export function useStudyActions() {
    * and its answer is what the deck records. The screen has already shown a
    * result by the time this runs, from the answers the card carries.
    */
-  const answerFlashcard = React.useCallback(async (srsStateId: number, answerGiven: string) => {
-    await db.enqueueWrite('answer_flashcard', { srsStateId, answerGiven });
+  const answerFlashcard = React.useCallback(
+    async (srsStateId: number, answerGiven: string, setId?: number) => {
+    await db.enqueueWrite('answer_flashcard', { srsStateId, answerGiven, setId });
     if (api.isBackendConfigured) {
       void syncNow();
     }
-  }, []);
+    },
+    [],
+  );
 
   return { completeLesson, submitAnswer, answerFlashcard };
 }
@@ -309,36 +312,40 @@ export function useStudyActions() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Cards due from the user's own imported deck — never WaniKani items, which
- * are scheduled by WaniKani and come through `useReviewQueue`.
+ * One set's flashcards still to learn, Quizlet-style: every card of the set not
+ * yet known, shuffled. A right answer makes a card known until the set is
+ * reset; a miss leaves it to learn.
  *
- * Unlike the WaniKani queues this has no local mirror and no fixture fallback,
- * and both absences are deliberate. An empty imported deck is the honest state
- * on a fresh install: you have not photographed anything yet, and inventing
- * sample words would put vocabulary in front of you that you never chose to
- * study. The cost is that a session cannot be *started* offline; one already
- * underway finishes fine, because each card carries its own answers and the
- * outbox queues what you type.
+ * No mirror and no fixtures: the deck lives on the server, and a set of words
+ * you never imported is not something to invent. A session already underway
+ * finishes offline, because each card carries its own answers and the outbox
+ * queues what you type.
  */
-export function useDueFlashcards(limit = 100, scope: FlashcardScope = {}) {
-  const key = `${scope.setId ?? ''}|${scope.folderId ?? ''}|${scope.jlpt ?? ''}`;
-  return useAsync<Flashcard[]>(async () => {
-    if (!api.isBackendConfigured) return [];
-    const [due, pending] = await Promise.all([
-      api.fetchDueFlashcards(limit, scope),
+export function useSetStudy(setId: number | null) {
+  return useAsync<SetStudy | null>(async () => {
+    if (!api.isBackendConfigured || setId === null) return null;
+    const [study, pending] = await Promise.all([
+      api.fetchSetStudy(setId),
       db.getPendingFlashcardAnswers(),
     ]);
-    // Got right here but not yet confirmed by the server, which still counts
-    // them as due. Left out, so a session resumes where the last one stopped;
-    // a card only ever missed stays in, since a miss keeps a card due.
-    const doneHere = (card: Flashcard) =>
-      (pending.get(card.srsStateId) ?? []).some((given) => matches(given, card.acceptedAnswers));
-    return spreadSiblings(due.filter((card) => !doneHere(card)));
-  }, [limit, key]);
+    // Got right in this set on this phone, but not yet confirmed by the
+    // server. Counted as known already, so coming back resumes where you
+    // stopped even before the outbox has drained.
+    const knownHere = (card: Flashcard) =>
+      (pending.get(card.srsStateId) ?? []).some(
+        (answer) => answer.setId === setId && matches(answer.answerGiven, card.acceptedAnswers),
+      );
+    const cards = study.cards.filter((card) => !knownHere(card));
+    return {
+      ...study,
+      knownCount: study.knownCount + (study.cards.length - cards.length),
+      cards: spreadSiblings(cards),
+    };
+  }, [setId]);
 }
 
 /**
- * The server sends due cards in random order; this only keeps a word's two
+ * The server sends a set's cards in random order; this only keeps a word's two
  * cards apart. Meaning-then-reading of the same word back to back gives the
  * second one away.
  */
@@ -355,6 +362,35 @@ function spreadSiblings(cards: Flashcard[]): Flashcard[] {
     if (swap !== -1) [out[i], out[swap]] = [out[swap], out[i]];
   }
   return out;
+}
+
+/** The pref holding the set you studied last, for "continue" on the home screen. */
+export const PREF_LAST_FLASHCARD_SET = 'last_flashcard_set';
+
+export interface FlashcardOverview {
+  /** Cards not yet known, across every set. */
+  remaining: number;
+  /** Sets that have any cards at all. */
+  setCount: number;
+  /** The set studied last, if it still exists. */
+  lastSet: VocabSet | null;
+}
+
+/** What the home screen and Study tab say about flashcards: what is left, and where you were. */
+export function useFlashcardOverview() {
+  return useAsync<FlashcardOverview>(async () => {
+    if (!api.isBackendConfigured) return { remaining: 0, setCount: 0, lastSet: null };
+    const [sets, last] = await Promise.all([
+      api.fetchVocabSets(),
+      db.getPref(PREF_LAST_FLASHCARD_SET).catch(() => null),
+    ]);
+    const withCards = sets.filter((set) => set.cardCount > 0);
+    return {
+      remaining: withCards.reduce((n, set) => n + Math.max(0, set.cardCount - set.knownCount), 0),
+      setCount: withCards.length,
+      lastSet: withCards.find((set) => String(set.id) === last) ?? null,
+    };
+  }, []);
 }
 
 /**

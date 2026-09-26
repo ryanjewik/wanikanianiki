@@ -18,7 +18,7 @@ import { Mascot } from '@/components/Mascot';
 import { RiseIn } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, Overline, QueueCard, SectionHeading } from '@/components/ui';
-import { useDueFlashcards, usePracticeQueue, useSync } from '@/hooks/useStudyData';
+import { useFlashcardOverview, usePracticeQueue, useSync } from '@/hooks/useStudyData';
 import {
   colors,
   radius,
@@ -28,11 +28,12 @@ import {
 
 export default function StudyScreen() {
   const router = useRouter();
-  const { data: dueCards, reload: reloadDue } = useDueFlashcards();
+  const { data: flashcards, reload: reloadDue } = useFlashcardOverview();
   const { data: practice, reload: reloadPractice } = usePracticeQueue();
   const { pendingWrites, result } = useSync();
 
-  const dueCardCount = dueCards?.length ?? 0;
+  const remaining = flashcards?.remaining ?? 0;
+  const hasSets = (flashcards?.setCount ?? 0) > 0;
   const offline = result?.error === 'Offline';
 
   // Coming back from a session, the counts on the buttons are the first thing
@@ -70,19 +71,19 @@ export default function StudyScreen() {
         <Card variant="bordered">
           <SectionHeading
             title="Imported vocabulary"
-            trailing={dueCardCount > 0 ? `${dueCardCount} due ›` : 'Manage ›'}
+            trailing="Manage ›"
             trailingColor={colors.vocabulary}
-            onPressTrailing={() => router.push(dueCardCount > 0 ? '/quiz' : '/sets')}
+            onPressTrailing={() => router.push('/sets')}
           />
           <Text style={styles.trackBlurb}>
-            Words you photographed from a textbook, studied as two-sided flashcards: each word
-            becomes one card that shows you the Japanese and asks for the meaning, and another
-            that asks you to produce the Japanese. You type the answer rather than flipping it
-            over, so the card can tell whether you actually knew it.
+            Words you photographed from a textbook, studied a set at a time as two-sided
+            flashcards: one card shows the Japanese and asks for the meaning, the other asks you
+            to write the Japanese. You type the answer rather than flipping the card, so it can
+            tell whether you actually knew it.
           </Text>
           <Text style={styles.trackBlurb}>
-            They run on their own SM-2 schedule, kept separate from your WaniKani queue so the
-            two never disagree about the same word.
+            A card you get right stays out of its set until you reset the set, like Quizlet.
+            Kept separate from your WaniKani queue, so the two never disagree about a word.
           </Text>
           <View style={styles.deckActions}>
             <ChunkyButton
@@ -93,10 +94,10 @@ export default function StudyScreen() {
               style={styles.deckButton}
             />
             <ChunkyButton
-              label={dueCardCount > 0 ? `Vocab practice (${dueCardCount})` : 'Vocab practice'}
+              label={remaining > 0 ? `Vocab practice (${remaining})` : 'Vocab practice'}
               tone="neutral"
               size="small"
-              disabled={dueCardCount === 0}
+              disabled={!hasSets}
               onPress={() => router.push('/quiz')}
               style={styles.deckButton}
             />

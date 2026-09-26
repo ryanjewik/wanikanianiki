@@ -18,6 +18,7 @@ import { isBackendConfigured } from '@/data/api';
 import { useAuthStatus } from '@/data/credentials';
 import { formatSyncedAgo } from '@/data/sync';
 import { feedback } from '@/feedback';
+import type { FlashcardOverview } from '@/hooks/useStudyData';
 import type {
   CalendarDay,
   Counted,
@@ -29,7 +30,7 @@ import {
   isoDate,
   useActivityCalendar,
   useDashboard,
-  useDueFlashcards,
+  useFlashcardOverview,
   useJlptCoverage,
   usePracticeQueue,
   useSync,
@@ -50,7 +51,7 @@ export default function DashboardScreen() {
   const { data, reload } = useDashboard();
   const { data: calendar } = useActivityCalendar();
   const { data: practice, reload: reloadPractice } = usePracticeQueue();
-  const { data: dueCards, reload: reloadDue } = useDueFlashcards();
+  const { data: flashcards, reload: reloadDue } = useFlashcardOverview();
   const { data: jlpt } = useJlptCoverage();
   const { syncing, refresh } = useSync();
   const auth = useAuthStatus();
@@ -166,22 +167,15 @@ export default function DashboardScreen() {
           />
         </RiseIn>
 
-        {/* Your own deck, beside WaniKani's: the words you imported, on their
-            own schedule. Opens vocab practice over everything that is due. */}
+        {/* Your own deck, beside WaniKani's: studied a set at a time, and
+            picking up the set you were last on. */}
         <RiseIn delay={110}>
-          <QueueCard
-            title="Vocab Flashcards"
-            count={dueCards?.length ?? 0}
-            tone="vocabulary"
-            blurb={
-              dueCards && dueCards.length > 0
-                ? 'Words you imported that are due again.'
-                : 'Nothing due. Import a page to add words.'
+          <FlashcardCard
+            overview={flashcards}
+            onContinue={(setId) =>
+              router.push({ pathname: '/quiz', params: { setId: String(setId) } })
             }
-            cta="Start Vocab Practice"
-            art={<Mascot pose="blink" size={80} speed={0.6} />}
-            disabled={!dueCards || dueCards.length === 0}
-            onPress={() => router.push('/quiz')}
+            onChoose={() => router.push('/quiz')}
           />
         </RiseIn>
 
@@ -251,6 +245,41 @@ export default function DashboardScreen() {
 }
 
 /* -------------------------------------------------------------------------- */
+
+/** Flashcards on the home screen: continue the set you were on, or pick one. */
+function FlashcardCard({
+  overview,
+  onContinue,
+  onChoose,
+}: {
+  overview: FlashcardOverview | null;
+  onContinue: (setId: number) => void;
+  onChoose: () => void;
+}) {
+  const last = overview?.lastSet ?? null;
+  const unfinished = last !== null && last.knownCount < last.cardCount;
+
+  const blurb = !overview || overview.setCount === 0
+    ? 'Import a page and its words become a set to study.'
+    : unfinished
+      ? `Continue "${last.name}" — ${last.knownCount} of ${last.cardCount} known.`
+      : last
+        ? `"${last.name}" is done. Pick another set, or reset it to go again.`
+        : `${overview.remaining} cards to learn across ${overview.setCount} ${overview.setCount === 1 ? 'set' : 'sets'}.`;
+
+  return (
+    <QueueCard
+      title="Vocab Flashcards"
+      count={overview?.remaining ?? 0}
+      tone="vocabulary"
+      blurb={blurb}
+      cta={unfinished ? 'Continue Set' : 'Choose a Set'}
+      art={<Mascot pose="blink" size={80} speed={0.6} />}
+      disabled={!overview || overview.setCount === 0}
+      onPress={() => (unfinished ? onContinue(last.id) : onChoose())}
+    />
+  );
+}
 
 /**
  * The seven days the dashboard payload carries, in the calendar's shape. Used

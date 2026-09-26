@@ -90,11 +90,43 @@ export default function SetDetailScreen() {
     }
   }, [set]);
 
+  // Progress changes in a study session, so re-read the set when coming back.
   useFocusEffect(
     React.useCallback(() => {
       reload();
-    }, [reload]),
+      reloadSets();
+    }, [reload, reloadSets]),
   );
+
+  const resetProgress = React.useCallback(() => {
+    if (!set) return;
+    showDialog({
+      title: `Reset "${set.name}"?`,
+      message: `All ${set.cardCount} cards go back to unknown, so you can study the set from the top. Nothing is deleted.`,
+      tone: 'confirm',
+      actions: [
+        { label: 'Cancel', kind: 'cancel' },
+        {
+          label: 'Reset set',
+          kind: 'destructive',
+          onPress: async () => {
+            try {
+              await api.resetVocabSet(set.id);
+              feedback.toggle();
+              reloadSets();
+            } catch {
+              feedback.wrong();
+              showDialog({
+                title: "Couldn't reset the set",
+                message: 'Check your connection and try again.',
+                tone: 'error',
+              });
+            }
+          },
+        },
+      ],
+    });
+  }, [reloadSets, set]);
 
   /**
    * Pick several pages at once and read them one after another.
@@ -365,19 +397,48 @@ export default function SetDetailScreen() {
             <Overline style={styles.hint}>Tap to turn over · swipe for the next card</Overline>
             {items ? <NotecardDeck items={items} /> : null}
 
-            <ChunkyButton
-              label="Vocab practice — this set"
-              tone="neutral"
-              size="small"
-              onPress={() =>
-                router.push({ pathname: '/quiz', params: { setId: String(setId) } })
-              }
-              style={styles.quizButton}
-            />
-            <Text style={styles.quizNote}>
-              Only this set's cards that are due. Vocab practice on the Study tab covers the
-              whole deck.
-            </Text>
+            {set && set.cardCount > 0 ? (
+              <Card variant="bordered" style={styles.studyCard}>
+                <View style={styles.studyHead}>
+                  <Text style={styles.studyTitle}>Flashcards</Text>
+                  <Text style={styles.studyCount}>
+                    {set.knownCount >= set.cardCount
+                      ? 'Complete ✓'
+                      : `${set.knownCount} of ${set.cardCount} known`}
+                  </Text>
+                </View>
+                <ProgressBar
+                  progress={set.knownCount / set.cardCount}
+                  color={set.knownCount >= set.cardCount ? colors.success : colors.vocabulary}
+                />
+                <View style={styles.studyActions}>
+                  {set.knownCount < set.cardCount ? (
+                    <ChunkyButton
+                      label={`Study · ${set.cardCount - set.knownCount} left`}
+                      tone="vocabulary"
+                      size="small"
+                      onPress={() =>
+                        router.push({ pathname: '/quiz', params: { setId: String(setId) } })
+                      }
+                      style={styles.studyButton}
+                    />
+                  ) : null}
+                  {set.knownCount > 0 ? (
+                    <ChunkyButton
+                      label="Reset progress"
+                      tone="neutral"
+                      size="small"
+                      chevron={false}
+                      onPress={resetProgress}
+                      style={styles.studyButton}
+                    />
+                  ) : null}
+                </View>
+                <Text style={styles.quizNote}>
+                  Cards you get right stay out until you reset the set.
+                </Text>
+              </Card>
+            ) : null}
           </>
         ) : null}
 
@@ -853,6 +914,30 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
+  studyCard: {
+    gap: 10,
+  },
+  studyHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+  },
+  studyTitle: {
+    ...typeScale.section,
+    color: colors.ink,
+  },
+  studyCount: {
+    ...typeScale.captionBold,
+    color: colors.inkSoft,
+  },
+  studyActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  studyButton: {
+    flex: 1,
+    borderRadius: radius.tile,
+  },
   organise: {
     gap: 12,
   },

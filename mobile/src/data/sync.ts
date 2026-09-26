@@ -123,6 +123,7 @@ export async function replayPendingWrites(): Promise<number> {
           const answer = payload as unknown as FlashcardAnswerWrite;
           await api.answerFlashcard(answer.srsStateId, {
             answerGiven: answer.answerGiven,
+            setId: answer.setId,
           });
           break;
         }

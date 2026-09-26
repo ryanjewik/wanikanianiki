@@ -1,5 +1,11 @@
 /**
- * Quiz — imported vocabulary.
+ * Vocab practice — one set's flashcards, studied the way Quizlet studies them.
+ *
+ * A session works through the set's cards you do not know yet, shuffled. Right
+ * means known: the card leaves the set's pile until the set is reset. A miss
+ * comes back at the end of the session, and stays in the pile for next time.
+ * With no set chosen, the screen is a picker, since a deck is learned a set at
+ * a time rather than all at once.
  *
  * The counterpart to `app/review/index.tsx`, and deliberately not a variant of
  * it. WaniKani owns its own scheduler, so a review reports raw incorrect counts
@@ -18,7 +24,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
-import { FilterChips, type ChipOption } from '@/components/FilterChips';
+import { showDialog } from '@/components/Dialog';
 import { FuriganaText } from '@/components/Furigana';
 import { AllCaughtUpArt, CheckMark, CorrectMark, IncorrectMark, OfflineArt } from '@/components/icons';
 import { finishKana, LanguageInput } from '@/components/LanguageInput';
@@ -32,17 +38,20 @@ import {
   EmptyState,
   InlineButton,
   Pill,
+  ProgressBar,
   SectionHeading,
   SessionProgressBar,
   StatTile,
 } from '@/components/ui';
+import * as api from '@/data/api';
+import { setPref } from '@/data/db';
 import { matches } from '@/data/grading';
-import type { Flashcard, FlashcardScope } from '@/data/types';
+import type { Flashcard, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
 import {
-  useDueFlashcards,
+  PREF_LAST_FLASHCARD_SET,
+  useSetStudy,
   useStudyActions,
-  useVocabFolders,
   useVocabSets,
 } from '@/hooks/useStudyData';
 import {
@@ -82,17 +91,22 @@ const palette = subjectPalette.vocabulary;
 const FURIGANA_UNTIL_REPETITIONS = 2;
 
 export default function QuizScreen() {
+  const params = useLocalSearchParams<{ setId?: string }>();
+  const setId = params.setId ? Number(params.setId) : NaN;
+  // Keyed on the set so switching sets starts a fresh session.
+  return Number.isFinite(setId) ? <SetSession key={setId} setId={setId} /> : <SetPicker />;
+}
+
+function SetSession({ setId }: { setId: number }) {
   const router = useRouter();
-  // Scope arrives from the link -- "Vocab practice — this set", or the browser's filters --
-  // and can be changed on the scope bar until the first answer.
-  const params = useLocalSearchParams<{ setId?: string; folderId?: string; jlpt?: string }>();
-  const [scope, setScope] = React.useState<FlashcardScope>(() => ({
-    setId: params.setId ? Number(params.setId) : undefined,
-    folderId: params.folderId ? Number(params.folderId) : undefined,
-    jlpt: params.jlpt ? Number(params.jlpt) : undefined,
-  }));
-  const { data: due, loading, error } = useDueFlashcards(100, scope);
+  const { data: study, loading, error, reload } = useSetStudy(setId);
+  const due = study?.cards ?? null;
   const { answerFlashcard } = useStudyActions();
+
+  // Remembered for "continue" on the home screen.
+  React.useEffect(() => {
+    void setPref(PREF_LAST_FLASHCARD_SET, String(setId)).catch(() => undefined);
+  }, [setId]);
 
   const [entries, setEntries] = React.useState<QueueEntry[] | null>(null);
   const [answer, setAnswer] = React.useState('');
@@ -102,19 +116,52 @@ export default function QuizScreen() {
   const { line, register } = useAnswerRun();
   const { style: shakeStyle, shake } = useShake();
 
-  // A new scope replaces the queue -- but only before anything is answered;
-  // after that the session is committed to the cards it started with.
+  // Loaded once per fetch; a reload (after a reset) starts the pile again.
   const loadedFor = React.useRef<Flashcard[] | null>(null);
   React.useEffect(() => {
     if (!due || loadedFor.current === due) return;
-    if (entries && stats.correct + stats.incorrect > 0) return;
     loadedFor.current = due;
     setEntries(due.map((card) => ({ card, submitted: false })));
-  }, [due, entries, stats.correct, stats.incorrect]);
+    setStats({ correct: 0, incorrect: 0, missed: [] });
+  }, [due]);
 
   const current = entries?.[0];
   const answered = stats.correct + stats.incorrect;
-  const total = (entries?.length ?? 0) + stats.correct;
+  const cardCount = study?.cardCount ?? 0;
+  // Known in the set: what was known coming in, plus every card got right in
+  // this session -- including missed cards fixed on the retry.
+  const [fixed, setFixed] = React.useState(0);
+  React.useEffect(() => setFixed(0), [due]);
+  const known = (study?.knownCount ?? 0) + stats.correct + fixed;
+
+  const reset = React.useCallback(() => {
+    showDialog({
+      title: `Reset "${study?.name ?? 'this set'}"?`,
+      message: `All ${cardCount} cards go back to unknown, so you can study the set from the top. Nothing is deleted.`,
+      tone: 'confirm',
+      actions: [
+        { label: 'Cancel', kind: 'cancel' },
+        {
+          label: 'Reset set',
+          kind: 'destructive',
+          onPress: async () => {
+            try {
+              await api.resetVocabSet(setId);
+              feedback.toggle();
+              reload();
+            } catch {
+              feedback.wrong();
+              showDialog({
+                title: "Couldn't reset the set",
+                message: 'Check your connection and try again.',
+                tone: 'error',
+              });
+            }
+          },
+        },
+      ],
+    });
+  }, [cardCount, reload, setId, study?.name]);
 
   /**
    * Grades the current card. `gaveUp` is the "I don't know" path: recorded as
@@ -153,15 +200,16 @@ export default function QuizScreen() {
 
       // The first attempt is the one the session's score counts.
       if (!current.submitted) {
-        void answerFlashcard(current.card.srsStateId, typed);
+        void answerFlashcard(current.card.srsStateId, typed, setId);
         setStats((prev) =>
           ok
             ? { ...prev, correct: prev.correct + 1 }
             : { ...prev, incorrect: prev.incorrect + 1, missed: [...prev.missed, current.card] },
         );
       } else if (ok) {
-        // A missed card, now right: it leaves the pile for real.
-        void answerFlashcard(current.card.srsStateId, typed);
+        // A missed card, now right: known, and out of the pile for real.
+        void answerFlashcard(current.card.srsStateId, typed, setId);
+        setFixed((n) => n + 1);
       }
 
       // A miss holds longer than a hit: the answer is on screen, and that reveal
@@ -182,14 +230,12 @@ export default function QuizScreen() {
         ok ? 600 : gaveUp ? 2200 : 1600,
       );
     },
-    [answer, answerFlashcard, current, register, shake, verdict],
+    [answer, answerFlashcard, current, register, setId, shake, verdict],
   );
 
   const onSubmit = React.useCallback(() => grade(false), [grade]);
   const onGiveUp = React.useCallback(() => grade(true), [grade]);
 
-  // Blank only on the first load: a scope change keeps the screen (and its
-  // scope bar) up while the new cards arrive, instead of flashing empty.
   if (loading && !due) return <View style={styles.screen} />;
 
   // No backend, or no connection: the deck has no local mirror to fall back on.
@@ -207,25 +253,35 @@ export default function QuizScreen() {
     );
   }
 
+  const setDone = cardCount > 0 && known >= cardCount;
+
   if (entries && entries.length === 0) {
     // Deliberately not `/session-summary`: that screen is still fixture-backed
     // and would report invented WaniKani stage movements after a real session
     // on this deck.
     return (
-      <Shell onBack={() => router.back()}>
-        {answered === 0 ? <ScopeBar scope={scope} onChange={setScope} /> : null}
+      <Shell title={study?.name} onBack={() => router.back()}>
         <Card variant="bordered">
           <EmptyState
             art={<AllCaughtUpArt />}
-            title={answered > 0 ? 'Deck cleared' : 'Nothing due'}
+            title={
+              cardCount === 0
+                ? 'No cards in this set'
+                : setDone
+                  ? 'Set complete'
+                  : 'Good place to stop'
+            }
             body={
-              answered > 0
-                ? `${stats.correct} of ${answered} right. The ones you missed come back sooner.`
-                : scope.setId || scope.folderId || scope.jlpt
-                  ? 'Nothing is due in this selection. Try a wider one above.'
-                  : 'No imported words are due right now. Import a page to add some.'
+              cardCount === 0
+                ? 'Add pages to this set to fill it with words.'
+                : setDone
+                  ? `You know all ${cardCount} cards in this set. Reset it to study it again from the top.`
+                  : `${known} of ${cardCount} known. The rest — and anything you missed — will be waiting when you come back.`
             }
           />
+          {cardCount > 0 ? (
+            <ProgressBar progress={known / cardCount} color={colors.success} />
+          ) : null}
         </Card>
         {answered > 0 ? (
           <View style={styles.statRow}>
@@ -238,7 +294,16 @@ export default function QuizScreen() {
             />
           </View>
         ) : null}
-        <ChunkyButton label="Back to Study" tone="vocabulary" onPress={() => router.back()} />
+        {setDone ? (
+          <ChunkyButton label="Reset set" tone="vocabulary" chevron={false} onPress={reset} />
+        ) : cardCount > known ? (
+          <ChunkyButton label="Keep going" tone="vocabulary" onPress={() => reload()} />
+        ) : null}
+        <ChunkyButton
+          label="Choose another set"
+          tone="neutral"
+          onPress={() => router.replace('/quiz')}
+        />
       </Shell>
     );
   }
@@ -255,16 +320,15 @@ export default function QuizScreen() {
         // Says what it is, not just which way round it is. "Produce" alone
         // never told you this was a flashcard deck on its own schedule; the
         // direction is already spelled out on the prompt card below.
-        title={production ? 'Vocab practice · Produce' : 'Vocab practice · Recognise'}
+        title={study?.name ?? 'Vocab practice'}
         glyph={palette.glyph}
         glyphColor={palette.solid}
-        trailingText={`${stats.correct} / ${total}`}
+        trailingText={`${known} / ${cardCount} known`}
       >
-        <SessionProgressBar correct={stats.correct} incorrect={stats.incorrect} total={total} />
+        <SessionProgressBar correct={known} incorrect={stats.incorrect} total={cardCount} />
       </ScreenHeader>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        {answered === 0 ? <ScopeBar scope={scope} onChange={setScope} /> : null}
         <Card style={styles.promptCard}>
           <Text style={styles.promptLabel}>
             {production ? 'Write it in Japanese' : "What's the meaning?"}
@@ -286,14 +350,12 @@ export default function QuizScreen() {
           )}
           <View style={styles.promptMeta}>
             <Pill
-              label={current.submitted ? 'retry' : card.repetitions === 0 ? 'new' : `${card.intervalDays}d`}
+              label={production ? 'Meaning → Japanese' : 'Japanese → meaning'}
               color={palette.ink}
               background={palette.tint}
             />
-            {card.lapses > 0 ? (
-              <Text style={styles.promptMetaText}>
-                missed {card.lapses}×
-              </Text>
+            {current.submitted ? (
+              <Pill label="retry" color={colors.warningInk} background={colors.warningTint} />
             ) : null}
           </View>
         </Card>
@@ -425,67 +487,93 @@ export default function QuizScreen() {
 }
 
 /**
- * What this session studies: the whole deck, one set, one folder, or one JLPT
- * tier. Shown until the first answer -- after that, swapping the cards out from
- * under a running session would lose its place.
+ * Pick a set to study. Each shows how much of it you know, so a set you have
+ * finished reads as finished rather than as one more thing to do.
  */
-function ScopeBar({
-  scope,
-  onChange,
-}: {
-  scope: FlashcardScope;
-  onChange: (scope: FlashcardScope) => void;
-}) {
-  const { data: sets } = useVocabSets();
-  const { data: folders } = useVocabFolders();
-
-  if (scope.setId !== undefined) {
-    const set = sets?.find((s) => s.id === scope.setId);
-    return (
-      <Card variant="bordered" style={styles.scopeCard}>
-        <View style={styles.scopeRow}>
-          <Text style={styles.scopeText} numberOfLines={1}>
-            Studying {set ? `"${set.name}"` : 'one set'} only
-          </Text>
-          <InlineButton label="Whole deck" emphasis="quiet" onPress={() => onChange({})} />
-        </View>
-      </Card>
-    );
-  }
-
-  const folderOptions: ChipOption<number>[] = [
-    { key: 0, label: 'All sets' },
-    ...(folders ?? []).map((f) => ({ key: f.id, label: f.name })),
-  ];
-  const tierOptions: ChipOption<number>[] = [
-    { key: 0, label: 'All levels' },
-    ...[5, 4, 3, 2, 1].map((n) => ({ key: n, label: `N${n}` })),
-  ];
+function SetPicker() {
+  const router = useRouter();
+  const { data: sets, loading, error } = useVocabSets();
+  const withCards = (sets ?? []).filter((set) => set.cardCount > 0);
 
   return (
-    <Card variant="bordered" style={styles.scopeCard}>
-      {folders && folders.length > 0 ? (
-        <FilterChips
-          label="Folder"
-          options={folderOptions}
-          selected={scope.folderId ?? 0}
-          onSelect={(key) => onChange({ ...scope, folderId: key === 0 ? undefined : key })}
-        />
-      ) : null}
-      <FilterChips
-        label="JLPT level"
-        options={tierOptions}
-        selected={scope.jlpt ?? 0}
-        onSelect={(key) => onChange({ ...scope, jlpt: key === 0 ? undefined : key })}
-      />
-    </Card>
+    <Shell onBack={() => router.back()}>
+      <Text style={styles.pickerIntro}>
+        Flashcards are studied a set at a time. Cards you get right stay out of the set until
+        you reset it.
+      </Text>
+      {loading && !sets ? null : error ? (
+        <Card variant="bordered">
+          <EmptyState
+            art={<OfflineArt />}
+            title="Can't reach your deck"
+            body="Sets live on the server, so choosing one needs a connection."
+          />
+        </Card>
+      ) : withCards.length === 0 ? (
+        <Card variant="bordered">
+          <EmptyState
+            art={<AllCaughtUpArt />}
+            title="No sets to study yet"
+            body="Import a page and its words become a set you can study here."
+          />
+        </Card>
+      ) : (
+        withCards.map((set) => (
+          <PickerRow
+            key={set.id}
+            set={set}
+            onPress={() => router.replace({ pathname: '/quiz', params: { setId: String(set.id) } })}
+          />
+        ))
+      )}
+    </Shell>
   );
 }
 
-function Shell({ children, onBack }: { children: React.ReactNode; onBack: () => void }) {
+function PickerRow({ set, onPress }: { set: VocabSet; onPress: () => void }) {
+  const done = set.knownCount >= set.cardCount;
+  return (
+    <Pressable onPress={onPress} onPressIn={feedback.select}>
+      {({ pressed }) => (
+        <Card variant="bordered" style={[styles.pickerRow, pressed && styles.pickerRowPressed]}>
+          <View style={styles.pickerHead}>
+            <Text style={styles.pickerName} numberOfLines={1}>
+              {set.name}
+            </Text>
+            <Text style={[styles.pickerCount, done && { color: colors.successInk }]}>
+              {done ? 'Complete ✓' : `${set.cardCount - set.knownCount} to learn ›`}
+            </Text>
+          </View>
+          <ProgressBar
+            progress={set.cardCount > 0 ? set.knownCount / set.cardCount : 0}
+            color={done ? colors.success : palette.solid}
+          />
+          <Text style={styles.pickerMeta}>
+            {set.knownCount} of {set.cardCount} cards known · {set.itemCount}{' '}
+            {set.itemCount === 1 ? 'word' : 'words'}
+          </Text>
+        </Card>
+      )}
+    </Pressable>
+  );
+}
+
+function Shell({
+  children,
+  onBack,
+  title,
+}: {
+  children: React.ReactNode;
+  onBack: () => void;
+  title?: string;
+}) {
   return (
     <View style={styles.screen}>
-      <ScreenHeader title="Vocab practice" glyph={palette.glyph} glyphColor={palette.solid} />
+      <ScreenHeader
+        title={title ?? 'Vocab practice'}
+        glyph={palette.glyph}
+        glyphColor={palette.solid}
+      />
       <ScrollView contentContainerStyle={styles.content}>{children}</ScrollView>
       <View style={styles.footer}>
         <Pressable onPress={onBack} hitSlop={8}>
@@ -508,19 +596,35 @@ const styles = StyleSheet.create({
     gap: spacing.stack,
   },
 
-  scopeCard: {
-    gap: 10,
+  pickerIntro: {
+    ...typeScale.caption,
+    color: colors.inkSoft,
+    lineHeight: 18,
+    marginHorizontal: 4,
   },
-  scopeRow: {
+  pickerRow: {
+    gap: 8,
+  },
+  pickerRowPressed: {
+    backgroundColor: colors.hairline,
+  },
+  pickerHead: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
   },
-  scopeText: {
+  pickerName: {
+    ...typeScale.cardTitle,
+    color: colors.ink,
+    flex: 1,
+  },
+  pickerCount: {
     ...typeScale.captionBold,
-    color: colors.inkMuted,
-    flexShrink: 1,
+    color: colors.vocabulary,
+  },
+  pickerMeta: {
+    ...typeScale.metaSmall,
+    color: colors.inkSoft,
   },
   promptCard: {
     alignItems: 'center',
