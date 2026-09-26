@@ -798,7 +798,12 @@ async def get_due_flashcards(
     folder_id: int | None = None,
     jlpt_level: int | None = None,
 ) -> list[Flashcard]:
-    """Cards due, soonest first, with everything needed to study offline.
+    """Cards due, in random order, with everything needed to study offline.
+
+    Random rather than soonest-first: a deck studied in the order it was
+    imported is learned as a sequence, each word cued by the one before it,
+    and the first fifty get drilled while the rest wait. Random is also a fair
+    sample when there are more due than `limit`.
 
     Narrowed, when asked, to one set, the sets in one folder, or one JLPT tier.
     A word counts as a tier's when the word itself carries that tier or any
@@ -832,7 +837,7 @@ async def get_due_flashcards(
             or_(VocabItem.jlpt_level == jlpt_level, VocabItem.id.in_(tagged_sets))
         )
 
-    result = await session.execute(statement.order_by(SrsState.due_at).limit(limit))
+    result = await session.execute(statement.order_by(func.random()).limit(limit))
     rows = result.all()
     if not rows:
         return []
