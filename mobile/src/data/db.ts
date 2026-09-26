@@ -577,25 +577,37 @@ export async function countPendingWrites(): Promise<number> {
  * grades these against each card to leave out the ones already got right, so
  * coming back picks up where you left off even before the outbox has drained.
  */
+export interface PendingFlashcardAnswer {
+  answerGiven: string;
+  /** Set for a flipped card, which is self-graded rather than typed. */
+  correct: boolean | null;
+  setId: number | null;
+}
+
 export async function getPendingFlashcardAnswers(): Promise<
-  Map<number, { answerGiven: string; setId: number | null }[]>
+  Map<number, PendingFlashcardAnswer[]>
 > {
   const db = await getDatabase();
   const rows = await db.getAllAsync<{ payload_json: string }>(
     "SELECT payload_json FROM pending_writes WHERE type = 'answer_flashcard' AND synced_at IS NULL AND failed_at IS NULL",
   );
-  const byCard = new Map<number, { answerGiven: string; setId: number | null }[]>();
+  const byCard = new Map<number, PendingFlashcardAnswer[]>();
   for (const row of rows) {
     try {
-      const { srsStateId, answerGiven, setId } = JSON.parse(row.payload_json) as {
+      const { srsStateId, answerGiven, setId, correct } = JSON.parse(row.payload_json) as {
         srsStateId?: number;
         answerGiven?: string;
         setId?: number;
+        correct?: boolean;
       };
       if (typeof srsStateId !== 'number') continue;
       byCard.set(srsStateId, [
         ...(byCard.get(srsStateId) ?? []),
-        { answerGiven: answerGiven ?? '', setId: typeof setId === 'number' ? setId : null },
+        {
+          answerGiven: answerGiven ?? '',
+          correct: typeof correct === 'boolean' ? correct : null,
+          setId: typeof setId === 'number' ? setId : null,
+        },
       ]);
     } catch {
       // A malformed row is the outbox's problem, not the quiz's.

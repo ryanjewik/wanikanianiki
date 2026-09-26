@@ -294,12 +294,20 @@ export function useStudyActions() {
    * and its answer is what the deck records. The screen has already shown a
    * result by the time this runs, from the answers the card carries.
    */
+  /**
+   * A typed answer is sent as typed and graded by the server; a flipped card
+   * sends only whether you knew it (`correct`), since nothing was typed.
+   */
   const answerFlashcard = React.useCallback(
-    async (srsStateId: number, answerGiven: string, setId?: number) => {
-    await db.enqueueWrite('answer_flashcard', { srsStateId, answerGiven, setId });
-    if (api.isBackendConfigured) {
-      void syncNow();
-    }
+    async (
+      srsStateId: number,
+      answer: { answerGiven: string } | { correct: boolean },
+      setId?: number,
+    ) => {
+      await db.enqueueWrite('answer_flashcard', { srsStateId, ...answer, setId });
+      if (api.isBackendConfigured) {
+        void syncNow();
+      }
     },
     [],
   );
@@ -333,7 +341,9 @@ export function useSetStudy(setId: number | null) {
     // stopped even before the outbox has drained.
     const knownHere = (card: Flashcard) =>
       (pending.get(card.srsStateId) ?? []).some(
-        (answer) => answer.setId === setId && matches(answer.answerGiven, card.acceptedAnswers),
+        (answer) =>
+          answer.setId === setId &&
+          (answer.correct ?? matches(answer.answerGiven, card.acceptedAnswers)),
       );
     const cards = study.cards.filter((card) => !knownHere(card));
     return {

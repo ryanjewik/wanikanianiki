@@ -1,38 +1,41 @@
 /**
  * Study hub: everything that is yours rather than WaniKani's.
  *
- * WaniKani's lessons and reviews are on the home screen and only there; this
- * tab is the imported deck, generated practice and grammar, with the sound
- * and haptics settings at the very bottom where settings belong.
+ * WaniKani's lessons and reviews, and the generated practice questions, are on
+ * the home screen; this tab is the imported deck and your grammar, with the
+ * sound and haptics settings at the very bottom where settings belong.
  *
  * Everything here is assembled from the existing primitives, so it stays in
  * the same system as the drawn screens.
  */
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { FeedbackToggles } from '@/components/FeedbackToggles';
 import { OfflineArt } from '@/components/icons';
-import { Mascot } from '@/components/Mascot';
 import { RiseIn } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Card, ChunkyButton, Overline, QueueCard, SectionHeading } from '@/components/ui';
-import { useFlashcardOverview, usePracticeQueue, useSync } from '@/hooks/useStudyData';
-import {
-  colors,
-  radius,
-  spacing,
-  type as typeScale,
-} from '@/theme/tokens';
+import { Card, ChunkyButton, Overline, SectionHeading } from '@/components/ui';
+import type { GrammarEntry } from '@/data/types';
+import { feedback } from '@/feedback';
+import { useFlashcardOverview, useGrammarEntries, useSync } from '@/hooks/useStudyData';
+import { colors, jp, radius, spacing, type as typeScale } from '@/theme/tokens';
+
+/** How many grammar points the Study tab lists. */
+const RECENT_GRAMMAR = 5;
 
 export default function StudyScreen() {
   const router = useRouter();
   const { data: flashcards, reload: reloadDue } = useFlashcardOverview();
-  const { data: practice, reload: reloadPractice } = usePracticeQueue();
+  const { data: grammar, reload: reloadGrammar } = useGrammarEntries();
   const { pendingWrites, result } = useSync();
 
   const remaining = flashcards?.remaining ?? 0;
+  // Newest first, by when each was logged.
+  const recent = [...(grammar ?? [])]
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, RECENT_GRAMMAR);
   const hasSets = (flashcards?.setCount ?? 0) > 0;
   const offline = result?.error === 'Offline';
 
@@ -41,8 +44,8 @@ export default function StudyScreen() {
   useFocusEffect(
     React.useCallback(() => {
       reloadDue();
-      reloadPractice();
-    }, [reloadDue, reloadPractice]),
+      reloadGrammar();
+    }, [reloadDue, reloadGrammar]),
   );
 
   return (
@@ -104,52 +107,31 @@ export default function StudyScreen() {
           </View>
         </Card>
 
-        <Overline style={styles.trackLabel}>Generated practice</Overline>
-
-        <QueueCard
-          title="Practice Questions"
-          count={practice?.questions ?? 0}
-          tone="vocabulary"
-          blurb={
-            practice && practice.questions > 0
-              ? `${practice.bundles} ${practice.bundles === 1 ? 'set' : 'sets'} written for you, from words across both decks.`
-              : 'Nothing written yet. These are generated twice a day from what you are studying.'
-          }
-          cta="Start Practice"
-          art={<Mascot pose="idle" size={80} speed={0.6} lively />}
-          disabled={!practice || practice.questions === 0}
-          onPress={() => router.push('/lesson-bundle')}
-        />
-
-        <Card variant="bordered">
-          <Text style={styles.trackBlurb}>
-            Not WaniKani lessons. These are questions written ahead of time —
-            multiple choice, fill-in-the-blank, sentence building — drawn from
-            words across both decks above and any grammar you have confirmed. A
-            WaniKani lesson teaches you something new; this asks you about what
-            you have already met.
-          </Text>
-          <Text style={styles.trackBlurb}>
-            Answering advances every word the question tested, except
-            WaniKani-owned words — those stay on WaniKani&apos;s own schedule, so
-            practising them here counts as practice and nothing more.
-          </Text>
-        </Card>
-
         <Overline style={styles.trackLabel}>Grammar</Overline>
 
         <Card variant="bordered">
           <SectionHeading
-            title="Points you have logged"
-            trailing="Open ›"
+            title="Most recent grammar points"
+            trailing="See all ›"
             trailingColor={colors.radical}
             onPressTrailing={() => router.push('/grammar')}
           />
-          <Text style={styles.trackBlurb}>
-            Type the pattern the moment it comes up in class and fill it in later. Logging is
-            deliberately not studying — a point you write down shows on the calendar without
-            touching your streak.
-          </Text>
+          {recent.length > 0 ? (
+            <View style={styles.grammarList}>
+              {recent.map((entry) => (
+                <GrammarRow
+                  key={entry.id}
+                  entry={entry}
+                  onPress={() => router.push(`/grammar/${entry.id}`)}
+                />
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.trackBlurb}>
+              Nothing logged yet. Type a pattern the moment it comes up in class and fill it in
+              later.
+            </Text>
+          )}
           <View style={styles.deckActions}>
             <ChunkyButton
               label="Log a point"
@@ -171,6 +153,39 @@ export default function StudyScreen() {
       </ScrollView>
     </View>
   );
+}
+
+/** One logged point: the pattern, what it means (or that it still needs filling in), when. */
+function GrammarRow({ entry, onPress }: { entry: GrammarEntry; onPress: () => void }) {
+  const detail = entry.senseLabel || entry.meaning || 'Not filled in yet';
+  return (
+    <Pressable onPress={onPress} onPressIn={feedback.select}>
+      {({ pressed }) => (
+        <View style={[styles.grammarRow, pressed && styles.grammarRowPressed]}>
+          <View style={styles.grammarBody}>
+            <Text style={styles.grammarPattern} numberOfLines={1}>
+              {entry.pattern}
+            </Text>
+            <Text style={styles.grammarDetail} numberOfLines={1}>
+              {detail}
+            </Text>
+          </View>
+          <Text style={styles.grammarDate}>{shortDate(entry.learnedOn)}</Text>
+          <Text style={styles.grammarChevron}>›</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+/** "Sep 25" from "2026-09-25", without a timezone shifting the day. */
+function shortDate(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  if (!year || !month || !day) return isoDate;
+  return new Date(year, month - 1, day).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 const styles = StyleSheet.create({
@@ -213,6 +228,41 @@ const styles = StyleSheet.create({
   },
 
 
+  grammarList: {
+    marginBottom: 12,
+  },
+  grammarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.hairline,
+  },
+  grammarRowPressed: {
+    opacity: 0.6,
+  },
+  grammarBody: {
+    flex: 1,
+    gap: 2,
+  },
+  grammarPattern: {
+    ...jp.row,
+    fontSize: 17,
+    color: colors.ink,
+  },
+  grammarDetail: {
+    ...typeScale.metaSmall,
+    color: colors.inkSoft,
+  },
+  grammarDate: {
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+  },
+  grammarChevron: {
+    ...typeScale.cardTitle,
+    color: colors.inkFaint,
+  },
   trackBlurb: {
     ...typeScale.caption,
     color: colors.inkSoft,

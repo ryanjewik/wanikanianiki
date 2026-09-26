@@ -146,22 +146,41 @@ export default function GrammarDetailScreen() {
     async (sense: string) => {
       if (!entry || working) return;
       setWorking(true);
+      // Two steps, reported separately: naming the sense is a quick save, and
+      // filling the entry in is a slow model call. One catch for both made a
+      // refused save and a slow answer look like the same lost connection.
+      let named;
       try {
-        const named = await api.updateGrammarEntry(entry.id, { senseLabel: sense });
+        named = await api.updateGrammarEntry(entry.id, { senseLabel: sense });
         setEntry(named);
         setSenses([]);
-        const result = await api.enrichGrammarEntry(named.id);
-        setEntry(result.entry);
-        if (!result.applied && result.otherSenses.length > 0) setSenses(result.otherSenses);
       } catch (cause) {
         // The uniqueness rule is (pattern, sense), so this is the one case
         // where the fix is to go to the entry you already have.
         const duplicate = cause instanceof api.ApiError && cause.status === 409;
+        const refused = cause instanceof api.ApiError && !duplicate;
         showDialog({
           title: duplicate ? 'You already have that sense' : 'Could not set the sense',
           message: duplicate
             ? `"${entry.pattern}" is already logged under "${sense}".`
-            : 'Check that the app can reach your backend, then try again.',
+            : refused
+              ? `The server refused it (${(cause as api.ApiError).status}). Try another sense, or log the pattern again.`
+              : 'Check that the app can reach your backend, then try again.',
+          tone: 'error',
+        });
+        setWorking(false);
+        return;
+      }
+
+      try {
+        const result = await api.enrichGrammarEntry(named.id);
+        setEntry(result.entry);
+        if (!result.applied && result.otherSenses.length > 0) setSenses(result.otherSenses);
+      } catch (cause) {
+        const [title, message] = describeEnrichFailure(cause);
+        showDialog({
+          title,
+          message: `The sense is saved. ${message}`,
           tone: 'error',
         });
       } finally {

@@ -489,9 +489,11 @@ export interface FlashcardAnswerWrite {
   srsStateId: number;
   /** What the user typed. The server regrades it; the client's verdict is
    *  only ever used to show a result before the write lands. */
-  answerGiven: string;
+  answerGiven?: string;
   /** The set it was studied in; a right answer marks the card known there. */
   setId?: number;
+  /** A flipped card, graded by the person holding it: nothing was typed. */
+  correct?: boolean;
 }
 
 export interface PendingWrite {

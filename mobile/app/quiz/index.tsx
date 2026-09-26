@@ -30,6 +30,7 @@ import { AllCaughtUpArt, CheckMark, CorrectMark, IncorrectMark, OfflineArt } fro
 import { finishKana, LanguageInput } from '@/components/LanguageInput';
 import { Mascot, type Pose } from '@/components/Mascot';
 import { useAnswerRun } from '@/components/MascotCoach';
+import { FilterChips } from '@/components/FilterChips';
 import { Pop, useShake } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
@@ -44,7 +45,7 @@ import {
   StatTile,
 } from '@/components/ui';
 import * as api from '@/data/api';
-import { setPref } from '@/data/db';
+import { getPref, setPref } from '@/data/db';
 import { matches } from '@/data/grading';
 import type { Flashcard, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -90,6 +91,17 @@ const palette = subjectPalette.vocabulary;
  */
 const FURIGANA_UNTIL_REPETITIONS = 2;
 
+/**
+ * Type the answer, or flip the card and say whether you knew it. Typing is the
+ * stricter test -- the card checks you -- and flipping the faster one, for a
+ * quick pass through a set. Remembered between sessions.
+ */
+type StudyMode = 'type' | 'flip';
+const PREF_STUDY_MODE = 'flashcard_mode';
+
+/** How a card was answered. */
+type Outcome = 'typed' | 'gaveUp' | 'gotIt' | 'missedIt';
+
 export default function QuizScreen() {
   const params = useLocalSearchParams<{ setId?: string }>();
   const setId = params.setId ? Number(params.setId) : NaN;
@@ -115,6 +127,29 @@ function SetSession({ setId }: { setId: number }) {
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as Flashcard[] });
   const { line, register } = useAnswerRun();
   const { style: shakeStyle, shake } = useShake();
+  const [mode, setMode] = React.useState<StudyMode>('type');
+  const [flipped, setFlipped] = React.useState(false);
+
+  React.useEffect(() => {
+    void getPref(PREF_STUDY_MODE)
+      .then((stored) => {
+        if (stored === 'flip' || stored === 'type') setMode(stored);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const chooseMode = React.useCallback((next: StudyMode) => {
+    setMode(next);
+    setFlipped(false);
+    setAnswer('');
+    void setPref(PREF_STUDY_MODE, next).catch(() => undefined);
+  }, []);
+
+  const flip = React.useCallback(() => {
+    if (flipped) return;
+    feedback.reveal();
+    setFlipped(true);
+  }, [flipped]);
 
   // Loaded once per fetch; a reload (after a reset) starts the pile again.
   const loadedFor = React.useRef<Flashcard[] | null>(null);
@@ -170,16 +205,21 @@ function SetSession({ setId }: { setId: number }) {
    * scolds. Nothing was typed wrong; there is no mistake to buzz at.
    */
   const grade = React.useCallback(
-    (gaveUp: boolean) => {
+    (outcome: Outcome) => {
       if (!current || verdict) return;
+      const gaveUp = outcome === 'gaveUp';
+      const selfGraded = outcome === 'gotIt' || outcome === 'missedIt';
 
       // A production card accepts the reading as well as the written form, so
       // romaji converted to kana is a real answer, not a near miss.
       const production = current.card.skillType === 'production';
-      const typed = gaveUp ? '' : production ? finishKana(answer) : answer;
-      if (!gaveUp && !typed.trim()) return;
-      if (typed !== answer) setAnswer(typed);
-      const ok = !gaveUp && matches(typed, current.card.acceptedAnswers);
+      const typed = gaveUp || selfGraded ? '' : production ? finishKana(answer) : answer;
+      if (outcome === 'typed' && !typed.trim()) return;
+      if (outcome === 'typed' && typed !== answer) setAnswer(typed);
+      const ok = selfGraded
+        ? outcome === 'gotIt'
+        : !gaveUp && matches(typed, current.card.acceptedAnswers);
+      const sent = selfGraded ? { correct: ok } : { answerGiven: typed };
 
       setVerdict(ok ? 'correct' : 'incorrect');
       setPose(ok ? 'correct' : 'wrong');
@@ -192,6 +232,10 @@ function SetSession({ setId }: { setId: number }) {
       } else if (gaveUp) {
         feedback.reveal();
         register(false);
+      } else if (selfGraded) {
+        // Your own call, on an answer already on screen: no buzz, no shake.
+        feedback.back();
+        register(false);
       } else {
         feedback.wrong();
         shake();
@@ -200,7 +244,7 @@ function SetSession({ setId }: { setId: number }) {
 
       // The first attempt is the one the session's score counts.
       if (!current.submitted) {
-        void answerFlashcard(current.card.srsStateId, typed, setId);
+        void answerFlashcard(current.card.srsStateId, sent, setId);
         setStats((prev) =>
           ok
             ? { ...prev, correct: prev.correct + 1 }
@@ -208,7 +252,7 @@ function SetSession({ setId }: { setId: number }) {
         );
       } else if (ok) {
         // A missed card, now right: known, and out of the pile for real.
-        void answerFlashcard(current.card.srsStateId, typed, setId);
+        void answerFlashcard(current.card.srsStateId, sent, setId);
         setFixed((n) => n + 1);
       }
 
@@ -218,6 +262,7 @@ function SetSession({ setId }: { setId: number }) {
         () => {
           setVerdict(null);
           setAnswer('');
+          setFlipped(false);
           setPose('idle');
           setEntries((rest) => {
             if (!rest) return rest;
@@ -227,14 +272,15 @@ function SetSession({ setId }: { setId: number }) {
           });
         },
         // Giving up holds longest: that reveal is the whole lesson for this card.
-        ok ? 600 : gaveUp ? 2200 : 1600,
+        // A flipped card has already been read, so it moves straight on.
+        selfGraded ? 350 : ok ? 600 : gaveUp ? 2200 : 1600,
       );
     },
     [answer, answerFlashcard, current, register, setId, shake, verdict],
   );
 
-  const onSubmit = React.useCallback(() => grade(false), [grade]);
-  const onGiveUp = React.useCallback(() => grade(true), [grade]);
+  const onSubmit = React.useCallback(() => grade('typed'), [grade]);
+  const onGiveUp = React.useCallback(() => grade('gaveUp'), [grade]);
 
   if (loading && !due) return <View style={styles.screen} />;
 
@@ -329,45 +375,68 @@ function SetSession({ setId }: { setId: number }) {
       </ScreenHeader>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Card style={styles.promptCard}>
-          <Text style={styles.promptLabel}>
-            {production ? 'Write it in Japanese' : "What's the meaning?"}
-          </Text>
-          {production ? (
-            <Text style={styles.promptEnglish}>{card.prompt}</Text>
-          ) : (
-            <FuriganaText
-              text={card.prompt}
-              furigana={{ [card.prompt]: card.furiganaOnly }}
-              show={
-                card.repetitions < FURIGANA_UNTIL_REPETITIONS &&
-                Boolean(card.furiganaOnly) &&
-                card.furiganaOnly !== card.prompt
-              }
-              style={styles.promptGlyph}
-              readingSize={18}
-            />
-          )}
-          <View style={styles.promptMeta}>
-            <Pill
-              label={production ? 'Meaning → Japanese' : 'Japanese → meaning'}
-              color={palette.ink}
-              background={palette.tint}
-            />
-            {current.submitted ? (
-              <Pill label="retry" color={colors.warningInk} background={colors.warningTint} />
+        <FilterChips
+          options={[
+            { key: 'type', label: 'Type answers' },
+            { key: 'flip', label: 'Flip cards' },
+          ]}
+          selected={mode}
+          onSelect={(key) => chooseMode(key as StudyMode)}
+        />
+        <Pressable onPress={mode === 'flip' ? flip : undefined} disabled={mode !== 'flip'}>
+          <Card style={styles.promptCard}>
+            <Text style={styles.promptLabel}>
+              {production
+                ? mode === 'flip'
+                  ? 'Do you know the Japanese?'
+                  : 'Write it in Japanese'
+                : "What's the meaning?"}
+            </Text>
+            {production ? (
+              <Text style={styles.promptEnglish}>{card.prompt}</Text>
+            ) : (
+              <FuriganaText
+                text={card.prompt}
+                furigana={{ [card.prompt]: card.furiganaOnly }}
+                show={
+                  card.repetitions < FURIGANA_UNTIL_REPETITIONS &&
+                  Boolean(card.furiganaOnly) &&
+                  card.furiganaOnly !== card.prompt
+                }
+                style={styles.promptGlyph}
+                readingSize={18}
+              />
+            )}
+            <View style={styles.promptMeta}>
+              <Pill
+                label={production ? 'Meaning → Japanese' : 'Japanese → meaning'}
+                color={palette.ink}
+                background={palette.tint}
+              />
+              {current.submitted ? (
+                <Pill label="retry" color={colors.warningInk} background={colors.warningTint} />
+              ) : null}
+            </View>
+            {mode === 'flip' && !flipped ? (
+              <Text style={styles.flipHint}>Tap to flip</Text>
             ) : null}
-          </View>
-        </Card>
+          </Card>
+        </Pressable>
 
         {/* The reveal. A wrong answer with nothing shown teaches nothing, so
             the accepted forms and the sentence the word was printed in both
             come up before the next card. */}
-        {verdict ? (
+        {verdict || flipped ? (
           <Pop>
             <Card
               variant="bordered"
-              style={verdict === 'correct' ? styles.revealOk : styles.revealBad}
+              style={
+                verdict === 'correct'
+                  ? styles.revealOk
+                  : verdict === 'incorrect'
+                    ? styles.revealBad
+                    : undefined
+              }
             >
               <Text style={styles.revealLabel}>
                 {verdict === 'correct' ? 'Correct' : 'Answer'}
@@ -385,58 +454,85 @@ function SetSession({ setId }: { setId: number }) {
           </Pop>
         ) : null}
 
-        <Animated.View style={[styles.answerRow, shakeStyle]}>
-          <View
-            style={[
-              styles.answerField,
-              controlBorder,
-              shadows.hard,
-              verdict === 'correct' && { borderColor: colors.success },
-              verdict === 'incorrect' && { borderColor: colors.danger },
-            ]}
-          >
-            <LanguageInput
-              value={answer}
-              onChangeText={setAnswer}
-              onSubmitEditing={onSubmit}
-              editable={!verdict}
-              style={[styles.answerInput, production && jp.answer]}
-              placeholder={production ? '日本語' : 'meaning'}
-              placeholderTextColor={colors.inkDisabled}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="done"
-              language={production ? 'ja' : 'en'}
-              kana={production}
-            />
-          </View>
-
-          <Pressable onPress={onSubmit} disabled={Boolean(verdict)}>
-            <View
-              style={[
-                styles.submitButton,
-                controlBorder,
-                shadows.hard,
-                { backgroundColor: verdict === 'incorrect' ? colors.danger : colors.success },
-              ]}
-            >
-              {verdict === 'incorrect' ? (
-                <IncorrectMark size={26} />
-              ) : verdict === 'correct' ? (
-                <CorrectMark size={26} />
-              ) : (
-                <CheckMark size={26} />
-              )}
+        {mode === 'flip' ? (
+          flipped && !verdict ? (
+            <View style={styles.flipActions}>
+              <ChunkyButton
+                label="Missed it"
+                tone="neutral"
+                chevron={false}
+                cue="back"
+                onPress={() => grade('missedIt')}
+                style={styles.flipButton}
+              />
+              <ChunkyButton
+                label="Got it"
+                tone="vocabulary"
+                chevron={false}
+                cue="correct"
+                onPress={() => grade('gotIt')}
+                style={styles.flipButton}
+              />
             </View>
-          </Pressable>
-        </Animated.View>
+          ) : !flipped ? (
+            <ChunkyButton label="Show answer" tone="vocabulary" chevron={false} onPress={flip} />
+          ) : null
+        ) : (
+          <>
+            <Animated.View style={[styles.answerRow, shakeStyle]}>
+              <View
+                style={[
+                  styles.answerField,
+                  controlBorder,
+                  shadows.hard,
+                  verdict === 'correct' && { borderColor: colors.success },
+                  verdict === 'incorrect' && { borderColor: colors.danger },
+                ]}
+              >
+                <LanguageInput
+                  value={answer}
+                  onChangeText={setAnswer}
+                  onSubmitEditing={onSubmit}
+                  editable={!verdict}
+                  style={[styles.answerInput, production && jp.answer]}
+                  placeholder={production ? '日本語' : 'meaning'}
+                  placeholderTextColor={colors.inkDisabled}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="done"
+                  language={production ? 'ja' : 'en'}
+                  kana={production}
+                />
+              </View>
 
-        <View style={styles.hintRow}>
-          <Text style={styles.inputHint}>
-            {production ? 'Kanji or kana — either form counts' : 'Type the English meaning'}
-          </Text>
-          {verdict ? null : <InlineButton label="I don't know" emphasis="quiet" onPress={onGiveUp} />}
-        </View>
+              <Pressable onPress={onSubmit} disabled={Boolean(verdict)}>
+                <View
+                  style={[
+                    styles.submitButton,
+                    controlBorder,
+                    shadows.hard,
+                    { backgroundColor: verdict === 'incorrect' ? colors.danger : colors.success },
+                  ]}
+                >
+                  {verdict === 'incorrect' ? (
+                    <IncorrectMark size={26} />
+                  ) : verdict === 'correct' ? (
+                    <CorrectMark size={26} />
+                  ) : (
+                    <CheckMark size={26} />
+                  )}
+                </View>
+              </Pressable>
+            </Animated.View>
+
+            <View style={styles.hintRow}>
+              <Text style={styles.inputHint}>
+                {production ? 'Kanji or kana — either form counts' : 'Type the English meaning'}
+              </Text>
+              {verdict ? null : <InlineButton label="I don't know" emphasis="quiet" onPress={onGiveUp} />}
+            </View>
+          </>
+        )}
 
         <Card style={styles.sessionCard}>
           <SectionHeading
@@ -596,6 +692,19 @@ const styles = StyleSheet.create({
     gap: spacing.stack,
   },
 
+  flipHint: {
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  flipActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  flipButton: {
+    flex: 1,
+  },
   pickerIntro: {
     ...typeScale.caption,
     color: colors.inkSoft,
