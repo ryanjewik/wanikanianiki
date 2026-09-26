@@ -62,8 +62,10 @@ interface QueueEntry {
   card: Flashcard;
   /**
    * Whether this card's graded attempt has already gone up. A missed card
-   * comes back before the session ends, but SM-2 has already taken the lapse —
-   * resubmitting would charge the same mistake twice.
+   * comes back before the session ends. Missing it again is not sent — SM-2
+   * has already taken that lapse — but getting it right is: that is the card
+   * leaving the pile, and without it a card you fixed would still be due next
+   * time.
    */
   submitted: boolean;
 }
@@ -149,7 +151,7 @@ export default function QuizScreen() {
         register(false);
       }
 
-      // Only the first attempt at a card is the graded one.
+      // The first attempt is the one the session's score counts.
       if (!current.submitted) {
         void answerFlashcard(current.card.srsStateId, typed);
         setStats((prev) =>
@@ -157,6 +159,9 @@ export default function QuizScreen() {
             ? { ...prev, correct: prev.correct + 1 }
             : { ...prev, incorrect: prev.incorrect + 1, missed: [...prev.missed, current.card] },
         );
+      } else if (ok) {
+        // A missed card, now right: it leaves the pile for real.
+        void answerFlashcard(current.card.srsStateId, typed);
       }
 
       // A miss holds longer than a hit: the answer is on screen, and that reveal

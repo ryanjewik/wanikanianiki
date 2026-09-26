@@ -159,6 +159,18 @@ async function upgrade(db: SQLite.SQLiteDatabase): Promise<void> {
       PRAGMA user_version = 1;
     `);
   }
+
+  if (version < 2) {
+    // A write the server refused outright -- WaniKani saying a lesson was
+    // already started -- used to stay queued forever, retried first on every
+    // sync, with every answer queued after it stuck behind it. It is now set
+    // aside with the reason, and the queue moves on.
+    await db.execAsync(`
+      ALTER TABLE pending_writes ADD COLUMN failed_at TEXT;
+      ALTER TABLE pending_writes ADD COLUMN last_error TEXT;
+      PRAGMA user_version = 2;
+    `);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -511,7 +523,9 @@ export async function getPendingWrites(): Promise<PendingWrite[]> {
     payload_json: string;
     created_at: string;
     synced_at: string | null;
-  }>('SELECT * FROM pending_writes WHERE synced_at IS NULL ORDER BY created_at ASC, id ASC');
+  }>(
+    'SELECT * FROM pending_writes WHERE synced_at IS NULL AND failed_at IS NULL ORDER BY created_at ASC, id ASC',
+  );
 
   return rows.map((row) => ({
     id: row.id,
@@ -535,12 +549,53 @@ export async function markWriteSynced(id: number): Promise<void> {
   );
 }
 
+/**
+ * Sets aside a write the server refused for good. Kept rather than deleted, so
+ * what was refused and why stays on the phone to look at.
+ */
+export async function markWriteFailed(id: number, reason: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    'UPDATE pending_writes SET failed_at = ?, last_error = ? WHERE id = ?',
+    new Date().toISOString(),
+    reason.slice(0, 500),
+    id,
+  );
+}
+
 export async function countPendingWrites(): Promise<number> {
   const db = await getDatabase();
   const row = await db.getFirstAsync<{ n: number }>(
-    'SELECT COUNT(*) AS n FROM pending_writes WHERE synced_at IS NULL',
+    'SELECT COUNT(*) AS n FROM pending_writes WHERE synced_at IS NULL AND failed_at IS NULL',
   );
   return row?.n ?? 0;
+}
+
+/**
+ * Flashcard answers typed on this phone that have not reached the server yet,
+ * by card. Until they do, the server still counts those cards as due; the quiz
+ * grades these against each card to leave out the ones already got right, so
+ * coming back picks up where you left off even before the outbox has drained.
+ */
+export async function getPendingFlashcardAnswers(): Promise<Map<number, string[]>> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<{ payload_json: string }>(
+    "SELECT payload_json FROM pending_writes WHERE type = 'answer_flashcard' AND synced_at IS NULL AND failed_at IS NULL",
+  );
+  const byCard = new Map<number, string[]>();
+  for (const row of rows) {
+    try {
+      const { srsStateId, answerGiven } = JSON.parse(row.payload_json) as {
+        srsStateId?: number;
+        answerGiven?: string;
+      };
+      if (typeof srsStateId !== 'number') continue;
+      byCard.set(srsStateId, [...(byCard.get(srsStateId) ?? []), answerGiven ?? '']);
+    } catch {
+      // A malformed row is the outbox's problem, not the quiz's.
+    }
+  }
+  return byCard;
 }
 
 /* -------------------------------------------------------------------------- */

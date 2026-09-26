@@ -11,6 +11,7 @@ import * as React from 'react';
 import * as api from '@/data/api';
 import * as db from '@/data/db';
 import * as fixtures from '@/data/fixtures';
+import { matches } from '@/data/grading';
 import { durationMinutes, getLastSession } from '@/data/session';
 import { syncNow, type SyncResult } from '@/data/sync';
 import { stageBucket } from '@/theme/tokens';
@@ -323,8 +324,37 @@ export function useDueFlashcards(limit = 100, scope: FlashcardScope = {}) {
   const key = `${scope.setId ?? ''}|${scope.folderId ?? ''}|${scope.jlpt ?? ''}`;
   return useAsync<Flashcard[]>(async () => {
     if (!api.isBackendConfigured) return [];
-    return api.fetchDueFlashcards(limit, scope);
+    const [due, pending] = await Promise.all([
+      api.fetchDueFlashcards(limit, scope),
+      db.getPendingFlashcardAnswers(),
+    ]);
+    // Got right here but not yet confirmed by the server, which still counts
+    // them as due. Left out, so a session resumes where the last one stopped;
+    // a card only ever missed stays in, since a miss keeps a card due.
+    const doneHere = (card: Flashcard) =>
+      (pending.get(card.srsStateId) ?? []).some((given) => matches(given, card.acceptedAnswers));
+    return spreadSiblings(due.filter((card) => !doneHere(card)));
   }, [limit, key]);
+}
+
+/**
+ * The server sends due cards in random order; this only keeps a word's two
+ * cards apart. Meaning-then-reading of the same word back to back gives the
+ * second one away.
+ */
+function spreadSiblings(cards: Flashcard[]): Flashcard[] {
+  const out = [...cards];
+  for (let i = 1; i < out.length; i += 1) {
+    if (out[i].vocabItemId !== out[i - 1].vocabItemId) continue;
+    const swap = out.findIndex(
+      (card, j) =>
+        j > i &&
+        card.vocabItemId !== out[i - 1].vocabItemId &&
+        (j + 1 >= out.length || out[j + 1].vocabItemId !== out[i].vocabItemId),
+    );
+    if (swap !== -1) [out[i], out[swap]] = [out[swap], out[i]];
+  }
+  return out;
 }
 
 /**

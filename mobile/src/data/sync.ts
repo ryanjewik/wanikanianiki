@@ -21,12 +21,13 @@ import {
   countPendingWrites,
   getPendingWrites,
   getSyncMeta,
+  markWriteFailed,
   markWriteSynced,
   setSyncMeta,
   upsertAssignments,
   upsertSubjects,
 } from './db';
-import type { FlashcardAnswerWrite, ReviewAnswer } from './types';
+import type { FlashcardAnswerWrite, PendingWrite, ReviewAnswer } from './types';
 
 /** How often the safety-net poll runs. Level-ups don't happen faster. */
 export const SAFETY_NET_POLL_MS = 20 * 60 * 1000;
@@ -48,18 +49,66 @@ export async function isOnline(): Promise<boolean> {
 }
 
 /**
- * Replays the outbox oldest-first, stopping at the first failure so ordering
- * is never broken. A row is stamped synced only once the server confirms it —
- * nothing is deleted optimistically.
+ * What a write is about. Order only matters between writes about the same
+ * thing -- two reviews of one assignment, two answers to one card -- so a
+ * write that has to wait holds back only the writes that share its key.
+ */
+function writeKey(type: PendingWrite['type'], payload: Record<string, unknown>): string {
+  switch (type) {
+    case 'start_assignment':
+      return `assignment:${String(payload.assignmentId)}`;
+    case 'submit_review':
+      return `assignment:${String(payload.assignmentId)}`;
+    case 'answer_flashcard':
+      return `card:${String(payload.srsStateId)}`;
+    default:
+      return `unknown:${String(type)}`;
+  }
+}
+
+/**
+ * A refusal that retrying will never change: the server understood the
+ * request and said no -- WaniKani reporting a lesson already started, a card
+ * that no longer exists. 401 is not one of them (a key can be fixed), nor are
+ * 408 and 429 (a later try can succeed).
+ */
+function isPermanent(error: unknown): error is api.ApiError {
+  return (
+    error instanceof api.ApiError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    ![401, 408, 429].includes(error.status)
+  );
+}
+
+/**
+ * Replays the outbox oldest-first. A row is stamped synced only once the
+ * server confirms it -- nothing is deleted optimistically.
+ *
+ * A failure no longer stops everything behind it. A write the server refuses
+ * for good is set aside; one that may succeed later holds back only the
+ * writes about the same item, so a WaniKani hiccup cannot strand a session's
+ * worth of flashcard answers. A lost connection or a refused API key still
+ * stops the run, since every write after it would fail the same way.
  */
 export async function replayPendingWrites(): Promise<number> {
   const pending = await getPendingWrites();
+  const blocked = new Set<string>();
   let replayed = 0;
 
   for (const write of pending) {
+    let payload: Record<string, unknown>;
     try {
-      const payload = JSON.parse(write.payload) as Record<string, unknown>;
+      payload = JSON.parse(write.payload) as Record<string, unknown>;
+    } catch {
+      await markWriteFailed(write.id, 'Unreadable payload');
+      continue;
+    }
 
+    const key = writeKey(write.type, payload);
+    if (blocked.has(key)) continue;
+
+    try {
       // Switched exhaustively rather than if/else: an unrecognised type must
       // not fall through into whichever branch happens to be last, which would
       // post one kind of answer to another kind of endpoint.
@@ -79,7 +128,7 @@ export async function replayPendingWrites(): Promise<number> {
         }
         default: {
           // A row written by a newer build than this one. Dropping it silently
-          // would lose an answer, so leave it queued and stop here.
+          // would lose an answer, so leave it queued and skip past it.
           const unknownType: never = write.type;
           throw new Error(`Unknown pending write type: ${String(unknownType)}`);
         }
@@ -87,11 +136,15 @@ export async function replayPendingWrites(): Promise<number> {
 
       await markWriteSynced(write.id);
       replayed += 1;
-    } catch {
-      // Leave this row and everything after it queued. Reviews of the same
-      // item have to land in the order they were answered, so a gap is worse
-      // than a delay.
-      break;
+    } catch (error) {
+      if (isPermanent(error)) {
+        console.warn(`[sync] server refused ${write.type} (${error.status}); set aside`);
+        await markWriteFailed(write.id, `${error.status}: ${error.message}`);
+        continue;
+      }
+      if (!(error instanceof api.ApiError) || error.status === 401) break;
+      // Worth another try later; keep this item's later writes behind it.
+      blocked.add(key);
     }
   }
 
