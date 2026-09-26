@@ -211,6 +211,7 @@ async def get_assignments(
     updated_after: datetime | None = Query(None, alias="updated_after"),
     immediately_available_for_lessons: bool = False,
     immediately_available_for_review: bool = False,
+    fresh: bool = False,
     client: WaniKaniClient = Depends(wanikani_client),
     session: AsyncSession | None = Depends(optional_db_session),
 ) -> list[Assignment]:
@@ -219,9 +220,16 @@ async def get_assignments(
     `updated_after` is what makes the client's poll a cheap diff. When it is
     supplied the request always goes upstream, since the cache cannot answer
     "what changed since X" for records it has not seen yet.
+
+    `fresh` asks for every assignment, straight from WaniKani: the phone's
+    full refresh, which is how a copy that missed a change -- a lesson done on
+    the website, a review done elsewhere -- gets put right. Diffs alone never
+    recover from a change they missed once. What comes back also refreshes
+    the server's own copy.
     """
     wants_live = (
-        updated_after is not None
+        fresh
+        or updated_after is not None
         or immediately_available_for_lessons
         or immediately_available_for_review
     )
@@ -236,7 +244,11 @@ async def get_assignments(
         immediately_available_for_lessons=immediately_available_for_lessons or None,
         immediately_available_for_review=immediately_available_for_review or None,
     )
-    return [parse_assignment(r) for r in raw]
+    assignments = [parse_assignment(r) for r in raw]
+
+    if fresh and session is not None and (user := await repo.get_default_user(session)):
+        await repo.upsert_assignments(session, user.id, assignments)
+    return assignments
 
 
 @router.get("/api/subjects", response_model=list[Subject], tags=["read"])
@@ -291,6 +303,9 @@ async def start_assignment(
     try:
         raw = await client.start_assignment(assignment_id)
     except WaniKaniValidationError as exc:
+        # Logged: a refused lesson is otherwise invisible -- the phone sets it
+        # aside and the only symptom is progress that never sticks.
+        logger.warning("WaniKani refused start of assignment %s: %s", assignment_id, exc.body)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -331,6 +346,9 @@ async def submit_review(
             created_at=review.created_at.isoformat() if review.created_at else None,
         )
     except WaniKaniValidationError as exc:
+        logger.warning(
+            "WaniKani refused review of assignment %s: %s", review.assignment_id, exc.body
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
