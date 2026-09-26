@@ -23,7 +23,7 @@ import {
   SessionProgressBar,
   StatTile,
 } from '@/components/ui';
-import { halvesOf, type Half, WkQuestion } from '@/components/WkQuestion';
+import { halvesOf, type Half, shuffle, WkQuestion } from '@/components/WkQuestion';
 import { recordSession, type SessionItem } from '@/data/session';
 import { feedback } from '@/feedback';
 import type { StudyItem } from '@/data/types';
@@ -68,7 +68,9 @@ export default function ReviewScreen() {
   React.useEffect(() => {
     if (!queue || entries) return;
     setEntries(
-      queue.flatMap((item) => halvesOf(item.subject).map((half) => ({ item, half }))),
+      // Shuffled, meaning and reading apart, as WaniKani presents a session:
+      // the reading straight after its meaning gives half of it away.
+      shuffle(queue.flatMap((item) => halvesOf(item.subject).map((half) => ({ item, half })))),
     );
   }, [queue, entries]);
 
@@ -301,7 +303,7 @@ const styles = StyleSheet.create({
 
   promptMetaText: {
     ...typeScale.metaSmall,
-    color: colors.inkFaint,
+    color: 'rgba(255, 255, 255, 0.85)',
   },
 
 

@@ -395,16 +395,80 @@ export async function upsertAssignments(assignments: Assignment[]): Promise<void
 }
 
 /**
- * The lesson backlog: unlocked but never started. There is no separate
- * "backlog" concept to maintain — this query *is* the backlog, and the user
- * can work through it offline until it runs dry.
+ * Replaces the whole copy with a full pull. Rows WaniKani no longer sends are
+ * dropped, and every row is rewritten -- the only way a copy kept by diffs
+ * recovers from a change it missed.
+ */
+export async function replaceAssignments(assignments: Assignment[]): Promise<void> {
+  if (assignments.length === 0) return;
+  // Every row this pull writes is stamped at or after `before`; anything older
+  // was not in it. By timestamp rather than an id list, which a level-60
+  // account would push past SQLite's limit on bound parameters.
+  const before = new Date().toISOString();
+  await upsertAssignments(assignments);
+  const db = await getDatabase();
+  await db.runAsync(
+    'DELETE FROM local_assignments WHERE synced_at IS NULL OR synced_at < ?',
+    before,
+  );
+}
+
+/** Subject ids with no content on the phone yet -- what a sync has to fetch. */
+export async function missingSubjectIds(ids: number[]): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<{ subject_id: number }>('SELECT subject_id FROM local_subjects');
+  const have = new Set(rows.map((row) => row.subject_id));
+  return ids.filter((id) => !have.has(id));
+}
+
+/**
+ * A lesson just finished: out of the lesson queue now, rather than after the
+ * next sync. Stage 1's first review is four hours out; the sync replaces this
+ * guess with WaniKani's own answer.
+ */
+export async function markLessonStarted(subjectId: number): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date();
+  await db.runAsync(
+    `UPDATE local_assignments
+        SET started_at = ?, srs_stage = CASE WHEN srs_stage = 0 THEN 1 ELSE srs_stage END,
+            available_at = ?
+      WHERE subject_id = ?`,
+    now.toISOString(),
+    new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
+    subjectId,
+  );
+}
+
+/**
+ * A review just finished: out of the review queue now. When it comes back
+ * depends on WaniKani's verdict, which the sync brings; until then it is simply
+ * not due.
+ */
+export async function markReviewAnswered(subjectId: number): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    'UPDATE local_assignments SET available_at = ? WHERE subject_id = ?',
+    new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+    subjectId,
+  );
+}
+
+/**
+ * The lesson backlog: unlocked but never started, in the order WaniKani
+ * teaches it -- by level, then radicals, kanji, vocabulary -- so a kanji's
+ * parts come before the kanji and the kanji before its words.
  */
 export async function getLessonQueue(limit = 50): Promise<Assignment[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<AssignmentRow>(
-    `SELECT * FROM local_assignments
-      WHERE started_at IS NULL AND unlocked_at IS NOT NULL
-      ORDER BY unlocked_at ASC
+    `SELECT a.* FROM local_assignments a
+       LEFT JOIN local_subjects s ON s.subject_id = a.subject_id
+      WHERE a.started_at IS NULL AND a.unlocked_at IS NOT NULL
+      ORDER BY COALESCE(s.level, 999) ASC,
+               CASE a.subject_type WHEN 'radical' THEN 0 WHEN 'kanji' THEN 1 ELSE 2 END ASC,
+               a.subject_id ASC
       LIMIT ?`,
     limit,
   );

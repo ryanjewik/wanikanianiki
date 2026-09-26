@@ -23,6 +23,8 @@ import {
   getSyncMeta,
   markWriteFailed,
   markWriteSynced,
+  missingSubjectIds,
+  replaceAssignments,
   setSyncMeta,
   upsertAssignments,
   upsertSubjects,
@@ -91,10 +93,13 @@ function isPermanent(error: unknown): error is api.ApiError {
  * worth of flashcard answers. A lost connection or a refused API key still
  * stops the run, since every write after it would fail the same way.
  */
-export async function replayPendingWrites(): Promise<number> {
+export async function replayPendingWrites(): Promise<{ replayed: number; refusedWaniKani: boolean }> {
   const pending = await getPendingWrites();
   const blocked = new Set<string>();
   let replayed = 0;
+  // A refused lesson or review means the phone's copy disagreed with
+  // WaniKani -- already started, not yet due. The caller refreshes it in full.
+  let refusedWaniKani = false;
 
   for (const write of pending) {
     let payload: Record<string, unknown>;
@@ -113,11 +118,15 @@ export async function replayPendingWrites(): Promise<number> {
       // not fall through into whichever branch happens to be last, which would
       // post one kind of answer to another kind of endpoint.
       switch (write.type) {
+        // Both answer with WaniKani's own updated assignment, which goes
+        // straight into the copy: the real stage and next review, now.
         case 'start_assignment':
-          await api.startAssignment(payload.assignmentId as number);
+          await upsertAssignments([await api.startAssignment(payload.assignmentId as number)]);
           break;
         case 'submit_review':
-          await api.submitReview(payload as unknown as ReviewAnswer);
+          await upsertAssignments([
+            (await api.submitReview(payload as unknown as ReviewAnswer)).assignment,
+          ]);
           break;
         case 'answer_flashcard': {
           const answer = payload as unknown as FlashcardAnswerWrite;
@@ -142,6 +151,7 @@ export async function replayPendingWrites(): Promise<number> {
       if (isPermanent(error)) {
         console.warn(`[sync] server refused ${write.type} (${error.status}); set aside`);
         await markWriteFailed(write.id, `${error.status}: ${error.message}`);
+        if (write.type !== 'answer_flashcard') refusedWaniKani = true;
         continue;
       }
       if (!(error instanceof api.ApiError) || error.status === 401) break;
@@ -150,11 +160,12 @@ export async function replayPendingWrites(): Promise<number> {
     }
   }
 
-  return replayed;
+  return { replayed, refusedWaniKani };
 }
 
 let inFlight: Promise<SyncResult> | null = null;
 let queued: Promise<SyncResult> | null = null;
+let queuedFull = false;
 
 /**
  * One sync at a time. Two overlapping replays would each read the same unsent
@@ -164,31 +175,34 @@ let queued: Promise<SyncResult> | null = null;
  * A call made while one is running gets one more run after it, shared by
  * everyone who asks in the meantime: the running pass may already have read
  * the outbox, and an answer queued since would otherwise wait for the next
- * sync to leave the phone.
+ * sync to leave the phone. If any of them asked for a full refresh, that run
+ * is a full one.
+ *
+ * `full` pulls every assignment from WaniKani instead of only what changed.
+ * Diffs never recover from a change they missed once -- a lesson done on the
+ * website stayed a lesson here, and starting it was refused every time -- so
+ * the app asks for a full pull on launch and on coming back to it.
  */
-export function syncNow(): Promise<SyncResult> {
+export function syncNow(options: { full?: boolean } = {}): Promise<SyncResult> {
   if (!inFlight) {
-    inFlight = runSync().finally(() => {
+    inFlight = runSync(Boolean(options.full)).finally(() => {
       inFlight = null;
     });
     return inFlight;
   }
+  if (options.full) queuedFull = true;
   queued ??= inFlight
     .catch(() => undefined)
     .then(() => {
       queued = null;
-      return syncNow();
+      const full = queuedFull;
+      queuedFull = false;
+      return syncNow({ full });
     });
   return queued;
 }
 
-/**
- * Full pass: drain the outbox, then pull anything that changed upstream.
- *
- * The outbox goes first so the incoming assignment diff already reflects the
- * user's own answers, rather than overwriting them with stale server state.
- */
-async function runSync(): Promise<SyncResult> {
+async function runSync(full: boolean): Promise<SyncResult> {
   const lastSyncedAt = await getSyncMeta(SYNC_KEY_LAST_SYNCED);
 
   if (!api.isBackendConfigured) {
@@ -214,14 +228,20 @@ async function runSync(): Promise<SyncResult> {
   }
 
   try {
-    const writesReplayed = await replayPendingWrites();
+    const { replayed: writesReplayed, refusedWaniKani } = await replayPendingWrites();
 
-    // `updated_after` keeps this a cheap incremental diff.
-    const assignments = await api.fetchAssignments(lastSyncedAt);
-    await upsertAssignments(assignments);
+    // A full pull when asked for, or when WaniKani just refused something --
+    // the sign that this copy has drifted. Otherwise `updated_after` keeps it
+    // a cheap diff.
+    const everything = full || refusedWaniKani || !lastSyncedAt;
+    const assignments = everything
+      ? await api.fetchAssignments(null, { fresh: true })
+      : await api.fetchAssignments(lastSyncedAt);
+    if (everything) await replaceAssignments(assignments);
+    else await upsertAssignments(assignments);
 
-    // Pull content for anything newly unlocked that we have no subject row for.
-    const newSubjectIds = assignments.map((a) => a.subjectId);
+    // Pull content only for subjects the phone has never seen.
+    const newSubjectIds = await missingSubjectIds(assignments.map((a) => a.subjectId));
     if (newSubjectIds.length > 0) {
       const subjects = await api.fetchSubjects(newSubjectIds);
       await upsertSubjects(subjects);

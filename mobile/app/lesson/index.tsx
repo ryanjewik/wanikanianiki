@@ -31,7 +31,7 @@ import {
   StepDots,
   TextButton,
 } from '@/components/ui';
-import { halvesOf, type Half, WkQuestion } from '@/components/WkQuestion';
+import { halvesOf, type Half, shuffle, WkQuestion } from '@/components/WkQuestion';
 import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -261,7 +261,9 @@ export default function LessonScreen() {
                 label={`${typeLabel} · level ${subject.level}`}
                 trailing="meaning first"
               />
-              <View style={styles.subjectBody}>
+              {/* The item's own colour behind the character, as WaniKani teaches
+                  it: blue radical, pink kanji, purple vocabulary. */}
+              <View style={[styles.subjectBody, { backgroundColor: palette.solid }]}>
                 <Text style={styles.subjectGlyph}>{subject.characters}</Text>
 
                 {parts.length > 0 ? (
@@ -496,16 +498,6 @@ function LessonQuiz({
   );
 }
 
-/** Fisher–Yates, so a batch is not quizzed in the order it was read. */
-function shuffle<T>(values: T[]): T[] {
-  const out = [...values];
-  for (let i = out.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [out[i], out[j]] = [out[j], out[i]];
-  }
-  return out;
-}
-
 const styles = StyleSheet.create({
   quizContent: {
     paddingHorizontal: spacing.gutter,
@@ -560,7 +552,7 @@ const styles = StyleSheet.create({
   },
   subjectGlyph: {
     ...jp.lesson,
-    color: colors.ink,
+    color: colors.onSolid,
   },
   equation: {
     flexDirection: 'row',
@@ -571,6 +563,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.tile,
     paddingVertical: 4,
     paddingHorizontal: 12,
+    // Outlined, so a chip the same colour as the card behind it still reads.
+    borderWidth: 1.5,
+    borderColor: colors.onSolid,
   },
   equationChipText: {
     ...jp.chip,
@@ -579,11 +574,11 @@ const styles = StyleSheet.create({
   operator: {
     fontFamily: typeScale.button.fontFamily,
     fontSize: 14,
-    color: colors.inkDisabled,
+    color: 'rgba(255, 255, 255, 0.8)',
   },
   meaning: {
     ...typeScale.display,
-    color: colors.ink,
+    color: colors.onSolid,
   },
 
   // Not a row: the coach inside lays itself out as one. A row here shrank the

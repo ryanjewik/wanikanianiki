@@ -75,9 +75,11 @@ export default function RootLayout() {
   // as due.
   React.useEffect(() => {
     if (!databaseReady || !isBackendConfigured) return;
-    void syncNow().catch(() => undefined);
+    // Full pulls: a copy kept only by diffs never recovers from a change it
+    // missed -- lessons done on the website, reviews done elsewhere.
+    void syncNow({ full: true }).catch(() => undefined);
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void syncNow().catch(() => undefined);
+      if (state === 'active') void syncNow({ full: true }).catch(() => undefined);
     });
     return () => subscription.remove();
   }, [databaseReady]);

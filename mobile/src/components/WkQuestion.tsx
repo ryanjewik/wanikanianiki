@@ -39,6 +39,16 @@ export type Half = 'meaning' | 'reading';
 /** How long a right answer stays on screen before the next question. */
 const CORRECT_HOLD_MS = 600;
 
+/** Fisher–Yates: reviews and lesson quizzes come in random order, as on WaniKani. */
+export function shuffle<T>(values: T[]): T[] {
+  const out = [...values];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 /**
  * Which reading a kanji's reading question is after. WaniKani teaches one
  * reading type per kanji and marks only that type accepted, so the prompt can
@@ -208,7 +218,10 @@ export function WkQuestion({
 
   return (
     <View>
-      <Card style={styles.promptCard}>
+      {/* In the item's own colour, as WaniKani draws it -- blue radical, pink
+          kanji, purple vocabulary -- so what kind of thing is being asked
+          reads before the character does. */}
+      <Card style={[styles.promptCard, { backgroundColor: palette.solid }]}>
         <Text style={styles.promptLabel}>{promptLabel(subject, half)}</Text>
         <Text style={styles.promptGlyph}>{subject.characters}</Text>
         {meta ? <View style={styles.promptMeta}>{meta}</View> : null}
@@ -315,11 +328,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     letterSpacing: 1.43,
     textTransform: 'uppercase',
-    color: colors.inkFaint,
+    color: 'rgba(255, 255, 255, 0.85)',
   },
   promptGlyph: {
     ...jp.hero,
-    color: colors.ink,
+    color: colors.onSolid,
   },
   promptMeta: {
     flexDirection: 'row',

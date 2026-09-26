@@ -175,12 +175,21 @@ export function fetchDashboard(signal?: AbortSignal): Promise<DashboardSummary> 
  * `sync_meta['last_synced_at']`, so each poll is a cheap diff rather than a
  * full re-pull.
  */
+/**
+ * Assignments. `updatedAfter` asks only for what changed since; `fresh` asks
+ * for all of them, straight from WaniKani -- the full refresh that puts right
+ * a copy that missed a change.
+ */
 export function fetchAssignments(
   updatedAfter?: string | null,
-  signal?: AbortSignal,
+  options: { fresh?: boolean; signal?: AbortSignal } = {},
 ): Promise<Assignment[]> {
-  const query = updatedAfter ? `?updated_after=${encodeURIComponent(updatedAfter)}` : '';
-  return request<Assignment[]>(`/api/assignments${query}`, { signal });
+  const params = [
+    updatedAfter ? `updated_after=${encodeURIComponent(updatedAfter)}` : null,
+    options.fresh ? 'fresh=true' : null,
+  ].filter(Boolean);
+  const query = params.length > 0 ? `?${params.join('&')}` : '';
+  return request<Assignment[]>(`/api/assignments${query}`, { signal: options.signal });
 }
 
 /**
@@ -212,8 +221,8 @@ export function startAssignment(assignmentId: number): Promise<Assignment> {
  * Submits one review result. Only the incorrect counts go up — WaniKani
  * computes the new SRS stage server-side, so the client never sends a stage.
  */
-export function submitReview(answer: ReviewAnswer): Promise<Assignment> {
-  return request<Assignment>('/api/reviews', {
+export function submitReview(answer: ReviewAnswer): Promise<{ assignment: Assignment }> {
+  return request<{ assignment: Assignment }>('/api/reviews', {
     method: 'POST',
     body: {
       review: {

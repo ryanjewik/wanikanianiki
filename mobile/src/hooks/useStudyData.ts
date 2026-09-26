@@ -273,6 +273,8 @@ export function useLevelItems(level: number | null) {
  */
 export function useStudyActions() {
   const completeLesson = React.useCallback(async (assignment: Assignment) => {
+    // Out of the lesson queue at once; the sync brings WaniKani's real state.
+    await db.markLessonStarted(assignment.subjectId);
     await db.enqueueWrite('start_assignment', { assignmentId: assignment.id });
     if (api.isBackendConfigured) {
       // Fire and forget; a failure just leaves the row queued.
@@ -281,6 +283,7 @@ export function useStudyActions() {
   }, []);
 
   const submitAnswer = React.useCallback(async (answer: ReviewAnswer) => {
+    await db.markReviewAnswered(answer.subjectId);
     await db.enqueueWrite('submit_review', answer);
     if (api.isBackendConfigured) {
       void syncNow();
