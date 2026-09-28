@@ -117,14 +117,12 @@ def lessons_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
 
     # A rule delivers the whole event; a schedule delivers the input it was
     # given. Logged so a surprising run can be traced to what woke it.
-    logger.info(
-        "Lesson top-up triggered by %s",
-        event.get("detail-type") or event.get("trigger") or "manual",
-    )
-    return asyncio.run(_run_lessons())
+    trigger = event.get("detail-type") or event.get("trigger") or "manual"
+    logger.info("Lesson top-up triggered by %s", trigger)
+    return asyncio.run(_run_lessons(str(trigger)))
 
 
-async def _run_lessons() -> dict[str, Any]:
+async def _run_lessons(trigger: str) -> dict[str, Any]:
     from app.db import repository as repo
     from app.db.session import dispose_engine, session_scope
     from app.services.lessons import top_up_bundles
@@ -135,7 +133,7 @@ async def _run_lessons() -> dict[str, Any]:
             if user is None:
                 return {"ok": True, "skipped": True, "reason": "no user synced yet"}
 
-            result = await top_up_bundles(session, user.id)
+            result = await top_up_bundles(session, user.id, trigger=trigger)
             return result.model_dump(mode="json", by_alias=True)
     except Exception:
         # Bounded blast radius: the schedule is the retry.

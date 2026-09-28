@@ -696,7 +696,58 @@ QUESTION_TYPES = (
     "fill_in_blank",
     "sentence_construction",
     "recall",
+    # A line someone says, and four replies to pick the natural one from.
+    "response_choice",
 )
+
+
+class GenerationRun(Base):
+    """One pass of the lesson worker, whatever it ended up doing.
+
+    Recorded for monitoring, and for the catalog on the phone that groups
+    questions by the run that wrote them. Every run gets a row — including the
+    common one that finds the queue stocked and stops — because "is the worker
+    running at all" is otherwise unanswerable from the app.
+
+    The row is committed as `running` before any model call and updated when
+    the run ends. A row still `running` long after `started_at` is a run that
+    was killed mid-way (the Lambda timed out), which is exactly the case a
+    catalog of finished questions could never show.
+    """
+
+    __tablename__ = "generation_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_generation_runs_user_id"), nullable=False
+    )
+
+    # What woke it: "schedule", "LessonBundleClaimed", "VocabConfirmed",
+    # "manual", or "backfilled" for questions written before runs were kept.
+    trigger: Mapped[str] = mapped_column(String(64), nullable=False)
+    # running | completed | skipped | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    bundles_waiting: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+    drafted: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+    rejected: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+    bundles_created: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0"), nullable=False
+    )
+
+    __table_args__ = (Index("ix_generation_runs_user_started", "user_id", "started_at"),)
 
 
 class Question(Base):
@@ -737,6 +788,14 @@ class Question(Base):
     grammar_entry_id: Mapped[int | None] = mapped_column(
         ForeignKey("grammar_entries.id", name="fk_questions_grammar_entry_id",
                    ondelete="SET NULL"),
+    )
+
+    # The run that wrote it. Nullable because a run row can be deleted without
+    # taking its questions with it; every question written since runs were
+    # recorded has one, and older ones were grouped into backfilled runs.
+    run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("generation_runs.id", name="fk_questions_run_id", ondelete="SET NULL"),
+        index=True,
     )
 
     # Set by the verifier, never by the generator. See the class docstring.

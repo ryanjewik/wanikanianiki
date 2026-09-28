@@ -118,6 +118,17 @@ class Settings(BaseSettings):
     lesson_bundles_per_run: int = 3
     lesson_questions_per_bundle: int = 8
 
+    # Words per pool in one generation prompt. The pools are fetched twice this
+    # wide and narrowed to the words asked about least lately, which is what
+    # moves successive runs on to words they have not covered.
+    lesson_pool_size: int = 20
+
+    # How far back the generator's memory reaches: questions written in this
+    # window are handed over as "already asked" (at most `lesson_avoid_prompts`
+    # of them, newest first) and exact repeats of any are discarded.
+    lesson_memory_days: int = 14
+    lesson_avoid_prompts: int = 80
+
     # --- Database -----------------------------------------------------------
     # Neon/Supabase style URL. Empty means "no database configured": the app
     # still serves every read-only WaniKani-backed route, it just cannot cache.

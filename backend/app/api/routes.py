@@ -11,7 +11,7 @@ is enough to run the whole read side locally.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import (
     APIRouter,
@@ -32,12 +32,16 @@ from app.db.models import User
 from app.schemas import (
     AgentContext,
     Assignment,
+    CatalogQuestion,
     ConfirmImportRequest,
     DashboardSummary,
     DayActivitySummary,
     Flashcard,
     FlashcardAnswer,
     FlashcardOutcome,
+    GenerationRunDetail,
+    GenerationRunList,
+    GenerationRunSummary,
     GrammarEnrichment,
     GrammarEntry,
     GrammarEntryCreate,
@@ -1054,6 +1058,98 @@ async def get_next_lesson_bundle(
                 grammar_entry_id=q.grammar_entry_id,
             )
             for q in questions
+        ],
+    )
+
+
+# How long a run may sit at `running` before the catalog calls it stalled. The
+# lesson Lambda's own timeout is fifteen minutes; anything past that was killed.
+RUN_STALL_AFTER = timedelta(minutes=20)
+
+
+def _run_summary(run, counts: dict[str, int] | None = None) -> GenerationRunSummary:
+    status_ = run.status
+    if status_ == "running" and datetime.now(timezone.utc) - run.started_at > RUN_STALL_AFTER:
+        status_ = "stalled"
+    counts = counts or {}
+    return GenerationRunSummary(
+        id=run.id,
+        trigger=run.trigger,
+        status=status_,
+        reason=run.reason,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        bundles_waiting=run.bundles_waiting,
+        drafted=run.drafted,
+        rejected=run.rejected,
+        bundles_created=run.bundles_created,
+        verified=counts.get("verified", 0),
+        served=counts.get("served", 0),
+    )
+
+
+@router.get("/api/generation-runs", response_model=GenerationRunList, tags=["study"])
+async def list_generation_runs(
+    limit: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(db_session),
+) -> GenerationRunList:
+    """The lesson worker's recent runs, newest first — the question catalog.
+
+    Runs that found the queue stocked and did nothing are counted rather than
+    listed; there is one of those per claimed bundle.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        return GenerationRunList(runs=[])
+
+    rows = await repo.list_generation_runs(session, user.id, limit=limit)
+    last = await repo.last_generation_run(session, user.id)
+    skipped = await repo.count_skipped_runs(
+        session, user.id, since=datetime.now(timezone.utc) - timedelta(days=7)
+    )
+    return GenerationRunList(
+        runs=[_run_summary(run, counts) for run, counts in rows],
+        skipped_last_week=skipped,
+        last_run_at=last.started_at if last else None,
+        last_run_status=_run_summary(last).status if last else None,
+    )
+
+
+@router.get(
+    "/api/generation-runs/{run_id}", response_model=GenerationRunDetail, tags=["study"]
+)
+async def get_generation_run(
+    run_id: int,
+    session: AsyncSession = Depends(db_session),
+) -> GenerationRunDetail:
+    """Every question one run wrote, rejected ones included, with where each stands.
+
+    Read-only, and it serves rejected questions with their verifier notes —
+    that is the point of a catalog for monitoring. None of them can be
+    answered from here; `answer_question` still refuses anything unverified.
+    """
+    user = await repo.get_default_user(session)
+    found = await repo.get_generation_run(session, user.id, run_id) if user else None
+    if found is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown run")
+
+    run, questions = found
+    served = sum(1 for _, standing in questions if standing == "served")
+    verified = sum(1 for q, _ in questions if q.verified)
+    return GenerationRunDetail(
+        run=_run_summary(run, {"verified": verified, "served": served}),
+        questions=[
+            CatalogQuestion(
+                id=q.id,
+                type=q.type,
+                payload=q.payload,
+                verified=q.verified,
+                verifier_note=q.verifier_note,
+                standing=standing,
+                created_at=q.created_at,
+                vocab_item_ids=[link.vocab_item_id for link in q.items],
+            )
+            for q, standing in questions
         ],
     )
 

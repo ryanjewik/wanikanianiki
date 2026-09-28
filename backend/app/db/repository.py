@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     SYNC_KEY_LAST_SYNCED,
+    GenerationRun,
     LessonBundle,
     LessonBundleQuestion,
     Question,
@@ -1363,6 +1364,7 @@ async def create_question(
     payload: dict,
     vocab_item_ids: list[int],
     grammar_entry_id: int | None = None,
+    run_id: int | None = None,
 ) -> Question:
     """Write one draft. `verified` stays false until the verifier says so."""
     question = Question(
@@ -1370,6 +1372,7 @@ async def create_question(
         type=question_type,
         payload=payload,
         grammar_entry_id=grammar_entry_id,
+        run_id=run_id,
     )
     session.add(question)
     await session.flush()
@@ -1602,3 +1605,224 @@ async def schedulable_states(
     states = list(existing.scalars())
     return states, not states
 
+
+
+# -- generation runs --------------------------------------------------------
+
+
+async def start_generation_run(
+    session: AsyncSession, user_id: int, *, trigger: str, bundles_waiting: int = 0
+) -> GenerationRun:
+    """Record that a run began. The caller commits, so it survives a crash."""
+    run = GenerationRun(
+        user_id=user_id,
+        trigger=trigger[:64],
+        status="running",
+        bundles_waiting=bundles_waiting,
+    )
+    session.add(run)
+    await session.flush()
+    return run
+
+
+async def finish_generation_run(
+    session: AsyncSession,
+    run: GenerationRun,
+    *,
+    status: str,
+    reason: str | None = None,
+    drafted: int = 0,
+    rejected: int = 0,
+    bundles_created: int = 0,
+) -> None:
+    run.status = status
+    run.reason = reason
+    run.drafted = drafted
+    run.rejected = rejected
+    run.bundles_created = bundles_created
+    run.finished_at = datetime.now(timezone.utc)
+    await session.flush()
+
+
+async def mark_run_failed(session: AsyncSession, run_id: int, reason: str) -> None:
+    """For a run whose own session was rolled back, from a fresh one."""
+    run = await session.get(GenerationRun, run_id)
+    if run is None:
+        return
+    run.status = "failed"
+    run.reason = reason
+    run.finished_at = datetime.now(timezone.utc)
+    await session.flush()
+
+
+async def recent_question_prompts(
+    session: AsyncSession, user_id: int, *, since: datetime, limit: int = 60
+) -> list[str]:
+    """Prompts of verified questions written recently, newest first.
+
+    Handed to the generator as "already asked", which is the only memory it
+    has of earlier runs — without it every run over the same words writes the
+    same questions again.
+    """
+    result = await session.execute(
+        select(Question.payload["prompt"].astext)
+        .where(
+            Question.user_id == user_id,
+            Question.verified.is_(True),
+            Question.created_at >= since,
+        )
+        .order_by(Question.created_at.desc())
+        .limit(limit)
+    )
+    return [prompt for prompt in result.scalars() if prompt]
+
+
+async def question_prompt_keys(
+    session: AsyncSession, user_id: int, *, since: datetime
+) -> set[str]:
+    """Every verified prompt+answer written since `since`, for exact dedupe."""
+    result = await session.execute(
+        select(Question.payload["prompt"].astext, Question.payload["answer"].astext).where(
+            Question.user_id == user_id,
+            Question.verified.is_(True),
+            Question.created_at >= since,
+        )
+    )
+    return {question_key(prompt or "", answer or "") for prompt, answer in result.all()}
+
+
+def question_key(prompt: str, answer: str) -> str:
+    """What makes two questions the same question, ignoring spacing."""
+    return "".join(prompt.split()) + "\x1f" + "".join(answer.split())
+
+
+async def recent_question_counts_by_word(
+    session: AsyncSession, user_id: int, *, since: datetime
+) -> dict[int, int]:
+    """How many verified questions each word has had since `since`."""
+    result = await session.execute(
+        select(QuestionVocabItem.vocab_item_id, func.count())
+        .join(Question, Question.id == QuestionVocabItem.question_id)
+        .where(
+            Question.user_id == user_id,
+            Question.verified.is_(True),
+            Question.created_at >= since,
+        )
+        .group_by(QuestionVocabItem.vocab_item_id)
+    )
+    return {item_id: int(count) for item_id, count in result.all()}
+
+
+async def list_generation_runs(
+    session: AsyncSession, user_id: int, *, limit: int = 50, include_skipped: bool = False
+) -> list[tuple[GenerationRun, dict[str, int]]]:
+    """Recent runs, newest first, each with counts from its questions.
+
+    `verified` and `rejected` are counted from the questions rather than read
+    off the run, so a run killed mid-way still shows what it managed to write.
+    `served` is how many of its questions went out in a claimed bundle.
+    """
+    query = select(GenerationRun).where(GenerationRun.user_id == user_id)
+    if not include_skipped:
+        query = query.where(GenerationRun.status != "skipped")
+    runs = list(
+        (await session.execute(query.order_by(GenerationRun.started_at.desc()).limit(limit)))
+        .scalars()
+    )
+    if not runs:
+        return []
+
+    ids = [run.id for run in runs]
+    counts: dict[int, dict[str, int]] = {
+        run_id: {"verified": 0, "rejected": 0, "served": 0} for run_id in ids
+    }
+
+    tallies = await session.execute(
+        select(Question.run_id, Question.verified, func.count())
+        .where(Question.run_id.in_(ids))
+        .group_by(Question.run_id, Question.verified)
+    )
+    for run_id, verified, count in tallies.all():
+        counts[run_id]["verified" if verified else "rejected"] += int(count)
+
+    served = await session.execute(
+        select(Question.run_id, func.count(func.distinct(Question.id)))
+        .join(LessonBundleQuestion, LessonBundleQuestion.question_id == Question.id)
+        .join(LessonBundle, LessonBundle.id == LessonBundleQuestion.bundle_id)
+        .where(Question.run_id.in_(ids), LessonBundle.consumed.is_(True))
+        .group_by(Question.run_id)
+    )
+    for run_id, count in served.all():
+        counts[run_id]["served"] = int(count)
+
+    return [(run, counts[run.id]) for run in runs]
+
+
+async def count_skipped_runs(session: AsyncSession, user_id: int, *, since: datetime) -> int:
+    result = await session.execute(
+        select(func.count())
+        .select_from(GenerationRun)
+        .where(
+            GenerationRun.user_id == user_id,
+            GenerationRun.status == "skipped",
+            GenerationRun.started_at >= since,
+        )
+    )
+    return int(result.scalar_one())
+
+
+async def last_generation_run(session: AsyncSession, user_id: int) -> GenerationRun | None:
+    """The newest run of any status — the "is the worker alive" signal."""
+    result = await session.execute(
+        select(GenerationRun)
+        .where(GenerationRun.user_id == user_id)
+        .order_by(GenerationRun.started_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_generation_run(
+    session: AsyncSession, user_id: int, run_id: int
+) -> tuple[GenerationRun, list[tuple[Question, str]]] | None:
+    """One run and every question it wrote, rejected ones included.
+
+    Each question comes with where it stands: `served` (in a bundle that was
+    handed out), `waiting` (in a bundle not yet claimed), `unbundled`
+    (verified, but its bundle came up short), or `rejected`.
+    """
+    run = await session.get(GenerationRun, run_id)
+    if run is None or run.user_id != user_id:
+        return None
+
+    questions = list(
+        (
+            await session.execute(
+                select(Question)
+                .options(selectinload(Question.items))
+                .where(Question.run_id == run_id)
+                .order_by(Question.created_at, Question.id)
+            )
+        ).scalars()
+    )
+
+    consumed_by_question: dict[int, bool] = {}
+    if questions:
+        links = await session.execute(
+            select(LessonBundleQuestion.question_id, LessonBundle.consumed)
+            .join(LessonBundle, LessonBundle.id == LessonBundleQuestion.bundle_id)
+            .where(LessonBundleQuestion.question_id.in_([q.id for q in questions]))
+        )
+        for question_id, consumed in links.all():
+            # A question in several bundles counts as served if any went out.
+            previous = consumed_by_question.get(question_id, False)
+            consumed_by_question[question_id] = previous or consumed
+
+    def standing(question: Question) -> str:
+        if not question.verified:
+            return "rejected"
+        if question.id not in consumed_by_question:
+            return "unbundled"
+        return "served" if consumed_by_question[question.id] else "waiting"
+
+    return run, [(q, standing(q)) for q in questions]

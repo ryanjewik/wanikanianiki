@@ -495,6 +495,60 @@ class LessonBundle(CamelModel):
     questions: list[Question]
 
 
+class GenerationRunSummary(CamelModel):
+    """One lesson-worker run, as the catalog lists it."""
+
+    id: int
+    #: What woke it: schedule, LessonBundleClaimed, VocabConfirmed, manual, backfilled.
+    trigger: str
+    #: running | completed | skipped | failed | stalled. `stalled` is a run
+    #: still marked running long after it started — the Lambda was killed.
+    status: str
+    reason: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    #: Unclaimed bundles when the run began.
+    bundles_waiting: int = 0
+    #: Drafts the generator wrote, and how many were thrown out for any reason
+    #: (malformed, repeated, over-drilled, or failed by the verifier).
+    drafted: int = 0
+    rejected: int = 0
+    bundles_created: int = 0
+    #: Counted from the stored questions, so a killed run still shows these.
+    verified: int = 0
+    served: int = 0
+
+
+class GenerationRunList(CamelModel):
+    runs: list[GenerationRunSummary]
+    #: Runs in the last week that found the queue stocked and stopped. Not
+    #: listed one by one — there is one per claimed bundle — but counted, since
+    #: they are the evidence that the worker is being woken at all.
+    skipped_last_week: int = 0
+    #: The newest run of any status, skipped included.
+    last_run_at: datetime | None = None
+    last_run_status: str | None = None
+
+
+class CatalogQuestion(CamelModel):
+    """A question as the catalog shows it: rejected ones too, with the reason."""
+
+    id: int
+    type: str
+    payload: dict
+    verified: bool
+    verifier_note: str | None = None
+    #: served | waiting | unbundled | rejected
+    standing: str
+    created_at: datetime
+    vocab_item_ids: list[int] = []
+
+
+class GenerationRunDetail(CamelModel):
+    run: GenerationRunSummary
+    questions: list[CatalogQuestion]
+
+
 class JlptTier(CamelModel):
     """One tier's kanji coverage.
 

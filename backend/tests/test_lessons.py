@@ -262,3 +262,108 @@ def test_verifier_and_generator_are_different_models():
     generation runs once per bundle, so it is the call that scales."""
     settings = get_settings()
     assert settings.verifier_model != settings.lesson_model
+
+
+# -- furigana reaches the model at all ---------------------------------------
+
+
+def test_the_furigana_schema_lets_the_model_write_readings():
+    """The bug this guards: `dict[str, str]` became an object with no allowed
+    keys once the SDK made it strict, so every question came back with `{}`
+    and the furigana toggle had nothing to toggle."""
+    from anthropic.lib._parse._transform import transform_schema
+
+    from app.services.lessons import DraftBatch
+
+    schema = transform_schema(DraftBatch)
+    furigana = schema["$defs"]["DraftQuestion"]["properties"]["furigana"]
+    assert furigana["type"] == "array"
+    reading = schema["$defs"][furigana["items"]["$ref"].rsplit("/", 1)[-1]]
+    assert set(reading["required"]) == {"written", "reading"}
+
+
+def test_readings_arrive_as_a_list_and_are_stored_as_a_map():
+    parsed = DraftQuestion.model_validate(
+        {
+            **draft().model_dump(exclude={"furigana"}),
+            "furigana": [{"written": "免許", "reading": "めんきょ"}],
+        }
+    )
+    assert to_payload(parsed)["furigana"] == {"免許": "めんきょ"}
+
+
+# -- response_choice ----------------------------------------------------------
+
+
+def response(**overrides) -> DraftQuestion:
+    base = dict(
+        type="response_choice",
+        prompt="すみません、駅はどこですか。",
+        choices=[
+            "まっすぐ行って、右です。",
+            "はい、そうです。",
+            "いただきます。",
+            "駅は大きいです。",
+        ],
+        answer="まっすぐ行って、右です。",
+        vocab_item_ids=[1],
+        rationale="Only the first gives directions.",
+    )
+    base.update(overrides)
+    return draft(**base)
+
+
+def test_a_response_choice_question_is_sound():
+    assert _structurally_sound(response(), KNOWN) is None
+
+
+def test_a_response_choice_needs_four_replies_with_the_answer_among_them():
+    assert "expected 4" in _structurally_sound(response(choices=["a", "b"]), KNOWN)
+    assert "not among" in _structurally_sound(response(answer="ええ。"), KNOWN)
+
+
+def test_the_new_type_is_one_the_database_accepts():
+    from app.db.models import QUESTION_TYPES
+
+    assert "response_choice" in QUESTION_TYPES
+
+
+# -- variety across bundles and runs ---------------------------------------------
+
+
+def _word(item_id: int):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(id=item_id)
+
+
+def test_rotation_puts_the_least_asked_words_first_and_cuts_to_size():
+    from app.services.lessons import rotate_pools
+
+    pools = {"review": [_word(1), _word(2), _word(3), _word(4)], "new": []}
+    rotated = rotate_pools(pools, {1: 5, 2: 0, 3: 2}, size=2)
+    assert [w.id for w in rotated["review"]] == [2, 4]
+    assert rotated["new"] == []
+
+
+def test_rotation_keeps_the_repository_order_among_equals():
+    from app.services.lessons import rotate_pools
+
+    pools = {"review": [_word(3), _word(1), _word(2)]}
+    assert [w.id for w in rotate_pools(pools, {}, size=3)["review"]] == [3, 1, 2]
+
+
+def test_recent_prompts_are_handed_to_the_generator():
+    from app.services.lessons import _generation_prompt
+
+    text = _generation_prompt({}, [], 8, avoid=["What does 免許 mean?"])
+    assert "Already asked recently" in text
+    assert "What does 免許 mean?" in text
+    assert "Already asked" not in _generation_prompt({}, [], 8)
+
+
+def test_a_repeat_is_the_same_prompt_and_answer_whatever_the_spacing():
+    from app.db.repository import question_key
+
+    assert question_key("免許 の 意味は？", "licence") == question_key("免許の意味は？", "licence")
+    assert question_key("免許の意味は？", "licence") != question_key("免許の意味は？", "permit")

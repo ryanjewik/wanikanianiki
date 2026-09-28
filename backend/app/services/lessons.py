@@ -33,11 +33,12 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 import anthropic
 from anthropic import beta_async_tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
@@ -56,11 +57,30 @@ class GenerationFailed(RuntimeError):
 
 
 QuestionType = Literal[
-    "multiple_choice", "fill_in_blank", "sentence_construction", "recall"
+    "multiple_choice",
+    "fill_in_blank",
+    "sentence_construction",
+    "recall",
+    "response_choice",
 ]
+
+# The types that show four options and are graded by which one was picked.
+CHOICE_TYPES = frozenset({"multiple_choice", "response_choice"})
 
 
 # -- what we ask the generator for ----------------------------------------
+
+
+class Reading(BaseModel):
+    """One furigana entry: a word as written, and its kana reading."""
+
+    written: str = Field(
+        description=(
+            "The word exactly as the text writes it, e.g. 入り口 or 免許. The "
+            "app finds it by substring match, so it must appear verbatim."
+        )
+    )
+    reading: str = Field(description="Its reading in kana, e.g. いりぐち.")
 
 
 class DraftQuestion(BaseModel):
@@ -69,7 +89,10 @@ class DraftQuestion(BaseModel):
             "multiple_choice: four options, one right. "
             "fill_in_blank: a sentence with one gap. "
             "sentence_construction: tiles to order into a sentence. "
-            "recall: a prompt answered by typing, no options shown."
+            "recall: a prompt answered by typing, no options shown. "
+            "response_choice: `prompt` is something a person says, or a short "
+            "situation, in Japanese; `choices` are four replies and exactly one "
+            "is the natural, appropriate response."
         )
     )
     prompt: str = Field(
@@ -81,7 +104,8 @@ class DraftQuestion(BaseModel):
     choices: list[str] = Field(
         default_factory=list,
         description=(
-            "Exactly four for multiple_choice, empty for every other type. "
+            "Exactly four for multiple_choice and response_choice, empty for "
+            "every other type. "
             "The wrong three must be wrong — a distractor that is also "
             "acceptable makes the question unanswerable, and this is the "
             "single most common way these go bad."
@@ -90,8 +114,8 @@ class DraftQuestion(BaseModel):
     answer: str = Field(
         description=(
             "The correct answer as the learner would type or pick it. For "
-            "multiple_choice it must match one of `choices` character for "
-            "character."
+            "multiple_choice and response_choice it must match one of "
+            "`choices` character for character."
         )
     )
     tiles: list[str] = Field(
@@ -105,16 +129,18 @@ class DraftQuestion(BaseModel):
             "three, or there is nothing to arrange."
         ),
     )
-    furigana: dict[str, str] = Field(
-        default_factory=dict,
+    # A list of pairs, not a dict. The SDK turns `dict[str, str]` into an
+    # object schema with no allowed keys, so the model could only ever return
+    # `{}` — which is why no generated question ever had readings to toggle.
+    furigana: list[Reading] = Field(
+        default_factory=list,
         description=(
-            "Readings for the words written with kanji anywhere in `prompt`, "
-            "`choices` or `tiles`, as a map from the exact written form to its "
-            "kana reading: {'入り口': 'いりぐち', '免許': 'めんきょ'}. Key it "
-            "exactly as the text writes it — the app matches the key as a "
-            "substring to draw the reading above those characters, so a key "
-            "that does not appear verbatim is simply ignored. Words already "
-            "written in kana need no entry. "
+            "One entry for every word written with kanji anywhere in `prompt`, "
+            "`choices` or `tiles`, e.g. [{written: '入り口', reading: 'いりぐち'}]. "
+            "Write `written` exactly as the text does — the app matches it as a "
+            "substring to draw the reading above those characters, so one that "
+            "does not appear verbatim is simply ignored. Words already in kana "
+            "need no entry. "
             "NEVER include the word whose reading the question is asking for: "
             "a reading question that ships its own furigana answers itself."
         ),
@@ -139,6 +165,19 @@ class DraftQuestion(BaseModel):
             "verifier reads it; the learner never does."
         )
     )
+
+    @field_validator("furigana", mode="before")
+    @classmethod
+    def _readings_from_mapping(cls, value):
+        # Code and tests find a mapping more natural to write; the model is
+        # only ever shown the list form, since that is what the schema says.
+        if isinstance(value, dict):
+            return [{"written": k, "reading": v} for k, v in value.items()]
+        return value
+
+    def readings(self) -> dict[str, str]:
+        """The furigana as the written → reading map the app stores."""
+        return {entry.written: entry.reading for entry in self.furigana}
 
 
 class DraftBatch(BaseModel):
@@ -177,6 +216,11 @@ pool is a seasoning. A lesson made entirely of words learned this morning is
 not a lesson, it is a re-run of the morning.
 
 Vary the question types. Recall is the hardest and should not be the whole set.
+Include a `response_choice` or two where the words suit conversation: someone
+says a line, and the learner picks the reply a Japanese speaker would actually
+give. The three wrong replies must be clearly wrong for the situation — off
+topic, the wrong politeness for the setting, or answering a different question
+— not merely less idiomatic.
 
 Two rules that matter more than variety:
 
@@ -186,7 +230,8 @@ Two rules that matter more than variety:
 2. Only use the vocab_item_ids you were given. Never invent one, and never
    test a word that is not in the pools.
 
-Fill in `furigana` for every word you write in kanji. The learner can toggle
+Fill in `furigana` for every word you write in kanji — every one, in the
+prompt, the choices and the tiles alike. The learner can toggle
 readings on, and a question with none is a wall of kanji they cannot even
 attempt. The one exception is the word being asked about in a reading question
 — never give that one away. Put readings in the `furigana` map rather than in
@@ -205,6 +250,8 @@ only output is a verdict.
 
 Fail it when:
 - more than one of the choices is an acceptable answer
+- for a response_choice question, more than one reply would be a natural
+  thing to say back, or the right reply depends on context the prompt omits
 - the stated answer is not among the choices, for a multiple-choice question
 - the sentence admits a filler other than the stated answer
 - the prompt is ambiguous about what is being asked for (meaning or reading)
@@ -280,8 +327,19 @@ def _generation_prompt(
     grammar: list[GrammarEntry],
     count: int,
     feedback: list[str] | None = None,
+    avoid: list[str] | None = None,
 ) -> str:
     blocks: list[str] = []
+    if avoid:
+        # The generator has no memory between calls, and the pools barely move
+        # between runs — a WaniKani word stays "due" until WaniKani says
+        # otherwise. Without this list every run writes the same questions.
+        blocks.append(
+            "Already asked recently. Do not repeat these or reword them — test "
+            "a different word, or the same word from a different angle "
+            "(another question type, another sentence, meaning instead of "
+            "reading):\n" + "\n".join(f"  - {line}" for line in avoid)
+        )
     if feedback:
         # Named as rejections rather than as rules: these are facts about the
         # last pass, and turning them into standing instructions would let one
@@ -332,7 +390,7 @@ def _structurally_sound(draft: DraftQuestion, known_item_ids: set[int]) -> str |
         return f"vocab ids not in the pools: {unknown}"
     if draft.type not in QUESTION_TYPES:
         return f"unknown question type {draft.type!r}"
-    if draft.type == "multiple_choice":
+    if draft.type in CHOICE_TYPES:
         if len(draft.choices) != 4:
             return f"{len(draft.choices)} choices, expected 4"
         if len(set(draft.choices)) != 4:
@@ -365,6 +423,7 @@ async def generate_drafts(
     *,
     count: int,
     feedback: list[str] | None = None,
+    avoid: list[str] | None = None,
     settings: Settings | None = None,
     client: anthropic.AsyncAnthropic | None = None,
 ) -> list[DraftQuestion]:
@@ -380,7 +439,7 @@ async def generate_drafts(
             messages=[
                 {
                     "role": "user",
-                    "content": _generation_prompt(pools, grammar, count, feedback),
+                    "content": _generation_prompt(pools, grammar, count, feedback, avoid),
                 }
             ],
             output_format=DraftBatch,
@@ -428,10 +487,10 @@ async def verify_draft(
     settings = settings or get_settings()
     client = client or _client(settings)
 
-    # Only multiple choice can have a secretly-correct distractor, and the tool
+    # Only the choice types can have a secretly-correct distractor, and the tool
     # loop is several round trips. Spending it on a recall question — which has
     # no choices to be wrong about — buys nothing.
-    use_tools = session is not None and draft.type == "multiple_choice"
+    use_tools = session is not None and draft.type in CHOICE_TYPES
 
     try:
         if use_tools:
@@ -522,7 +581,8 @@ def safe_furigana(draft: DraftQuestion) -> dict[str, str]:
     render (the app matches keys as substrings) and would otherwise accumulate
     in the payload as quiet noise.
     """
-    if not draft.furigana:
+    furigana = draft.readings()
+    if not furigana:
         return {}
 
     haystack = " ".join([draft.prompt, *draft.choices, *draft.tiles])
@@ -530,7 +590,7 @@ def safe_furigana(draft: DraftQuestion) -> dict[str, str]:
 
     return {
         written: reading
-        for written, reading in draft.furigana.items()
+        for written, reading in furigana.items()
         if written
         and reading
         and written in haystack
@@ -606,6 +666,25 @@ def variety_note(drafts: list[DraftQuestion]) -> str:
     return f"The last pass produced {rendered}."
 
 
+def rotate_pools(
+    pools: dict[str, list[VocabItem]], asked: dict[int, int], *, size: int
+) -> dict[str, list[VocabItem]]:
+    """Put the least-asked words first in each pool, and cut it to `size`.
+
+    The pools are fetched wider than a prompt should carry, then narrowed to
+    the words with the fewest recent questions. That is what moves a run on to
+    words it has not covered — the pools themselves hardly change between runs,
+    because a WaniKani word stays due until WaniKani reschedules it.
+
+    Stable: among equally-asked words the repository's order (most overdue,
+    most recently learned) still decides.
+    """
+    return {
+        name: sorted(items, key=lambda item: asked.get(item.id, 0))[:size]
+        for name, items in pools.items()
+    }
+
+
 # -- the scheduled top-up ---------------------------------------------------
 
 
@@ -615,6 +694,7 @@ class TopUpResult(BaseModel):
     ok: bool = True
     skipped: bool = False
     reason: str = ""
+    run_id: int | None = None
     bundles_waiting: int = 0
     words_projected: int = 0
     drafted: int = 0
@@ -629,6 +709,10 @@ async def _build_one_bundle(
     grammar: list[GrammarEntry],
     known_ids: set[int],
     *,
+    run_id: int | None,
+    avoid: list[str],
+    seen_keys: set[str],
+    asked: dict[int, int],
     settings: Settings,
     client: anthropic.AsyncAnthropic,
 ) -> tuple[list[int], int, int]:
@@ -643,6 +727,10 @@ async def _build_one_bundle(
     recovers most of them. The feedback is text, not structure: the generator is
     told what went wrong and asked for replacements, which is the cheapest
     possible form of the retry.
+
+    `avoid`, `seen_keys` and `asked` are shared across every bundle in the run
+    and updated here as questions pass, so the second bundle knows what the
+    first one wrote. Without that a run wrote three copies of one lesson.
     """
     verified_ids: list[int] = []
     drafted = 0
@@ -660,6 +748,7 @@ async def _build_one_bundle(
                 grammar,
                 count=wanted,
                 feedback=feedback,
+                avoid=avoid[: settings.lesson_avoid_prompts],
                 settings=settings,
                 client=client,
             )
@@ -688,6 +777,15 @@ async def _build_one_bundle(
                 feedback.append(f"{draft.prompt[:40]}… — {unsound}")
                 continue
 
+            key = repo.question_key(draft.prompt, draft.answer)
+            if key in seen_keys:
+                # Word for word a question already written — this run or an
+                # earlier one. Not worth a verifier call, or a second showing.
+                logger.info("Discarding repeated question: %s", draft.prompt[:40])
+                rejected += 1
+                feedback.append(f"{draft.prompt[:40]}… — repeats an earlier question")
+                continue
+
             verdict = await verify_draft(
                 draft, session=session, settings=settings, client=client
             )
@@ -698,6 +796,7 @@ async def _build_one_bundle(
                 payload=to_payload(draft),
                 vocab_item_ids=draft.vocab_item_ids,
                 grammar_entry_id=draft.grammar_entry_id,
+                run_id=run_id,
             )
             await repo.mark_question_verified(
                 session, question, ok=verdict.ok, note=verdict.reason or None
@@ -705,6 +804,10 @@ async def _build_one_bundle(
 
             if verdict.ok:
                 verified_ids.append(question.id)
+                seen_keys.add(key)
+                avoid.insert(0, draft.prompt)
+                for item_id in draft.vocab_item_ids:
+                    asked[item_id] = asked.get(item_id, 0) + 1
             else:
                 rejected += 1
                 feedback.append(f"{draft.prompt[:40]}… — {verdict.reason}")
@@ -722,13 +825,20 @@ async def top_up_bundles(
     session: AsyncSession,
     user_id: int,
     *,
+    trigger: str = "manual",
     settings: Settings | None = None,
     client: anthropic.AsyncAnthropic | None = None,
+    now: datetime | None = None,
 ) -> TopUpResult:
-    """Keep the lesson queue stocked. Called on a schedule, twice a day.
+    """Keep the lesson queue stocked. Woken by schedule and by events.
 
     Checks first and usually stops there — the queue is normally full, and a
     run that generates nothing should cost one COUNT and no model calls.
+
+    **Every run is recorded** in `generation_runs`, skipped ones included, and
+    the row is committed before any model call. Each finished bundle is
+    committed as it lands, too, so a run the Lambda kills part-way keeps what
+    it finished and leaves its row visibly `running` rather than vanishing.
 
     Everything after the threshold check is best effort. This runs with nobody
     waiting on it, so a failure means the next run tries again; it must never
@@ -736,57 +846,109 @@ async def top_up_bundles(
     they have passed the verifier.
     """
     settings = settings or get_settings()
+    now = now or datetime.now(timezone.utc)
 
     waiting = await repo.count_unconsumed_bundles(session, user_id)
-    if waiting >= settings.lesson_bundle_low_water:
-        return TopUpResult(skipped=True, reason="queue is stocked", bundles_waiting=waiting)
+    run = await repo.start_generation_run(
+        session, user_id, trigger=trigger, bundles_waiting=waiting
+    )
+    await session.commit()
+    run_id = run.id
 
-    if not settings.has_anthropic:
+    async def skip(reason: str, *, ok: bool = True, projected: int = 0) -> TopUpResult:
+        await repo.finish_generation_run(session, run, status="skipped", reason=reason)
+        await session.commit()
         return TopUpResult(
-            ok=False, skipped=True, reason="no ANTHROPIC_API_KEY", bundles_waiting=waiting
-        )
-
-    # Sync only fills `subjects` and `study_progress`, so a user who has never
-    # imported a photo has nothing a question can point at until this runs.
-    projected = await repo.project_wanikani_vocabulary(session, user_id)
-
-    pools = await repo.get_generation_pools(session, user_id)
-    if not any(pools.values()):
-        return TopUpResult(
+            ok=ok,
             skipped=True,
-            reason="nothing studied yet to build questions from",
+            reason=reason,
+            run_id=run_id,
             bundles_waiting=waiting,
             words_projected=projected,
         )
 
-    grammar = await repo.list_confirmed_grammar(session, user_id)
-    known_ids = {item.id for pool in pools.values() for item in pool}
+    if waiting >= settings.lesson_bundle_low_water:
+        return await skip("queue is stocked")
 
-    client = client or _client(settings)
+    if not settings.has_anthropic:
+        return await skip("no ANTHROPIC_API_KEY", ok=False)
+
     drafted = 0
     rejected = 0
     created = 0
 
-    for _ in range(settings.lesson_bundles_per_run):
-        question_ids, n_drafted, n_rejected = await _build_one_bundle(
-            session,
-            user_id,
-            pools,
-            grammar,
-            known_ids,
-            settings=settings,
-            client=client,
-        )
-        drafted += n_drafted
-        rejected += n_rejected
+    try:
+        # Sync only fills `subjects` and `study_progress`, so a user who has
+        # never imported a photo has nothing a question can point at until
+        # this runs.
+        projected = await repo.project_wanikani_vocabulary(session, user_id)
 
-        # A bundle of one is not a lesson. Verified questions stay in the table
-        # either way — a later run can bundle them — rather than shipping a stub.
-        if len(question_ids) >= 2:
-            await repo.create_bundle(session, user_id, question_ids)
-            created += 1
+        # Fetched wider than a prompt carries; `rotate_pools` narrows each one
+        # to the words asked about least lately.
+        wide = await repo.get_generation_pools(
+            session, user_id, limit_per_pool=settings.lesson_pool_size * 2, now=now
+        )
+        if not any(wide.values()):
+            return await skip("nothing studied yet to build questions from", projected=projected)
+
+        grammar = await repo.list_confirmed_grammar(session, user_id)
+        known_ids = {item.id for pool in wide.values() for item in pool}
+
+        since = now - timedelta(days=settings.lesson_memory_days)
+        avoid = await repo.recent_question_prompts(
+            session, user_id, since=since, limit=settings.lesson_avoid_prompts
+        )
+        seen_keys = await repo.question_prompt_keys(session, user_id, since=since)
+        asked = await repo.recent_question_counts_by_word(session, user_id, since=since)
+
+        client = client or _client(settings)
+
+        for _ in range(settings.lesson_bundles_per_run):
+            pools = rotate_pools(wide, asked, size=settings.lesson_pool_size)
+            question_ids, n_drafted, n_rejected = await _build_one_bundle(
+                session,
+                user_id,
+                pools,
+                grammar,
+                known_ids,
+                run_id=run_id,
+                avoid=avoid,
+                seen_keys=seen_keys,
+                asked=asked,
+                settings=settings,
+                client=client,
+            )
+            drafted += n_drafted
+            rejected += n_rejected
+
+            # A bundle of one is not a lesson. Verified questions stay in the
+            # table either way — the catalog shows them as unbundled — rather
+            # than shipping a stub.
+            if len(question_ids) >= 2:
+                await repo.create_bundle(session, user_id, question_ids)
+                created += 1
+            await session.commit()
+
+        await repo.finish_generation_run(
+            session,
+            run,
+            status="completed",
+            reason=None if created else "no bundle had two verified questions",
+            drafted=drafted,
+            rejected=rejected,
+            bundles_created=created,
+        )
+        await session.commit()
+    except Exception as exc:
+        # Bundles already committed stay. The run row is marked from a clean
+        # transaction, since the one that failed may be unusable.
+        await session.rollback()
+        await repo.mark_run_failed(session, run_id, f"{type(exc).__name__}: {exc}"[:500])
+        await session.commit()
+        raise
 
     return TopUpResult(
+        run_id=run_id,
         bundles_waiting=waiting + created,
         words_projected=projected,
         drafted=drafted,
