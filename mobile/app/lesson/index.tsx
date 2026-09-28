@@ -1,33 +1,41 @@
 /**
  * Lesson — artboard 4c.
  *
- * A lesson is study-only until the very end: the user reads the composition,
- * mnemonic and readings, and the single write (`PUT /assignments/{id}/start`)
- * fires when they tap through. That call is queued in the outbox first, so
- * finishing a lesson offline works exactly like finishing one online.
+ * Taught in batches, the way WaniKani teaches: read five items, then a quiz on
+ * their meanings and readings. An item is learned -- its assignment started,
+ * `PUT /assignments/{id}/start` -- only once both halves have been answered
+ * right in the quiz. Reading an item is not learning it; an item you leave
+ * before passing stays in the lesson queue for next time.
+ *
+ * The start goes through the outbox, so finishing a lesson offline works
+ * exactly like finishing one online.
  */
 import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
-import { MascotCoach } from '@/components/MascotCoach';
+import { Mascot, type Pose } from '@/components/Mascot';
+import { MascotCoach, useAnswerRun } from '@/components/MascotCoach';
 import { RiseIn } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { speakSubject, SubjectExtras } from '@/components/SubjectExtras';
 import {
   Card,
   CardBanner,
   ChunkyButton,
   Overline,
+  Pill,
   ReadingChip,
+  SessionProgressBar,
   StepDots,
   TextButton,
 } from '@/components/ui';
-import { findSubject } from '@/data/fixtures';
+import { halvesOf, type Half, shuffle, WkQuestion } from '@/components/WkQuestion';
 import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
 import { feedback } from '@/feedback';
-import { speakJapanese } from '@/feedback/speech';
-import { useLessonQueue, useStudyActions } from '@/hooks/useStudyData';
+import { useLessonQueue, useStudyActions, useSubjects } from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -36,6 +44,13 @@ import {
   subjectPalette,
   type as typeScale,
 } from '@/theme/tokens';
+
+/** How far a swipe has to travel before it turns the page. */
+const SWIPE_DISTANCE = 70;
+/** Items read before each quiz -- WaniKani's own default batch. */
+const BATCH_SIZE = 5;
+/** "Shows up in" shows this many; a common kanji is in dozens of words. */
+const USED_IN_LIMIT = 8;
 
 export default function LessonScreen() {
   const router = useRouter();
@@ -50,8 +65,15 @@ export default function LessonScreen() {
   const current = items[index];
 
   const startedAt = React.useRef(Date.now());
-  /** Items actually taught — a deferred item comes back round and is not one. */
+  /** Items learned: passed in a quiz, and so started on WaniKani. */
   const taught = React.useRef<StudyItem[]>([]);
+
+  /** Reading the batch, or being quizzed on it. */
+  const [phase, setPhase] = React.useState<'teach' | 'quiz'>('teach');
+  /** Items read in this batch and not yet passed -- what the quiz asks. */
+  const [batch, setBatch] = React.useState<StudyItem[]>([]);
+  /** Where this batch began; "Previous" does not reach back past it. */
+  const [batchStart, setBatchStart] = React.useState(0);
 
   /**
    * One scroll view serves every item in the queue, so moving on leaves the
@@ -63,56 +85,133 @@ export default function LessonScreen() {
     scroller.current?.scrollTo({ y: 0, animated: false });
   }, [index]);
 
-  const advance = React.useCallback(() => {
-    if (index + 1 >= items.length) {
-      // A lesson has nothing to get wrong, so every item taught is `correct`.
-      // The movement it produces is real all the same: WaniKani takes an
-      // unlocked item to stage 1 when the lesson lands.
-      const session: SessionItem[] = taught.current.map(({ subject, assignment }) => ({
-        subjectId: subject.id,
-        characters: subject.characters ?? '?',
-        meaning: subject.meanings.find((m) => m.primary)?.meaning ?? '',
-        reading: subject.readings.find((r) => r.primary)?.reading ?? '',
-        startingStage: assignment.srsStage,
-        correct: true,
-        note: '',
-      }));
+  // Looked up before any early return: hooks run in the same order every
+  // render. Empty while the queue loads.
+  const { data: components } = useSubjects(current?.subject.componentSubjectIds ?? []);
+  const { data: usedIn } = useSubjects(
+    (current?.subject.amalgamationSubjectIds ?? []).slice(0, USED_IN_LIMIT),
+  );
 
-      recordSession({
-        kind: 'lesson',
-        startedAt: startedAt.current,
-        finishedAt: Date.now(),
-        items: session,
-      });
-      feedback.complete();
-      router.replace('/session-summary');
-      return;
-    }
-    setIndex((i) => i + 1);
-  }, [index, items.length, router]);
+  /** The session's end: the summary, reporting what was learned. */
+  const finish = React.useCallback(() => {
+    // Every item reported passed its quiz, so each is `correct`. The movement
+    // it produces is real: WaniKani takes an unlocked item to stage 1 when
+    // the lesson lands.
+    const session: SessionItem[] = taught.current.map(({ subject, assignment }) => ({
+      subjectId: subject.id,
+      characters: subject.characters ?? '?',
+      meaning: subject.meanings.find((m) => m.primary)?.meaning ?? '',
+      reading: subject.readings.find((r) => r.primary)?.reading ?? '',
+      startingStage: assignment.srsStage,
+      correct: true,
+      note: '',
+    }));
 
-  const onGotIt = React.useCallback(async () => {
-    if (current) {
-      taught.current.push(current);
-      await completeLesson(current.assignment);
-    }
-    // Deliberately `advance` and not the level-up fanfare, even though an item
-    // taught really is an item unlocked. A lesson queue is twenty-odd items
-    // long, and a cue that says "this is a big moment" twenty times in four
-    // minutes stops meaning it. The fanfare is kept for the end of the run.
+    recordSession({
+      kind: 'lesson',
+      startedAt: startedAt.current,
+      finishedAt: Date.now(),
+      items: session,
+    });
+    feedback.complete();
+    router.replace('/session-summary');
+  }, [router]);
+
+  /** Read: into the batch, then the next item -- or the quiz once the batch is full. */
+  const onGotIt = React.useCallback(() => {
+    if (!current) return;
+    // Swiping back re-reads an item already in the batch; it goes in once.
+    const nextBatch = batch.includes(current) ? batch : [...batch, current];
+    setBatch(nextBatch);
+    // Deliberately `advance` and not the level-up fanfare. A lesson queue is
+    // twenty-odd items long, and a cue that says "this is a big moment" twenty
+    // times in four minutes stops meaning it.
     feedback.advance();
-    advance();
-  }, [current, completeLesson, advance]);
+    if (nextBatch.length >= BATCH_SIZE || index + 1 >= items.length) {
+      setPhase('quiz');
+    } else {
+      setIndex((i) => i + 1);
+    }
+  }, [batch, current, index, items.length]);
 
   const onDefer = React.useCallback(() => {
     if (current) setDeferred((rest) => [...rest, current]);
     feedback.advance();
-    advance();
-  }, [current, advance]);
+    // Deferring appends the item, so there is always a next one to show.
+    setIndex((i) => i + 1);
+  }, [current]);
+
+  /** Back one item, to read it again -- within this batch. */
+  const onBack = React.useCallback(() => {
+    if (index <= batchStart) return;
+    feedback.back();
+    setIndex((i) => i - 1);
+  }, [batchStart, index]);
+
+  /** Passed both halves: learned, and started on WaniKani. */
+  const onPassed = React.useCallback(
+    (item: StudyItem) => {
+      if (taught.current.includes(item)) return;
+      taught.current.push(item);
+      void completeLesson(item.assignment);
+    },
+    [completeLesson],
+  );
+
+  /** The batch is learned: on to the next five, or the summary. */
+  const onQuizDone = React.useCallback(() => {
+    setBatch([]);
+    setPhase('teach');
+    if (index + 1 >= items.length) {
+      finish();
+      return;
+    }
+    setBatchStart(index + 1);
+    setIndex(index + 1);
+  }, [finish, index, items.length]);
+
+  /** Back from the quiz to read the batch again; passed items stay passed. */
+  const onReread = React.useCallback(() => {
+    setBatch((rest) => rest.filter((item) => !taught.current.includes(item)));
+    setPhase('teach');
+    setIndex(batchStart);
+  }, [batchStart]);
+
+  /**
+   * Swipe left to move on -- the same as "Got it" -- and right to go back.
+   * Horizontal only, and only past a clear threshold, so a vertical scroll
+   * through a long mnemonic never reads as a page turn.
+   */
+  const swipe = React.useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .activeOffsetX([-24, 24])
+        .failOffsetY([-14, 14])
+        .onEnd((event) => {
+          if (event.translationX < -SWIPE_DISTANCE) void onGotIt();
+          else if (event.translationX > SWIPE_DISTANCE) onBack();
+        }),
+    [onBack, onGotIt],
+  );
 
   if (!current) return <View style={styles.screen} />;
 
+  if (phase === 'quiz') {
+    return (
+      <LessonQuiz
+        items={batch.filter((item) => !taught.current.includes(item))}
+        onPassed={onPassed}
+        onDone={onQuizDone}
+        onReread={onReread}
+      />
+    );
+  }
+
   const { subject } = current;
+  const lastBeforeQuiz =
+    (batch.includes(current) ? batch.length : batch.length + 1) >= BATCH_SIZE ||
+    index + 1 >= items.length;
   const palette = subjectPalette[subject.type];
   const typeLabel = subject.type === 'vocabulary' ? 'vocabulary' : subject.type;
 
@@ -126,13 +225,14 @@ export default function LessonScreen() {
     subject.type === 'vocabulary'
       ? (subject.characters ?? '')
       : (subject.readings.find((r) => r.primary) ?? subject.readings[0])?.reading ?? '';
-  const components = subject.componentSubjectIds
-    .map(findSubject)
-    .filter((s): s is Subject => Boolean(s));
-  const usedIn = subject.amalgamationSubjectIds
-    .map(findSubject)
-    .filter((s): s is Subject => Boolean(s))
-    .slice(0, 2);
+  const parts: Subject[] = components ?? [];
+  const appearsIn: Subject[] = usedIn ?? [];
+  const appearsInLabel =
+    subject.type === 'radical'
+      ? 'Used in kanji'
+      : subject.type === 'kanji'
+        ? 'Used in vocabulary'
+        : 'Shows up in';
 
   return (
     <View style={styles.screen}>
@@ -150,118 +250,279 @@ export default function LessonScreen() {
         }
       />
 
-      <ScrollView ref={scroller} contentContainerStyle={styles.content}>
-        {/* Keyed on the subject so each new item's card rises in, rather than
-            its contents swapping under a stationary frame. */}
-        <RiseIn key={subject.id}>
-          <Card flush>
-            <CardBanner
-              type={subject.type}
-              label={`${typeLabel} · level ${subject.level}`}
-              trailing="meaning first"
-            />
-            <View style={styles.subjectBody}>
-              <Text style={styles.subjectGlyph}>{subject.characters}</Text>
+      <GestureDetector gesture={swipe}>
+        <ScrollView ref={scroller} contentContainerStyle={styles.content}>
+          {/* Keyed on the subject so each new item's card rises in, rather than
+              its contents swapping under a stationary frame. */}
+          <RiseIn key={subject.id}>
+            <Card flush>
+              <CardBanner
+                type={subject.type}
+                label={`${typeLabel} · level ${subject.level}`}
+                trailing="meaning first"
+              />
+              {/* The item's own colour behind the character, as WaniKani teaches
+                  it: blue radical, pink kanji, purple vocabulary. */}
+              <View style={[styles.subjectBody, { backgroundColor: palette.solid }]}>
+                <Text style={styles.subjectGlyph}>{subject.characters}</Text>
 
-              {components.length > 0 ? (
-                <View style={styles.equation}>
-                  {components.map((component, position) => (
-                    <React.Fragment key={component.id}>
-                      {position > 0 ? <Text style={styles.operator}>+</Text> : null}
-                      <View style={[styles.equationChip, { backgroundColor: subjectPalette[component.type].solid }]}>
-                        <Text style={styles.equationChipText}>{component.characters}</Text>
-                      </View>
-                    </React.Fragment>
-                  ))}
-                  <Text style={styles.operator}>=</Text>
-                  <View style={[styles.equationChip, { backgroundColor: palette.solid }]}>
-                    <Text style={styles.equationChipText}>{subject.characters}</Text>
+                {parts.length > 0 ? (
+                  <View style={styles.equation}>
+                    {parts.map((component, position) => (
+                      <React.Fragment key={component.id}>
+                        {position > 0 ? <Text style={styles.operator}>+</Text> : null}
+                        <View style={[styles.equationChip, { backgroundColor: subjectPalette[component.type].solid }]}>
+                          <Text style={styles.equationChipText}>{component.characters}</Text>
+                        </View>
+                      </React.Fragment>
+                    ))}
+                    <Text style={styles.operator}>=</Text>
+                    <View style={[styles.equationChip, { backgroundColor: palette.solid }]}>
+                      <Text style={styles.equationChipText}>{subject.characters}</Text>
+                    </View>
                   </View>
-                </View>
-              ) : null}
+                ) : null}
 
-              <Text style={styles.meaning}>{primaryMeaning}</Text>
-            </View>
-          </Card>
-        </RiseIn>
+                <Text style={styles.meaning}>{primaryMeaning}</Text>
+              </View>
+            </Card>
+          </RiseIn>
 
-        {subject.meaningMnemonic ? (
-          <Card style={styles.mnemonicCard}>
-            {/* A mnemonic is the one place in the app where something is being
-                explained to you rather than tested, so it is the one place the
-                mascot should be doing the talking. */}
-            <MascotCoach
-              label="Mnemonic"
-              tone={subject.type}
-              size={84}
-              speed={0.6}
-              pose="idle"
-            >
-              <Text style={styles.mnemonicText}>{subject.meaningMnemonic}</Text>
-            </MascotCoach>
-          </Card>
-        ) : null}
-
-        {subject.readings.length > 0 ? (
-          <Card>
-            <Overline style={styles.groupLabel}>Readings</Overline>
-            <View style={styles.readingRow}>
-              {onyomi ? <ReadingChip reading={onyomi.reading} label="ON'YOMI" tone="radical" /> : null}
-              {kunyomi ? (
-                <ReadingChip reading={kunyomi.reading} label="KUN'YOMI" tone="vocabulary" />
-              ) : null}
-              {plainReading ? (
-                <ReadingChip reading={plainReading.reading} label="READING" tone="vocabulary" />
-              ) : null}
-              {/* Reads the item aloud via the platform speech engine — free, and
-                  works offline once a Japanese voice pack is installed.
-
-                  What gets spoken is not the glyph: a kanji in isolation has no
-                  one pronunciation, so a kanji or radical is read by its
-                  primary reading and only a vocabulary word reads as itself. */}
-              <Pressable
-                onPress={() => {
-                  feedback.tap();
-                  speakJapanese(spoken);
-                }}
-                disabled={!spoken}
-                style={[styles.speakButton, !spoken && styles.speakButtonMuted]}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="Read aloud"
+          {subject.meaningMnemonic ? (
+            <Card style={styles.mnemonicCard}>
+              {/* A mnemonic is the one place in the app where something is being
+                  explained to you rather than tested, so it is the one place the
+                  mascot should be doing the talking. */}
+              <MascotCoach
+                label="Mnemonic"
+                tone={subject.type}
+                size={84}
+                speed={0.6}
+                pose="idle"
               >
-                <Text style={styles.speakGlyph}>♪</Text>
-              </Pressable>
-            </View>
-          </Card>
-        ) : null}
+                <Text style={styles.mnemonicText}>{subject.meaningMnemonic}</Text>
+              </MascotCoach>
+            </Card>
+          ) : null}
 
-        {usedIn.length > 0 ? (
-          <Card>
-            <Overline style={styles.groupLabel}>Shows up in</Overline>
-            <View style={styles.usedInRow}>
-              {usedIn.map((word) => (
-                <View key={word.id} style={styles.usedInTile}>
-                  <Text style={styles.usedInWord}>{word.characters}</Text>
-                  <Text style={styles.usedInGloss}>
-                    {word.readings[0]?.reading} · {word.meanings[0]?.meaning.toLowerCase()}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </Card>
-        ) : null}
-      </ScrollView>
+          {subject.readings.length > 0 ? (
+            <Card>
+              <Overline style={styles.groupLabel}>Readings</Overline>
+              <View style={styles.readingRow}>
+                {onyomi ? <ReadingChip reading={onyomi.reading} label="ON'YOMI" tone="radical" /> : null}
+                {kunyomi ? (
+                  <ReadingChip reading={kunyomi.reading} label="KUN'YOMI" tone="vocabulary" />
+                ) : null}
+                {plainReading ? (
+                  <ReadingChip reading={plainReading.reading} label="READING" tone="vocabulary" />
+                ) : null}
+                {/* Reads the item aloud via the platform speech engine — free, and
+                    works offline once a Japanese voice pack is installed.
+
+                    What gets spoken is not the glyph: a kanji in isolation has no
+                    one pronunciation, so a kanji or radical is read by its
+                    primary reading and only a vocabulary word reads as itself. */}
+                <Pressable
+                  onPress={() => {
+                    feedback.tap();
+                    speakSubject(subject);
+                  }}
+                  disabled={!spoken}
+                  style={[styles.speakButton, !spoken && styles.speakButtonMuted]}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Read aloud"
+                >
+                  <Text style={styles.speakGlyph}>♪</Text>
+                </Pressable>
+              </View>
+            </Card>
+          ) : null}
+
+          {subject.readingMnemonic ? (
+            <Card style={styles.mnemonicCard}>
+              <MascotCoach label="Reading mnemonic" tone={subject.type} size={84} speed={0.6} pose="idle">
+                <Text style={styles.mnemonicText}>{subject.readingMnemonic}</Text>
+              </MascotCoach>
+            </Card>
+          ) : null}
+
+          <SubjectExtras subject={subject} />
+
+          {appearsIn.length > 0 ? (
+            <Card>
+              <Overline style={styles.groupLabel}>
+                {appearsInLabel}
+                {subject.amalgamationSubjectIds.length > appearsIn.length
+                  ? ` · ${appearsIn.length} of ${subject.amalgamationSubjectIds.length}`
+                  : ''}
+              </Overline>
+              <View style={styles.usedInRow}>
+                {appearsIn.map((word) => (
+                  <View key={word.id} style={styles.usedInTile}>
+                    <Text style={styles.usedInWord}>{word.characters ?? word.slug}</Text>
+                    <Text style={styles.usedInGloss} numberOfLines={2}>
+                      {(word.readings.find((r) => r.primary) ?? word.readings[0])?.reading}
+                      {word.readings.length > 0 ? ' · ' : ''}
+                      {(word.meanings.find((m) => m.primary) ?? word.meanings[0])?.meaning.toLowerCase()}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </Card>
+          ) : null}
+        </ScrollView>
+      </GestureDetector>
 
       <View style={styles.footer}>
-        <ChunkyButton label="Got it — next" tone={subject.type} onPress={onGotIt} />
-        <TextButton label="Show me this one again later" onPress={onDefer} />
+        <ChunkyButton
+          label={lastBeforeQuiz ? 'Got it — start the quiz' : 'Got it — next'}
+          tone={subject.type}
+          onPress={onGotIt}
+        />
+        <View style={styles.footerLinks}>
+          {index > batchStart ? <TextButton label="‹ Previous" onPress={onBack} /> : <View />}
+          <TextButton label="Show me this one again later" onPress={onDefer} />
+        </View>
+        <Text style={styles.swipeHint}>Swipe left to go on, right to go back</Text>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The quiz after a batch: the meaning and the reading of every item just read,
+ * shuffled, each asked until it is answered right. A miss shows the answer and
+ * comes back later in the quiz. When both halves of an item are right it is
+ * learned, there and then -- leaving part-way keeps what was passed.
+ */
+function LessonQuiz({
+  items,
+  onPassed,
+  onDone,
+  onReread,
+}: {
+  items: StudyItem[];
+  onPassed: (item: StudyItem) => void;
+  onDone: () => void;
+  onReread: () => void;
+}) {
+  const [queue, setQueue] = React.useState<{ item: StudyItem; half: Half }[]>(() =>
+    shuffle(items.flatMap((item) => halvesOf(item.subject).map((half) => ({ item, half })))),
+  );
+  const [turn, setTurn] = React.useState(0);
+  const [pose, setPose] = React.useState<Pose>('idle');
+  const [learned, setLearned] = React.useState(0);
+  const [missed, setMissed] = React.useState(0);
+  const { register } = useAnswerRun();
+
+  const current = queue[0];
+
+  // An empty batch (everything passed before a re-read) has nothing to ask.
+  React.useEffect(() => {
+    if (queue.length === 0) onDone();
+  }, [onDone, queue.length]);
+
+  const onGraded = React.useCallback(
+    (ok: boolean) => {
+      setPose(ok ? 'correct' : 'wrong');
+      if (ok) {
+        feedback.correct();
+        if (register(true)) feedback.streak();
+      } else {
+        feedback.wrong();
+        register(false);
+        setMissed((n) => n + 1);
+      }
+    },
+    [register],
+  );
+
+  const onNext = React.useCallback(
+    (ok: boolean) => {
+      if (!current) return;
+      setPose('idle');
+      setTurn((n) => n + 1);
+      const [, ...remaining] = queue;
+      // Both halves right -- no question about this item left -- is learned.
+      if (ok && !remaining.some((q) => q.item === current.item)) {
+        onPassed(current.item);
+        setLearned((n) => n + 1);
+      }
+      setQueue(ok ? remaining : [...remaining, current]);
+    },
+    [current, onPassed, queue],
+  );
+
+  if (!current) return <View style={styles.screen} />;
+
+  const palette = subjectPalette[current.item.subject.type];
+  const questions = items.reduce((n, item) => n + halvesOf(item.subject).length, 0);
+  // Answered right so far; a missed question is still in the queue.
+  const done = questions - queue.length;
+
+  return (
+    <View style={styles.screen}>
+      <ScreenHeader
+        title="Lesson Quiz"
+        glyph={palette.glyph}
+        glyphColor={palette.solid}
+        trailingText={`${learned} / ${items.length} learned`}
+      >
+        <SessionProgressBar correct={done} incorrect={0} total={questions} />
+      </ScreenHeader>
+
+      <ScrollView contentContainerStyle={styles.quizContent} keyboardShouldPersistTaps="handled">
+        <WkQuestion
+          key={turn}
+          subject={current.item.subject}
+          half={current.half}
+          meta={<Pill label="lesson quiz" color={palette.ink} background={palette.tint} />}
+          onGraded={onGraded}
+          onNext={onNext}
+        />
+        <Text style={styles.quizNote}>
+          {missed > 0 ? `${missed} missed so far — they come back until they're right. ` : ''}
+          An item is learned once its meaning and reading are both right. Anything you leave
+          before then stays in your lessons.
+        </Text>
+      </ScrollView>
+
+      <View style={styles.quizFooter}>
+        <Mascot pose={pose} size={64} speed={1} lively holdReaction />
+        <Pressable onPress={onReread} onPressIn={feedback.back} hitSlop={8}>
+          <Text style={styles.quizReread}>‹ Read these again</Text>
+        </Pressable>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  quizContent: {
+    paddingHorizontal: spacing.gutter,
+    paddingTop: 20,
+    paddingBottom: 16,
+  },
+  quizNote: {
+    marginTop: 16,
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+    lineHeight: 16,
+  },
+  quizFooter: {
+    marginTop: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  quizReread: {
+    ...typeScale.meta,
+    color: colors.inkFaint,
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.ground,
@@ -291,7 +552,7 @@ const styles = StyleSheet.create({
   },
   subjectGlyph: {
     ...jp.lesson,
-    color: colors.ink,
+    color: colors.onSolid,
   },
   equation: {
     flexDirection: 'row',
@@ -302,6 +563,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.tile,
     paddingVertical: 4,
     paddingHorizontal: 12,
+    // Outlined, so a chip the same colour as the card behind it still reads.
+    borderWidth: 1.5,
+    borderColor: colors.onSolid,
   },
   equationChipText: {
     ...jp.chip,
@@ -310,17 +574,18 @@ const styles = StyleSheet.create({
   operator: {
     fontFamily: typeScale.button.fontFamily,
     fontSize: 14,
-    color: colors.inkDisabled,
+    color: 'rgba(255, 255, 255, 0.8)',
   },
   meaning: {
     ...typeScale.display,
-    color: colors.ink,
+    color: colors.onSolid,
   },
 
+  // Not a row: the coach inside lays itself out as one. A row here shrank the
+  // coach to the width of its art, leaving the text column zero pixels wide --
+  // which is why no mnemonic ever appeared, only the crabigator.
   mnemonicCard: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingVertical: 9,
+    paddingVertical: 11,
     paddingHorizontal: 13,
   },
   artSlot: {
@@ -369,10 +634,12 @@ const styles = StyleSheet.create({
 
   usedInRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 9,
   },
   usedInTile: {
-    flex: 1,
+    flexBasis: '47%',
+    flexGrow: 1,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: radius.control,
@@ -394,5 +661,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.gutter,
     paddingVertical: 12,
     gap: 7,
+  },
+  footerLinks: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  swipeHint: {
+    ...typeScale.metaSmall,
+    color: colors.inkFaint,
+    textAlign: 'center',
   },
 });

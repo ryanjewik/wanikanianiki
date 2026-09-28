@@ -65,6 +65,35 @@ class Reading(CamelModel):
     accepted_answer: bool
 
 
+class ContextSentence(CamelModel):
+    """One example sentence WaniKani pairs with a vocabulary word."""
+
+    ja: str
+    en: str
+
+
+class PronunciationAudio(CamelModel):
+    """A recording of the word, as WaniKani hosts it.
+
+    Only the MP3 of each recording is kept: every platform the app runs on
+    plays it, and the WebM/Ogg twins would just double the payload.
+    """
+
+    url: str
+    content_type: str
+    gender: str | None = None
+    voice_actor_name: str | None = None
+    pronunciation: str | None = None
+
+
+class AuxiliaryMeaning(CamelModel):
+    """An extra meaning WaniKani grades on: `whitelist` counts as right,
+    `blacklist` is a known wrong answer that should not be accepted."""
+
+    meaning: str
+    type: Literal["whitelist", "blacklist"]
+
+
 class Subject(CamelModel):
     id: int
     type: SubjectType
@@ -83,6 +112,11 @@ class Subject(CamelModel):
     component_subject_ids: list[int] = []
     amalgamation_subject_ids: list[int] = []
     jlpt_level: int | None = None
+    context_sentences: list[ContextSentence] = []
+    parts_of_speech: list[str] = []
+    pronunciation_audios: list[PronunciationAudio] = []
+    visually_similar_subject_ids: list[int] = []
+    auxiliary_meanings: list[AuxiliaryMeaning] = []
 
 
 # -- progress --------------------------------------------------------------
@@ -218,10 +252,19 @@ class VocabSourceResult(CamelModel):
     detail: str | None = None
 
 
-class ConfirmImportRequest(BaseModel):
-    """The rows the user kept after correcting the extraction."""
+class ConfirmImportRequest(CamelModel):
+    """The rows the user kept after correcting the extraction, and where they go.
+
+    `set_id` adds them to an existing set. Without it the page gets a new set,
+    named `set_name` -- or after the page's label or the day when that is blank
+    -- and filed in `folder_id` when one is given. All three are optional, so a
+    client that sends only the rows gets the old behaviour.
+    """
 
     items: list[DetectedItem]
+    set_id: int | None = None
+    set_name: str | None = Field(default=None, max_length=128)
+    folder_id: int | None = None
 
 
 # -- sets, flashcards, SRS -------------------------------------------------
@@ -245,11 +288,44 @@ class VocabSet(CamelModel):
     page_count: int = 0
     pages_pending: int = 0
     pages_failed: int = 0
+    folder_id: int | None = None
+    jlpt_level: int | None = None
+    # Flashcards: two per word (meaning, and the Japanese), and how many of
+    # them are known in this set -- the Quizlet-style progress.
+    card_count: int = 0
+    known_count: int = 0
 
 
 class VocabSetCreate(BaseModel):
     name: str
     description: str | None = None
+
+
+class VocabSetUpdate(CamelModel):
+    """A partial edit. A field left out is unchanged; a field sent as null is
+    cleared -- `folderId: null` unfiles the set, `jlptLevel: null` untags it.
+    The route tells the two apart with `model_fields_set`."""
+
+    name: str | None = Field(None, min_length=1, max_length=128)
+    folder_id: int | None = None
+    jlpt_level: int | None = Field(None, ge=1, le=5)
+
+
+class VocabSetMerge(CamelModel):
+    """Fold this set into another: its words and pages move, then it goes."""
+
+    into_set_id: int
+
+
+class VocabFolder(CamelModel):
+    id: int
+    name: str
+    created_at: datetime
+    set_count: int = 0
+
+
+class VocabFolderWrite(CamelModel):
+    name: str = Field(..., min_length=1, max_length=128)
 
 
 class Flashcard(CamelModel):
@@ -295,6 +371,18 @@ class FlashcardAnswer(CamelModel):
     correct: bool | None = None
     # SM-2 quality if the UI offers again/hard/good/easy. Otherwise derived.
     grade: int | None = None
+    # The set this was studied in. A right answer marks the card known there.
+    set_id: int | None = None
+
+
+class SetStudy(CamelModel):
+    """A set's flashcards still to learn, shuffled, with its progress."""
+
+    set_id: int
+    name: str
+    card_count: int
+    known_count: int
+    cards: list[Flashcard]
 
 
 class FlashcardOutcome(CamelModel):
@@ -401,7 +489,7 @@ class GrammarEntryCreate(CamelModel):
     """
 
     pattern: str = Field(min_length=1, max_length=128)
-    sense_label: str = Field("", max_length=64)
+    sense_label: str = Field("", max_length=256)
     learned_on: date
     source: str | None = Field(None, max_length=128)
     note: str | None = None
@@ -415,7 +503,7 @@ class GrammarEntryUpdate(CamelModel):
     enrichment and fixing a typo are the same call.
     """
 
-    sense_label: str | None = Field(None, max_length=64)
+    sense_label: str | None = Field(None, max_length=256)
     meaning: str | None = None
     formation: str | None = None
     style: str | None = Field(None, max_length=32)

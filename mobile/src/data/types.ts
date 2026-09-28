@@ -25,6 +25,30 @@ export interface Reading {
   acceptedAnswer: boolean;
 }
 
+/** One example sentence WaniKani pairs with a vocabulary word. */
+export interface ContextSentence {
+  ja: string;
+  en: string;
+}
+
+/** A recording of the word (MP3 only; see the backend schema). */
+export interface PronunciationAudio {
+  url: string;
+  contentType: string;
+  gender?: string | null;
+  voiceActorName?: string | null;
+  pronunciation?: string | null;
+}
+
+/**
+ * An extra meaning WaniKani grades on. `whitelist` counts as right even though
+ * it is not listed among the meanings; `blacklist` is a known wrong answer.
+ */
+export interface AuxiliaryMeaning {
+  meaning: string;
+  type: 'whitelist' | 'blacklist';
+}
+
 export interface Subject {
   id: number;
   type: SubjectType;
@@ -38,12 +62,23 @@ export interface Subject {
   readings: Reading[];
   meaningMnemonic?: string | null;
   readingMnemonic?: string | null;
+  meaningHint?: string | null;
+  readingHint?: string | null;
   /** Radicals that build this kanji, or kanji that build this word. */
   componentSubjectIds: number[];
   /** Kanji this radical appears in, or vocabulary using this kanji. */
   amalgamationSubjectIds: number[];
   /** Backfilled once from the kanji-data seed import; null when unknown. */
   jlptLevel?: number | null;
+  /** Vocabulary only. */
+  contextSentences?: ContextSentence[];
+  /** Vocabulary only, e.g. "noun", "godan verb". */
+  partsOfSpeech?: string[];
+  /** Vocabulary only. */
+  pronunciationAudios?: PronunciationAudio[];
+  /** Kanji only: kanji easily mistaken for this one. */
+  visuallySimilarSubjectIds?: number[];
+  auxiliaryMeanings?: AuxiliaryMeaning[];
 }
 
 export interface Assignment {
@@ -260,6 +295,41 @@ export interface VocabSet {
   pageCount: number;
   pagesPending: number;
   pagesFailed: number;
+  /** Null when the set is unfiled. */
+  folderId: number | null;
+  /** The tier this group is studied as; null when untagged. */
+  jlptLevel: number | null;
+  /** Flashcards: two per word (meaning, and the Japanese). */
+  cardCount: number;
+  /** How many of them are known in this set, until it is reset. */
+  knownCount: number;
+}
+
+/** A set's flashcards still to learn, shuffled, with its progress. */
+export interface SetStudy {
+  setId: number;
+  name: string;
+  cardCount: number;
+  knownCount: number;
+  cards: Flashcard[];
+}
+
+/** One level above sets: "Quartet I" holding its lessons. */
+export interface VocabFolder {
+  id: number;
+  name: string;
+  createdAt: string;
+  setCount: number;
+}
+
+/**
+ * Which cards a flashcard session draws from. Every field optional; none at
+ * all is the whole deck.
+ */
+export interface FlashcardScope {
+  setId?: number;
+  folderId?: number;
+  jlpt?: number;
 }
 
 /**
@@ -486,7 +556,11 @@ export interface FlashcardAnswerWrite {
   srsStateId: number;
   /** What the user typed. The server regrades it; the client's verdict is
    *  only ever used to show a result before the write lands. */
-  answerGiven: string;
+  answerGiven?: string;
+  /** The set it was studied in; a right answer marks the card known there. */
+  setId?: number;
+  /** A flipped card, graded by the person holding it: nothing was typed. */
+  correct?: boolean;
 }
 
 export interface PendingWrite {

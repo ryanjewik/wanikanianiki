@@ -12,10 +12,13 @@ from typing import Any
 
 from app.schemas import (
     Assignment,
+    AuxiliaryMeaning,
+    ContextSentence,
     Counted,
     DayActivity,
     LevelProgress,
     Meaning,
+    PronunciationAudio,
     Reading,
     StreakSummary,
     Subject,
@@ -83,6 +86,29 @@ def parse_subject(resource: dict[str, Any]) -> Subject:
         reading_hint=data.get("reading_hint"),
         component_subject_ids=data.get("component_subject_ids", []),
         amalgamation_subject_ids=data.get("amalgamation_subject_ids", []),
+        context_sentences=[
+            ContextSentence(ja=c["ja"], en=c["en"])
+            for c in data.get("context_sentences") or []
+            if c.get("ja") and c.get("en")
+        ],
+        parts_of_speech=list(data.get("parts_of_speech") or []),
+        pronunciation_audios=[
+            PronunciationAudio(
+                url=a["url"],
+                content_type=a["content_type"],
+                gender=(a.get("metadata") or {}).get("gender"),
+                voice_actor_name=(a.get("metadata") or {}).get("voice_actor_name"),
+                pronunciation=(a.get("metadata") or {}).get("pronunciation"),
+            )
+            for a in data.get("pronunciation_audios") or []
+            if a.get("content_type") == "audio/mpeg" and a.get("url")
+        ],
+        visually_similar_subject_ids=list(data.get("visually_similar_subject_ids") or []),
+        auxiliary_meanings=[
+            AuxiliaryMeaning(meaning=m["meaning"], type=m["type"])
+            for m in data.get("auxiliary_meanings") or []
+            if m.get("type") in ("whitelist", "blacklist") and m.get("meaning")
+        ],
     )
 
 

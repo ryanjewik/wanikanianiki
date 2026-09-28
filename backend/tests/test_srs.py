@@ -67,6 +67,12 @@ def test_a_failure_resets_the_ladder_rather_than_shortening_it():
     assert mature.lapses == 1
 
 
+def test_a_missed_card_stays_due():
+    """Only a pass takes a card out of the pile; a miss is still to learn."""
+    missed = step(GRADE_INCORRECT, interval=6, reps=2)
+    assert missed.due_at == NOW
+
+
 def test_lapses_accumulate_across_failures():
     """The algorithm forgets; the count is what marks a word worth relearning."""
     first = step(GRADE_INCORRECT, interval=30, reps=4, lapses=2)

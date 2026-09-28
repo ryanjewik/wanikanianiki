@@ -14,7 +14,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import * as React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -24,6 +23,7 @@ import {
 
 import { EmptyDeckArt, OfflineArt } from '@/components/icons';
 import { LanguageInput } from '@/components/LanguageInput';
+import { showDialog } from '@/components/Dialog';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, EmptyState, Pill } from '@/components/ui';
 import * as api from '@/data/api';
@@ -79,10 +79,11 @@ export default function GrammarScreen() {
       // and filling it in is the only thing you can do next.
       router.push(`/grammar/${created.id}`);
     } catch {
-      Alert.alert(
-        'Could not log that',
-        'Check that the app can reach your backend, then try again.',
-      );
+      showDialog({
+        title: 'Could not log that',
+        message: 'Check that the app can reach your backend, then try again.',
+        tone: 'error',
+      });
     } finally {
       setSaving(false);
     }

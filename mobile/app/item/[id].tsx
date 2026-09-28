@@ -11,6 +11,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { StageBadge } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { speakSubject, SubjectExtras } from '@/components/SubjectExtras';
 import {
   Card,
   CardBanner,
@@ -21,10 +22,9 @@ import {
   StageLadder,
   StatTile,
 } from '@/components/ui';
-import { findSubject } from '@/data/fixtures';
 import { formatDueIn } from '@/data/sync';
 import type { Subject } from '@/data/types';
-import { useSubject } from '@/hooks/useStudyData';
+import { useSubject, useSubjects } from '@/hooks/useStudyData';
 import {
   colors,
   jp,
@@ -43,6 +43,9 @@ export default function ItemDetailScreen() {
   const router = useRouter();
   const subjectId = Number(id);
   const { data } = useSubject(Number.isFinite(subjectId) ? subjectId : null);
+  // Before the early return, so the hook order never changes between renders.
+  const { data: components } = useSubjects(data?.subject.componentSubjectIds ?? []);
+  const { data: usedIn } = useSubjects(data?.subject.amalgamationSubjectIds ?? []);
 
   if (!data) return <View style={styles.screen} />;
 
@@ -60,12 +63,8 @@ export default function ItemDetailScreen() {
   const kunyomi = subject.readings.find((r) => r.type === 'kunyomi');
   const plainReading = subject.readings.find((r) => r.type === 'vocabulary');
 
-  const components = subject.componentSubjectIds
-    .map(findSubject)
-    .filter((s): s is Subject => Boolean(s));
-  const usedIn = subject.amalgamationSubjectIds
-    .map(findSubject)
-    .filter((s): s is Subject => Boolean(s));
+  const parts: Subject[] = components ?? [];
+  const appearsIn: Subject[] = usedIn ?? [];
 
   const typeTitle =
     subject.type === 'kanji' ? 'Kanji Detail' : subject.type === 'radical' ? 'Radical Detail' : 'Word Detail';
@@ -100,9 +99,9 @@ export default function ItemDetailScreen() {
                 <Text style={styles.alsoLine}>also: {otherMeanings.join(', ')}</Text>
               ) : null}
 
-              {components.length > 0 ? (
+              {parts.length > 0 ? (
                 <View style={styles.componentRow}>
-                  {components.map((component) => (
+                  {parts.map((component) => (
                     <Pressable
                       key={component.id}
                       onPress={() => router.push(`/item/${component.id}`)}
@@ -119,7 +118,7 @@ export default function ItemDetailScreen() {
                     </Pressable>
                   ))}
                   <Text style={styles.componentCount}>
-                    {components.length} {subject.type === 'kanji' ? 'radicals' : 'kanji'}
+                    {parts.length} {subject.type === 'kanji' ? 'radicals' : 'kanji'}
                   </Text>
                 </View>
               ) : null}
@@ -138,9 +137,17 @@ export default function ItemDetailScreen() {
               {plainReading ? (
                 <ReadingChip reading={plainReading.reading} label="READING" tone="vocabulary" />
               ) : null}
-              <View style={styles.speakButton}>
+              {/* Was drawn but never wired: a ♪ that did nothing when tapped. */}
+              <Pressable
+                onPress={() => speakSubject(subject)}
+                onPressIn={feedback.tap}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Read aloud"
+                style={({ pressed }) => [styles.speakButton, pressed && { opacity: 0.6 }]}
+              >
                 <Text style={styles.speakGlyph}>♪</Text>
-              </View>
+              </Pressable>
             </View>
           </Card>
         ) : null}
@@ -162,6 +169,8 @@ export default function ItemDetailScreen() {
             <Text style={styles.mnemonicText}>{subject.readingMnemonic}</Text>
           </Card>
         ) : null}
+
+        <SubjectExtras subject={subject} />
 
         <Card variant="bordered">
           <SectionHeading
@@ -186,21 +195,21 @@ export default function ItemDetailScreen() {
           </View>
         </Card>
 
-        {usedIn.length > 0 ? (
+        {appearsIn.length > 0 ? (
           <Card variant="bordered">
             <SectionHeading
               title="Shows up in"
-              trailing={`${usedIn.length} words ›`}
+              trailing={`${appearsIn.length} words ›`}
               trailingColor={colors.vocabulary}
             />
             <View>
-              {usedIn.map((word, index) => (
+              {appearsIn.map((word, index) => (
                 <Pressable
                   key={word.id}
                   onPress={() => router.push(`/item/${word.id}`)}
                   onPressIn={feedback.select}
                 >
-                  <View style={[styles.wordRow, index < usedIn.length - 1 && styles.rowDivider]}>
+                  <View style={[styles.wordRow, index < appearsIn.length - 1 && styles.rowDivider]}>
                     <Text style={styles.wordGlyph}>{word.characters}</Text>
                     <Text style={styles.wordMeaning}>
                       {word.meanings[0]?.meaning.toLowerCase() ?? ''}

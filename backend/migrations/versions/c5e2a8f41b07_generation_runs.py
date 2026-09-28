@@ -1,7 +1,7 @@
 """generation_runs, and questions.run_id
 
 Revision ID: c5e2a8f41b07
-Revises: 3413a054bc88
+Revises: f2b9d4e7a150
 Create Date: 2026-09-28 10:00:00.000000
 
 One row per pass of the lesson worker, so the app can show what each run
@@ -25,7 +25,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'c5e2a8f41b07'
-down_revision: str | Sequence[str] | None = '3413a054bc88'
+down_revision: str | Sequence[str] | None = 'f2b9d4e7a150'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

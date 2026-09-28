@@ -24,6 +24,46 @@ interface IconProps {
 /* Item types — replaces the 部 / 字 / 語 glyph tiles in nav and lists          */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* Navigation                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The way back to the dashboard from anywhere in the stack. Outline only, in
+ * the header's ink, so it sits beside the back chevron as a control rather
+ * than a coloured tile competing with the screen's own glyph.
+ */
+export function HomeIcon({ size = 22, color = colors.inkSoft }: IconProps & { color?: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 100 100">
+      <Path
+        d="M14 48 L50 17 L86 48"
+        stroke={color}
+        strokeWidth={10}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <Path
+        d="M25 42 V78 Q25 85 32 85 H68 Q75 85 75 78 V42"
+        stroke={color}
+        strokeWidth={10}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <Path
+        d="M42 85 V64 Q42 58 48 58 H52 Q58 58 58 64 V85"
+        stroke={color}
+        strokeWidth={9}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </Svg>
+  );
+}
+
 /** One building block: the pieces kanji are made of. */
 export function RadicalIcon({ size = 22 }: IconProps) {
   return (

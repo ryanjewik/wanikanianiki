@@ -11,10 +11,14 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import * as React from 'react';
+import { AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DialogHost } from '@/components/Dialog';
+import { isBackendConfigured } from '@/data/api';
 import { getDatabase } from '@/data/db';
+import { syncNow } from '@/data/sync';
 import { initFeedback } from '@/feedback';
 import { colors } from '@/theme/tokens';
 
@@ -64,6 +68,22 @@ export default function RootLayout() {
 
   const ready = (fontsLoaded || Boolean(fontError)) && databaseReady;
 
+  // Drain the outbox and refresh the mirror on launch and whenever the app
+  // comes back to the front. Without it, answers left queued -- the phone was
+  // offline, or the server was briefly unreachable -- waited until the next
+  // answer or a pull-to-refresh, and the server went on counting those cards
+  // as due.
+  React.useEffect(() => {
+    if (!databaseReady || !isBackendConfigured) return;
+    // Full pulls: a copy kept only by diffs never recovers from a change it
+    // missed -- lessons done on the website, reviews done elsewhere.
+    void syncNow({ full: true }).catch(() => undefined);
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void syncNow({ full: true }).catch(() => undefined);
+    });
+    return () => subscription.remove();
+  }, [databaseReady]);
+
   React.useEffect(() => {
     if (ready) void SplashScreen.hideAsync().catch(() => undefined);
   }, [ready]);
@@ -75,6 +95,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <StatusBar style="dark" />
         <RootStack />
+        <DialogHost />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

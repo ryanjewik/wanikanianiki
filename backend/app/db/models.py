@@ -86,6 +86,24 @@ class Subject(Base):
     # Backfilled once from the kanji-data seed import; null until then.
     jlpt_level: Mapped[int | None] = mapped_column(Integer)
 
+    # The rest of what WaniKani sends for a subject. Empty lists, not nulls:
+    # a radical genuinely has no context sentences, a kanji no audio.
+    context_sentences: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    parts_of_speech: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    pronunciation_audios: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    visually_similar_subject_ids: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+    auxiliary_meanings: Mapped[list] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb")
+    )
+
     # WaniKani's own `data_updated_at`, used as the `updated_after` cursor.
     data_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     synced_at: Mapped[datetime] = mapped_column(
@@ -341,6 +359,33 @@ class VocabItem(Base):
 
 
 
+class VocabFolder(Base):
+    """One level above sets: "Quartet I" holding its lessons.
+
+    Deliberately one level. Folders inside folders is more tapping for an
+    arrangement a textbook series already fits in two levels.
+    """
+
+    __tablename__ = "vocab_folders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_vocab_folders_user_id"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_vocab_folders_user_name"),
+    )
+
+
 class VocabSet(Base):
     """A named group of vocabulary — "Quartet I, Lesson 1", "N3 verbs".
 
@@ -357,6 +402,16 @@ class VocabSet(Base):
 
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+
+    # Null is "unfiled". Deleting the folder unfiles the set; it never deletes
+    # it -- see the migration.
+    folder_id: Mapped[int | None] = mapped_column(
+        ForeignKey("vocab_folders.id", name="fk_vocab_sets_folder_id", ondelete="SET NULL"),
+        index=True,
+    )
+    # The tier this group is studied as. Set from the import's own tier when
+    # an import creates the group, and changeable afterwards.
+    jlpt_level: Mapped[int | None] = mapped_column(Integer)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -388,6 +443,31 @@ class VocabSetItem(Base):
         ForeignKey("vocab_items.id", ondelete="CASCADE"), primary_key=True
     )
     added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class VocabSetProgress(Base):
+    """A card you know, within one set -- studied the way Quizlet studies.
+
+    Studying a set shows only the cards not in here, and a right answer puts a
+    card in. It stays until the set is reset. Per set rather than per card: a
+    word in two sets is studied, and known, separately in each.
+
+    Independent of `srs_state`'s schedule, which still moves on every answer
+    and feeds the generated practice; knowing a card here is not a claim about
+    when it is next due there.
+    """
+
+    __tablename__ = "vocab_set_progress"
+
+    set_id: Mapped[int] = mapped_column(
+        ForeignKey("vocab_sets.id", ondelete="CASCADE"), primary_key=True
+    )
+    srs_state_id: Mapped[int] = mapped_column(
+        ForeignKey("srs_state.id", ondelete="CASCADE"), primary_key=True
+    )
+    known_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
@@ -591,7 +671,7 @@ class GrammarEntry(Base):
     # NULLs as distinct under a unique constraint, so a nullable column here
     # would happily accept the same pattern twice with no sense on either.
     sense_label: Mapped[str] = mapped_column(
-        String(64), nullable=False, default="", server_default=text("''")
+        String(256), nullable=False, default="", server_default=text("''")
     )
 
     # -- enrichment output, all optional until it has run ---------------------

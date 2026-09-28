@@ -7,7 +7,7 @@
  * write the same stored preferences.
  */
 import * as React from 'react';
-import { StyleSheet, Switch, Text, View } from 'react-native';
+import { Platform, StyleSheet, Switch, Text, View } from 'react-native';
 
 import {
   feedback,
@@ -28,7 +28,9 @@ export function FeedbackToggles() {
         // turning this on in a quiet room.
         blurb={
           soundAvailable
-            ? 'Short cues for right, wrong and finishing a session. Follows your phone’s silent switch.'
+            ? Platform.OS === 'android'
+              ? 'Short cues for right, wrong and finishing a session. Plays at your media volume.'
+              : 'Short cues for right, wrong and finishing a session. Follows your phone’s silent switch.'
             : 'Unavailable in this build — rebuild the app to enable sound.'
         }
         value={settings.sound && soundAvailable}

@@ -15,6 +15,8 @@
  * quiet one. Every entry point is wrapped, and the engine simply reports
  * itself unavailable.
  */
+import { Platform } from 'react-native';
+
 export type Cue =
   | 'tap'
   | 'select'
@@ -96,14 +98,19 @@ export function prime(): void {
   primed = true;
 
   try {
-    // `playsInSilentMode: false` is the deliberate choice. These are interface
-    // sounds, not content — a phone on silent should stay silent, and an app
-    // that overrides the hardware switch to play a blip is one people mute in
-    // settings and never turn back on.
+    // The silent switch means different things on the two platforms. On iOS
+    // it is the hardware mute switch, and a phone switched to silent should
+    // stay silent. On Android the ringer mode governs the *ringer*; media --
+    // which is what every app's sound is -- follows the media volume. Passing
+    // false there makes expo-audio refuse to play anything at all while the
+    // phone is on vibrate, which silenced WaniKani's recordings along with the
+    // blips. The in-app Sound switch is how the cues get turned off.
+    //
+    // The mode is session-wide, so the recordings follow the same rule.
     //
     // `mixWithOthers` so studying over a podcast does not stop the podcast.
     void audio.setAudioModeAsync({
-      playsInSilentMode: false,
+      playsInSilentMode: Platform.OS === 'android',
       shouldPlayInBackground: false,
       interruptionMode: 'mixWithOthers',
     });
@@ -137,5 +144,30 @@ export function play(cue: Cue): void {
     player.play();
   } catch {
     // A player can be torn down under us on Android when audio focus is lost.
+  }
+}
+
+/**
+ * One reusable player for spoken content -- a word's recorded pronunciation.
+ * Separate from the cues: those are preloaded per sound, while this plays
+ * whatever URL it is handed, swapping its source rather than building a new
+ * player for every tap.
+ */
+let voice: (Player & { replace(source: { uri: string }): void }) | null = null;
+
+/** Plays a recording from a URL. Returns false if it could not be played. */
+export function playRecording(url: string): boolean {
+  if (!audio || !url) return false;
+  try {
+    if (!voice) {
+      voice = audio.createAudioPlayer({ uri: url }) as unknown as typeof voice;
+    } else {
+      voice.replace({ uri: url });
+    }
+    voice?.seekTo(0);
+    voice?.play();
+    return true;
+  } catch {
+    return false;
   }
 }

@@ -23,12 +23,15 @@ from fastapi import (
     UploadFile,
     status,
 )
+from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session, optional_db_session, settings_dep, wanikani_client
 from app.config import Settings
 from app.db import repository as repo
 from app.db.models import User
+from app.db.models import VocabFolder as VocabFolderRow
+from app.db.models import VocabSet as VocabSetRow
 from app.schemas import (
     AgentContext,
     Assignment,
@@ -50,11 +53,16 @@ from app.schemas import (
     QuestionOutcome,
     ReviewRequest,
     ReviewResult,
+    SetStudy,
     Subject,
     SyncResult,
+    VocabFolder,
+    VocabFolderWrite,
     VocabItem,
     VocabSet,
     VocabSetCreate,
+    VocabSetMerge,
+    VocabSetUpdate,
     VocabSourceResult,
 )
 from app.schemas import JlptCoverage as JlptCoverageOut
@@ -207,6 +215,7 @@ async def get_assignments(
     updated_after: datetime | None = Query(None, alias="updated_after"),
     immediately_available_for_lessons: bool = False,
     immediately_available_for_review: bool = False,
+    fresh: bool = False,
     client: WaniKaniClient = Depends(wanikani_client),
     session: AsyncSession | None = Depends(optional_db_session),
 ) -> list[Assignment]:
@@ -215,9 +224,16 @@ async def get_assignments(
     `updated_after` is what makes the client's poll a cheap diff. When it is
     supplied the request always goes upstream, since the cache cannot answer
     "what changed since X" for records it has not seen yet.
+
+    `fresh` asks for every assignment, straight from WaniKani: the phone's
+    full refresh, which is how a copy that missed a change -- a lesson done on
+    the website, a review done elsewhere -- gets put right. Diffs alone never
+    recover from a change they missed once. What comes back also refreshes
+    the server's own copy.
     """
     wants_live = (
-        updated_after is not None
+        fresh
+        or updated_after is not None
         or immediately_available_for_lessons
         or immediately_available_for_review
     )
@@ -232,7 +248,11 @@ async def get_assignments(
         immediately_available_for_lessons=immediately_available_for_lessons or None,
         immediately_available_for_review=immediately_available_for_review or None,
     )
-    return [parse_assignment(r) for r in raw]
+    assignments = [parse_assignment(r) for r in raw]
+
+    if fresh and session is not None and (user := await repo.get_default_user(session)):
+        await repo.upsert_assignments(session, user.id, assignments)
+    return assignments
 
 
 @router.get("/api/subjects", response_model=list[Subject], tags=["read"])
@@ -287,6 +307,9 @@ async def start_assignment(
     try:
         raw = await client.start_assignment(assignment_id)
     except WaniKaniValidationError as exc:
+        # Logged: a refused lesson is otherwise invisible -- the phone sets it
+        # aside and the only symptom is progress that never sticks.
+        logger.warning("WaniKani refused start of assignment %s: %s", assignment_id, exc.body)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -327,6 +350,9 @@ async def submit_review(
             created_at=review.created_at.isoformat() if review.created_at else None,
         )
     except WaniKaniValidationError as exc:
+        logger.warning(
+            "WaniKani refused review of assignment %s: %s", review.assignment_id, exc.body
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -486,6 +512,36 @@ async def confirm_vocab_source(
 
     user = await repo.get_default_user(session)
     keep = [item for item in payload.items if item.selected and item.status != "duplicate"]
+
+    # Checked before anything is written, so a stale id from the phone fails
+    # the whole confirm instead of landing the words somewhere unexpected.
+    if payload.set_id is not None:
+        _, chosen = await _owned_set(session, payload.set_id)
+        source.set_id = chosen.id
+    elif payload.folder_id is not None:
+        await _owned_folder(session, payload.folder_id)
+
+    # Every import lands in a group. A page photographed into a set already
+    # has one, as does a page the user pointed at an existing set; otherwise it
+    # gets its own -- named by the user, or after its label or the day -- and
+    # tagged with the JLPT tier the page was imported as. Made here rather
+    # than at upload so an upload that is never confirmed leaves no empty
+    # group behind.
+    if keep and source.set_id is None:
+        stamp = source.uploaded_at.astimezone(timezone.utc) if source.uploaded_at else None
+        base = (payload.set_name or "").strip() or source.label or (
+            f"Import {stamp:%b} {stamp.day}" if stamp else "Imported words"
+        )
+        group = await repo.create_vocab_set(
+            session,
+            user_id=user.id,
+            name=await repo.unique_set_name(session, user_id=user.id, name=base),
+        )
+        group.jlpt_level = source.jlpt_level
+        group.folder_id = payload.folder_id
+        source.set_id = group.id
+        await session.flush()
+
     created = await repo.create_flashcards(
         session,
         keep,
@@ -600,12 +656,180 @@ async def list_vocab_set_items(
     return await repo.list_vocab_set_items(session, set_id)
 
 
+async def _owned_set(session: AsyncSession, set_id: int) -> tuple[User, VocabSetRow]:
+    """The set and its owner, or a 404 -- someone else's set is reported as
+    missing, as elsewhere."""
+    user = await repo.get_default_user(session)
+    row = await repo.get_vocab_set(session, set_id) if user else None
+    if user is None or row is None or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown set")
+    return user, row
+
+
+async def _set_out(session: AsyncSession, user: User, set_id: int) -> VocabSet:
+    return next(s for s in await repo.list_vocab_sets(session, user.id) if s.id == set_id)
+
+
+@router.patch("/api/vocab-sets/{set_id}", response_model=VocabSet, tags=["import"])
+async def update_vocab_set(
+    set_id: int,
+    payload: VocabSetUpdate,
+    session: AsyncSession = Depends(db_session),
+) -> VocabSet:
+    """Rename a set, file it in a folder (or unfile it), or tag its JLPT tier.
+
+    Only the fields sent are touched, and a field sent as null is cleared --
+    so moving a set between folders never has to resend its name.
+    """
+    user, row = await _owned_set(session, set_id)
+    fields = payload.model_fields_set
+
+    if "name" in fields and payload.name and payload.name != row.name:
+        if await repo.get_vocab_set_by_name(session, user_id=user.id, name=payload.name):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A set called {payload.name!r} already exists",
+            )
+    if "folder_id" in fields and payload.folder_id is not None:
+        folder = await repo.get_vocab_folder(session, payload.folder_id)
+        if folder is None or folder.user_id != user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown folder")
+
+    await repo.update_vocab_set(
+        session,
+        row,
+        name=payload.name,
+        folder_id=payload.folder_id,
+        jlpt_level=payload.jlpt_level,
+        fields=fields,
+    )
+    return await _set_out(session, user, set_id)
+
+
+@router.post("/api/vocab-sets/{set_id}/merge", response_model=VocabSet, tags=["import"])
+async def merge_vocab_set(
+    set_id: int,
+    payload: VocabSetMerge,
+    session: AsyncSession = Depends(db_session),
+) -> VocabSet:
+    """Fold one set into another. Its words and pages move; the set is deleted.
+
+    Words keep their schedules -- membership moves, the cards do not change --
+    and a word already in the target is not duplicated.
+    """
+    if payload.into_set_id == set_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A set cannot be merged into itself",
+        )
+    user, source = await _owned_set(session, set_id)
+    _, target = await _owned_set(session, payload.into_set_id)
+    await repo.merge_vocab_sets(session, source, target)
+    return await _set_out(session, user, target.id)
+
+
+@router.get("/api/vocab-sets/{set_id}/study", response_model=SetStudy, tags=["study"])
+async def study_vocab_set(set_id: int, session: AsyncSession = Depends(db_session)) -> SetStudy:
+    """The set's flashcards you do not know yet, shuffled, with its progress."""
+    user, row = await _owned_set(session, set_id)
+    total, known, cards = await repo.get_set_study(session, user.id, row)
+    return SetStudy(set_id=row.id, name=row.name, card_count=total, known_count=known, cards=cards)
+
+
+@router.post("/api/vocab-sets/{set_id}/reset", response_model=VocabSet, tags=["study"])
+async def reset_vocab_set(set_id: int, session: AsyncSession = Depends(db_session)) -> VocabSet:
+    """Forget which of the set's cards are known, to study it from the top."""
+    user, row = await _owned_set(session, set_id)
+    await repo.reset_set_progress(session, row.id)
+    await session.flush()
+    return await _set_out(session, user, row.id)
+
+
+@router.get("/api/vocab-folders", response_model=list[VocabFolder], tags=["import"])
+async def list_vocab_folders(session: AsyncSession = Depends(db_session)) -> list[VocabFolder]:
+    """Folders, alphabetical, with how many sets each holds."""
+    user = await repo.get_default_user(session)
+    if user is None:
+        return []
+    return await repo.list_vocab_folders(session, user.id)
+
+
+@router.post(
+    "/api/vocab-folders",
+    response_model=VocabFolder,
+    status_code=status.HTTP_201_CREATED,
+    tags=["import"],
+)
+async def create_vocab_folder(
+    payload: VocabFolderWrite, session: AsyncSession = Depends(db_session)
+) -> VocabFolder:
+    user = await repo.get_default_user(session)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "message": "No user on record yet",
+                "hint": "Run POST /api/sync once so the account is known.",
+            },
+        )
+    name = payload.name.strip()
+    if await repo.get_vocab_folder_by_name(session, user_id=user.id, name=name):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"A folder called {name!r} already exists"
+        )
+    row = await repo.create_vocab_folder(session, user_id=user.id, name=name)
+    return VocabFolder(id=row.id, name=row.name, created_at=row.created_at, set_count=0)
+
+
+async def _owned_folder(session: AsyncSession, folder_id: int) -> tuple[User, VocabFolderRow]:
+    user = await repo.get_default_user(session)
+    row = await repo.get_vocab_folder(session, folder_id) if user else None
+    if user is None or row is None or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown folder")
+    return user, row
+
+
+@router.patch("/api/vocab-folders/{folder_id}", response_model=VocabFolder, tags=["import"])
+async def rename_vocab_folder(
+    folder_id: int, payload: VocabFolderWrite, session: AsyncSession = Depends(db_session)
+) -> VocabFolder:
+    user, row = await _owned_folder(session, folder_id)
+    name = payload.name.strip()
+    if name != row.name and await repo.get_vocab_folder_by_name(
+        session, user_id=user.id, name=name
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"A folder called {name!r} already exists"
+        )
+    row.name = name
+    await session.flush()
+    return next(f for f in await repo.list_vocab_folders(session, user.id) if f.id == folder_id)
+
+
+@router.delete(
+    "/api/vocab-folders/{folder_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["import"],
+)
+async def delete_vocab_folder(folder_id: int, session: AsyncSession = Depends(db_session)) -> None:
+    """Remove a folder. Its sets are unfiled, never deleted -- a folder is an
+    arrangement, and throwing it away must not throw away words."""
+    _, row = await _owned_folder(session, folder_id)
+    await session.execute(
+        sql_update(VocabSetRow).where(VocabSetRow.folder_id == folder_id).values(folder_id=None)
+    )
+    await session.delete(row)
+
+
 # -- studying --------------------------------------------------------------
 
 
 @router.get("/api/flashcards/due", response_model=list[Flashcard], tags=["study"])
 async def get_due_flashcards(
     limit: int = Query(100, ge=1, le=500),
+    set_id: int | None = Query(None, description="Only cards from this set."),
+    folder_id: int | None = Query(None, description="Only cards from sets in this folder."),
+    jlpt: int | None = Query(None, ge=1, le=5, description="Only cards of this JLPT tier."),
     session: AsyncSession = Depends(db_session),
 ) -> list[Flashcard]:
     """Imported vocabulary due now — never WaniKani items.
@@ -617,7 +841,9 @@ async def get_due_flashcards(
     user = await repo.get_default_user(session)
     if user is None:
         return []
-    return await repo.get_due_flashcards(session, user.id, limit=limit)
+    return await repo.get_due_flashcards(
+        session, user.id, limit=limit, set_id=set_id, folder_id=folder_id, jlpt_level=jlpt
+    )
 
 
 @router.post(
@@ -655,6 +881,19 @@ async def answer_flashcard(
         )
 
     grade = payload.grade if payload.grade is not None else srs.grade_for(correct)
+
+    # Studied as part of a set: right means known there until the set is reset.
+    # A set that is gone, or never held this word, is ignored rather than
+    # refused -- the answer itself still counts, and an outbox replaying it
+    # after a merge must not be stuck on it.
+    if correct and payload.set_id is not None:
+        set_row = await repo.get_vocab_set(session, payload.set_id)
+        if (
+            set_row is not None
+            and set_row.user_id == state.user_id
+            and await repo.card_in_set(session, set_id=set_row.id, state=state)
+        ):
+            await repo.mark_card_known(session, set_id=set_row.id, srs_state_id=state.id)
 
     schedule = srs.next_schedule(
         ease_factor=state.ease_factor,

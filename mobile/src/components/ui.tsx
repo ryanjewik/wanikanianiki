@@ -203,6 +203,37 @@ export interface ChunkyButtonProps extends Omit<PressableProps, 'style'> {
   style?: ViewStyle;
 }
 
+const LAYOUT_KEYS = [
+  'flex',
+  'flexGrow',
+  'flexShrink',
+  'flexBasis',
+  'width',
+  'minWidth',
+  'maxWidth',
+  'alignSelf',
+  'margin',
+  'marginTop',
+  'marginBottom',
+  'marginLeft',
+  'marginRight',
+  'marginHorizontal',
+  'marginVertical',
+] as const;
+
+/** Splits a style into what places the control and what draws it. */
+function splitLayout(style: ViewStyle | undefined): { outer: ViewStyle; inner: ViewStyle } {
+  const flat = { ...(StyleSheet.flatten(style) ?? {}) } as Record<string, unknown>;
+  const outer: Record<string, unknown> = {};
+  for (const key of LAYOUT_KEYS) {
+    if (key in flat) {
+      outer[key] = flat[key];
+      delete flat[key];
+    }
+  }
+  return { outer: outer as ViewStyle, inner: flat as ViewStyle };
+}
+
 /**
  * The committing control: a 1.5px ink outline over a hard, un-blurred offset
  * shadow. Pressing it collapses the offset, so the button physically presses
@@ -236,8 +267,19 @@ export function ChunkyButton({
     [cue, disabled, onPressIn],
   );
 
+  // Layout props go on the Pressable, which is what the parent lays out: on the
+  // inner view a `flex: 1` or `alignSelf` did nothing, so buttons meant to
+  // share a row equally just sat at their label's width.
+  const { outer, inner } = splitLayout(style);
+
   return (
-    <Pressable disabled={disabled} onPress={onPress} {...rest} onPressIn={handlePressIn}>
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      {...rest}
+      onPressIn={handlePressIn}
+      style={outer}
+    >
       {({ pressed }) => (
         <View
           style={[
@@ -245,14 +287,19 @@ export function ChunkyButton({
             controlBorder,
             {
               backgroundColor: background,
-              height: size === 'large' ? 50 : 40,
+              // A floor, not a fixed height, and padding of its own: a fixed
+              // height clipped the label under a larger system font size, and
+              // with no side padding the text ran almost to the border.
+              minHeight: size === 'large' ? 52 : 42,
+              paddingHorizontal: size === 'large' ? 24 : 18,
+              paddingVertical: 8,
               // Collapse the hard shadow and drop into the gap it leaves.
               shadowOffset: { width: 0, height: pressed ? 0 : offset },
               transform: [{ translateY: pressed ? offset : 0 }],
               opacity: disabled ? 0.45 : 1,
             },
             shadows.hard,
-            style,
+            inner,
           ]}
         >
           <Text
@@ -668,7 +715,7 @@ const styles = StyleSheet.create({
   },
   queueCta: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 14,
+    paddingHorizontal: 20,
     marginTop: 3,
   },
 
@@ -678,14 +725,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   textButton: {
-    height: 32,
+    minHeight: 40,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   inlineButton: {
     borderRadius: radius.tile,
-    paddingVertical: 6,
-    paddingHorizontal: 11,
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 15,
     backgroundColor: colors.surface,
   },
   inlineButtonQuiet: {

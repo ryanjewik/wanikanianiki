@@ -15,10 +15,11 @@
  *   would otherwise look exactly like being offline. It is never shown back.
  */
 import * as React from 'react';
-import { Alert, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { FeedbackToggles } from '@/components/FeedbackToggles';
 import { MascotAvatar } from '@/components/Mascot';
+import { showDialog } from '@/components/Dialog';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, InlineButton, Overline, StatTile } from '@/components/ui';
 import { API_BASE_URL, checkConnection, isBackendConfigured } from '@/data/api';
@@ -68,7 +69,11 @@ export default function ProfileScreen() {
     try {
       await saveApiKey(key);
     } catch {
-      Alert.alert('Could not save the key', 'Secure storage is unavailable on this device.');
+      showDialog({
+        title: 'Could not save the key',
+        message: 'Secure storage is unavailable on this device.',
+        tone: 'error',
+      });
       return;
     }
     setDraft('');
@@ -77,18 +82,23 @@ export default function ProfileScreen() {
   }, [draft, test]);
 
   const forget = React.useCallback(() => {
-    Alert.alert('Forget this key?', 'The app will stop reaching the server until a key is entered again.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Forget',
-        style: 'destructive',
-        onPress: async () => {
-          await clearApiKey();
-          setHasKey(false);
-          setCheck('idle');
+    showDialog({
+      title: 'Forget this key?',
+      message: 'The app will stop reaching the server until a key is entered again.',
+      tone: 'confirm',
+      actions: [
+        { label: 'Cancel', kind: 'cancel' },
+        {
+          label: 'Forget',
+          kind: 'destructive',
+          onPress: async () => {
+            await clearApiKey();
+            setHasKey(false);
+            setCheck('idle');
+          },
         },
-      },
-    ]);
+      ],
+    });
   }, []);
 
   const verdict = check === 'idle' || check === 'checking' ? null : check;

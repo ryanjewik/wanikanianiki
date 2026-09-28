@@ -13,10 +13,12 @@ import { ActivityCalendar } from '@/components/ActivityCalendar';
 import { Mascot, MascotBanner } from '@/components/Mascot';
 import { AnimatedSessionProgress, GrowBar, RiseIn } from '@/components/motion';
 import { ProfileAvatar, ScreenHeader } from '@/components/ScreenHeader';
-import { Card, QueueCard, SectionHeading } from '@/components/ui';
+import { Card, QueueCard, SectionHeading, TextButton } from '@/components/ui';
 import { isBackendConfigured, triggerServerSync } from '@/data/api';
 import { useAuthStatus } from '@/data/credentials';
 import { formatSyncedAgo } from '@/data/sync';
+import { feedback } from '@/feedback';
+import type { FlashcardOverview } from '@/hooks/useStudyData';
 import type {
   CalendarDay,
   Counted,
@@ -28,6 +30,7 @@ import {
   isoDate,
   useActivityCalendar,
   useDashboard,
+  useFlashcardOverview,
   useJlptCoverage,
   usePracticeQueue,
   useSync,
@@ -48,6 +51,7 @@ export default function DashboardScreen() {
   const { data, reload } = useDashboard();
   const { data: calendar } = useActivityCalendar();
   const { data: practice, reload: reloadPractice } = usePracticeQueue();
+  const { data: flashcards, reload: reloadDue } = useFlashcardOverview();
   const { data: jlpt } = useJlptCoverage();
   const { syncing, refresh } = useSync();
   const auth = useAuthStatus();
@@ -65,26 +69,31 @@ export default function DashboardScreen() {
     }
   }, [auth, reload]);
 
-  // The home tab stays mounted, so the practice count was read once at launch
-  // and never again. Every return to it re-reads the (cheap, read-only) count.
+  // Your own deck's queues change while you are away in a session, and unlike
+  // WaniKani's they are not part of the dashboard payload the sync refreshes.
   useFocusEffect(
     React.useCallback(() => {
+      reloadDue();
       reloadPractice();
-    }, [reloadPractice]),
+    }, [reloadDue, reloadPractice]),
   );
 
-  // Pull-to-refresh is the manual "sync now": the phone drains its queue and
-  // pulls what changed, and the server runs its own full WaniKani pass rather
-  // than waiting for its schedule — that pass is what moves the level shown
-  // here after a level-up.
+  // The pull itself gets a tap, and the end of the sync a soft reveal: a
+  // refresh that finishes silently leaves you guessing whether it did anything.
+  // Pull-to-refresh is also the manual "sync now" for the server: it runs its
+  // own full WaniKani pass rather than waiting for its schedule — that pass is
+  // what moves the level shown here after a level-up.
   const onRefresh = React.useCallback(async () => {
+    feedback.tap();
     await Promise.allSettled([
       refresh(),
       isBackendConfigured ? triggerServerSync() : Promise.resolve(),
     ]);
     reload();
+    reloadDue();
     reloadPractice();
-  }, [refresh, reload, reloadPractice]);
+    feedback.reveal();
+  }, [refresh, reload, reloadDue, reloadPractice]);
 
   if (!data) return <View style={styles.screen} />;
 
@@ -95,7 +104,7 @@ export default function DashboardScreen() {
     <View style={styles.screen}>
       <ScreenHeader
         branded
-        title="KANJI WORKSHOP"
+        title="WaniKaniAniki"
         trailing={<ProfileAvatar onPress={() => router.push('/profile')} />}
       />
 
@@ -111,13 +120,17 @@ export default function DashboardScreen() {
             cards below read as the interface on top of it. Keeping it short
             and edge-to-edge is what makes it a horizon rather than a picture
             someone dropped into a card. */}
-        <MascotBanner variant="wide" height={76} style={styles.banner} />
+        <MascotBanner variant="wide" height={76} fill="cover" style={styles.banner} />
 
         {/* Refused, not offline. Both leave the dashboard on cached data and
             look the same from here, so without this a missing key would pass
             for a bad connection — and waiting never fixes a missing key. */}
         {auth === 'missing' || auth === 'rejected' ? (
-          <Pressable onPress={() => router.push('/profile')}>
+          <Pressable
+            onPress={() => router.push('/profile')}
+            onPressIn={feedback.select}
+            style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+          >
             <Card variant="bordered" style={styles.authCard}>
               <Text style={styles.authTitle}>
                 {auth === 'missing' ? 'Connect this phone' : 'The server refused this phone'}
@@ -160,10 +173,22 @@ export default function DashboardScreen() {
           />
         </RiseIn>
 
+        {/* Your own deck, beside WaniKani's: studied a set at a time, and
+            picking up the set you were last on. */}
+        <RiseIn delay={110}>
+          <FlashcardCard
+            overview={flashcards}
+            onContinue={(setId) =>
+              router.push({ pathname: '/quiz', params: { setId: String(setId) } })
+            }
+            onChoose={() => router.push('/quiz')}
+          />
+        </RiseIn>
+
         {/* The third track, and the one that was previously invisible from
             here: generated practice had no presence on the home screen at all,
             so the only way to find it was to already know it existed. */}
-        <RiseIn delay={110}>
+        <RiseIn delay={165}>
           <QueueCard
             title="Practice Questions"
             count={practice?.questions ?? 0}
@@ -178,9 +203,12 @@ export default function DashboardScreen() {
             disabled={!practice || practice.questions === 0}
             onPress={() => router.push('/lesson-bundle')}
           />
+          {/* The catalog of everything the question writer produced, run by
+              run — also the only place to see whether it is running at all. */}
+          <TextButton label="Question catalog ›" onPress={() => router.push('/generated')} />
         </RiseIn>
 
-        <RiseIn delay={165}>
+        <RiseIn delay={220}>
           <StreakCard streak={data.streak} calendar={calendar} />
         </RiseIn>
 
@@ -226,6 +254,41 @@ export default function DashboardScreen() {
 }
 
 /* -------------------------------------------------------------------------- */
+
+/** Flashcards on the home screen: continue the set you were on, or pick one. */
+function FlashcardCard({
+  overview,
+  onContinue,
+  onChoose,
+}: {
+  overview: FlashcardOverview | null;
+  onContinue: (setId: number) => void;
+  onChoose: () => void;
+}) {
+  const last = overview?.lastSet ?? null;
+  const unfinished = last !== null && last.knownCount < last.cardCount;
+
+  const blurb = !overview || overview.setCount === 0
+    ? 'Import a page and its words become a set to study.'
+    : unfinished
+      ? `Continue "${last.name}" — ${last.knownCount} of ${last.cardCount} known.`
+      : last
+        ? `"${last.name}" is done. Pick another set, or reset it to go again.`
+        : `${overview.remaining} cards to learn across ${overview.setCount} ${overview.setCount === 1 ? 'set' : 'sets'}.`;
+
+  return (
+    <QueueCard
+      title="Vocab Flashcards"
+      count={overview?.remaining ?? 0}
+      tone="vocabulary"
+      blurb={blurb}
+      cta={unfinished ? 'Continue Set' : 'Choose a Set'}
+      art={<Mascot pose="blink" size={80} speed={0.6} />}
+      disabled={!overview || overview.setCount === 0}
+      onPress={() => (unfinished ? onContinue(last.id) : onChoose())}
+    />
+  );
+}
 
 /**
  * The seven days the dashboard payload carries, in the calendar's shape. Used

@@ -8,6 +8,8 @@
  * endpoints that actually mutate the account.
  */
 import Constants from 'expo-constants';
+import { File } from 'expo-file-system';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { getApiKey, reportAuth } from './credentials';
 import type {
@@ -17,6 +19,7 @@ import type {
   DetectedItem,
   Flashcard,
   FlashcardOutcome,
+  FlashcardScope,
   GenerationRunDetail,
   GenerationRunList,
   GrammarEnrichment,
@@ -27,7 +30,9 @@ import type {
   LessonQueueCount,
   QuestionOutcome,
   ReviewAnswer,
+  SetStudy,
   Subject,
+  VocabFolder,
   VocabItem,
   VocabSet,
 } from './types';
@@ -172,12 +177,21 @@ export function fetchDashboard(signal?: AbortSignal): Promise<DashboardSummary> 
  * `sync_meta['last_synced_at']`, so each poll is a cheap diff rather than a
  * full re-pull.
  */
+/**
+ * Assignments. `updatedAfter` asks only for what changed since; `fresh` asks
+ * for all of them, straight from WaniKani -- the full refresh that puts right
+ * a copy that missed a change.
+ */
 export function fetchAssignments(
   updatedAfter?: string | null,
-  signal?: AbortSignal,
+  options: { fresh?: boolean; signal?: AbortSignal } = {},
 ): Promise<Assignment[]> {
-  const query = updatedAfter ? `?updated_after=${encodeURIComponent(updatedAfter)}` : '';
-  return request<Assignment[]>(`/api/assignments${query}`, { signal });
+  const params = [
+    updatedAfter ? `updated_after=${encodeURIComponent(updatedAfter)}` : null,
+    options.fresh ? 'fresh=true' : null,
+  ].filter(Boolean);
+  const query = params.length > 0 ? `?${params.join('&')}` : '';
+  return request<Assignment[]>(`/api/assignments${query}`, { signal: options.signal });
 }
 
 /**
@@ -209,8 +223,8 @@ export function startAssignment(assignmentId: number): Promise<Assignment> {
  * Submits one review result. Only the incorrect counts go up — WaniKani
  * computes the new SRS stage server-side, so the client never sends a stage.
  */
-export function submitReview(answer: ReviewAnswer): Promise<Assignment> {
-  return request<Assignment>('/api/reviews', {
+export function submitReview(answer: ReviewAnswer): Promise<{ assignment: Assignment }> {
+  return request<{ assignment: Assignment }>('/api/reviews', {
     method: 'POST',
     body: {
       review: {
@@ -239,6 +253,47 @@ export interface VocabSourceResult {
 const UPLOAD_TIMEOUT_MS = 330_000;
 
 /**
+ * The long edge Claude reads images at. Anything larger is downscaled by the
+ * model anyway, so sending more pixels costs upload time and buys nothing.
+ */
+const MAX_UPLOAD_EDGE = 2576;
+
+/**
+ * Shrinks a page photo to what the model can actually use.
+ *
+ * Not only a nicety: AWS rejects a Lambda function-URL request over 6 MB
+ * before the backend ever runs, and a full-resolution photo from a current
+ * phone camera is past that once encoded. At 2576 px on the long edge a JPEG
+ * page is around 1–2 MB, whatever camera took it.
+ *
+ * Falls back to the original file if the image cannot be processed: an upload
+ * that might be too large is better than no upload.
+ */
+async function prepareForUpload(uri: string): Promise<string> {
+  try {
+    const original = await ImageManipulator.manipulate(uri).renderAsync();
+    const longEdge = Math.max(original.width, original.height);
+    const context = ImageManipulator.manipulate(uri);
+    if (longEdge > MAX_UPLOAD_EDGE) {
+      context.resize(
+        original.width >= original.height
+          ? { width: MAX_UPLOAD_EDGE, height: null }
+          : { width: null, height: MAX_UPLOAD_EDGE },
+      );
+    }
+    const rendered = await context.renderAsync();
+    const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: 0.85 });
+    console.info(
+      `[upload] page ${original.width}x${original.height} -> ${saved.width}x${saved.height}`,
+    );
+    return saved.uri;
+  } catch (error) {
+    console.warn('[upload] could not shrink the page photo; sending it as is', error);
+    return uri;
+  }
+}
+
+/**
  * Sends a textbook photo to be read, and waits for the rows.
  *
  * One request: the server hands the photo to the model and answers with what
@@ -257,12 +312,13 @@ export async function uploadVocabPhoto(
   }
 
   const form = new FormData();
-  // React Native's FormData takes this shape for a local file URI.
-  form.append('image', {
-    uri: imageUri,
-    name: 'page.jpg',
-    type: 'image/jpeg',
-  } as unknown as Blob);
+  // A real file object, not React Native's `{ uri, name, type }` shape: Expo
+  // replaces the global `fetch` with its own, which sends a part only if it
+  // can read the bytes (a Blob, or an expo-file-system File) and throws
+  // "Unsupported FormDataPart implementation" on the old shape — before a
+  // single byte leaves the phone. That is what made every upload fail with
+  // "couldn't reach the server".
+  form.append('image', new File(await prepareForUpload(imageUri)), 'page.jpg');
   if (jlptLevel !== null) form.append('jlpt_level', String(jlptLevel));
   if (options.setId !== undefined) form.append('set_id', String(options.setId));
   if (options.position !== undefined) form.append('position', String(options.position));
@@ -283,7 +339,12 @@ export async function uploadVocabPhoto(
     reportAuth(response.status);
 
     if (!response.ok) {
-      throw new ApiError(`Photo import failed with ${response.status}`, response.status);
+      throw new ApiError(
+        response.status === 413
+          ? 'That photo is too large to send. Try a lower-resolution picture of the page.'
+          : `Photo import failed with ${response.status}`,
+        response.status,
+      );
     }
     return (await response.json()) as VocabSourceResult;
   } catch (error) {
@@ -297,13 +358,31 @@ export async function uploadVocabPhoto(
 }
 
 /** Commits the rows the user kept after reviewing the OCR result. */
+/**
+ * Where confirmed words go. `setId` joins an existing set; otherwise the page
+ * becomes a new set called `setName` (the server names it after the day when
+ * blank), filed in `folderId`. Leave it out entirely for a page that was
+ * photographed into a set, which already knows where it belongs.
+ */
+export interface ImportDestination {
+  setId?: number;
+  setName?: string;
+  folderId?: number | null;
+}
+
 export function confirmVocabImport(
   sourceId: number,
   items: DetectedItem[],
+  destination: ImportDestination = {},
 ): Promise<VocabItem[]> {
   return request<VocabItem[]>(`/api/vocab-sources/${sourceId}/confirm`, {
     method: 'POST',
-    body: { items },
+    body: {
+      items,
+      setId: destination.setId ?? null,
+      setName: destination.setName?.trim() || null,
+      folderId: destination.folderId ?? null,
+    },
   });
 }
 
@@ -330,6 +409,55 @@ export function createVocabSet(name: string, description?: string): Promise<Voca
  * a set deliberately shows everything in it, including what is not due — that
  * is the difference between reading a deck and being quizzed on it.
  */
+/**
+ * A partial edit: a field left out is unchanged, a field sent as null is
+ * cleared (`folderId: null` unfiles, `jlptLevel: null` untags).
+ */
+export function updateVocabSet(
+  setId: number,
+  patch: { name?: string; folderId?: number | null; jlptLevel?: number | null },
+): Promise<VocabSet> {
+  return request<VocabSet>(`/api/vocab-sets/${setId}`, { method: 'PATCH', body: patch });
+}
+
+/** A set's flashcards not yet known, shuffled, with how far through it you are. */
+export function fetchSetStudy(setId: number, signal?: AbortSignal): Promise<SetStudy> {
+  return request<SetStudy>(`/api/vocab-sets/${setId}/study`, { signal });
+}
+
+/** Every card of the set back to unknown, to study it from the top. */
+export function resetVocabSet(setId: number): Promise<VocabSet> {
+  return request<VocabSet>(`/api/vocab-sets/${setId}/reset`, { method: 'POST' });
+}
+
+/** Folds a set into another: its words and pages move, then it is deleted. */
+export function mergeVocabSet(setId: number, intoSetId: number): Promise<VocabSet> {
+  return request<VocabSet>(`/api/vocab-sets/${setId}/merge`, {
+    method: 'POST',
+    body: { intoSetId },
+  });
+}
+
+export function fetchVocabFolders(signal?: AbortSignal): Promise<VocabFolder[]> {
+  return request<VocabFolder[]>('/api/vocab-folders', { signal });
+}
+
+export function createVocabFolder(name: string): Promise<VocabFolder> {
+  return request<VocabFolder>('/api/vocab-folders', { method: 'POST', body: { name } });
+}
+
+export function renameVocabFolder(folderId: number, name: string): Promise<VocabFolder> {
+  return request<VocabFolder>(`/api/vocab-folders/${folderId}`, {
+    method: 'PATCH',
+    body: { name },
+  });
+}
+
+/** Removes a folder. Its sets are unfiled, never deleted. */
+export function deleteVocabFolder(folderId: number): Promise<void> {
+  return request<void>(`/api/vocab-folders/${folderId}`, { method: 'DELETE' });
+}
+
 export function fetchVocabSetItems(setId: number, signal?: AbortSignal): Promise<VocabItem[]> {
   return request<VocabItem[]>(`/api/vocab-sets/${setId}/items`, { signal });
 }
@@ -364,9 +492,14 @@ export async function importPagesIntoSet(
 /** Imported vocabulary due now. Never WaniKani items — those are a separate queue. */
 export function fetchDueFlashcards(
   limit = 100,
+  scope: FlashcardScope = {},
   signal?: AbortSignal,
 ): Promise<Flashcard[]> {
-  return request<Flashcard[]>(`/api/flashcards/due?limit=${limit}`, { signal });
+  const params = [`limit=${limit}`];
+  if (scope.setId !== undefined) params.push(`set_id=${scope.setId}`);
+  if (scope.folderId !== undefined) params.push(`folder_id=${scope.folderId}`);
+  if (scope.jlpt !== undefined) params.push(`jlpt=${scope.jlpt}`);
+  return request<Flashcard[]>(`/api/flashcards/due?${params.join('&')}`, { signal });
 }
 
 /**
@@ -378,7 +511,7 @@ export function fetchDueFlashcards(
  */
 export function answerFlashcard(
   srsStateId: number,
-  answer: { answerGiven?: string; correct?: boolean; grade?: number },
+  answer: { answerGiven?: string; correct?: boolean; grade?: number; setId?: number },
 ): Promise<FlashcardOutcome> {
   return request<FlashcardOutcome>(`/api/flashcards/${srsStateId}/answer`, {
     method: 'POST',

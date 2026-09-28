@@ -73,9 +73,7 @@ def next_schedule(
             interval = max(1, round(interval_days * ease_factor))
         repetitions += 1
     else:
-        # Back to the start of the ladder, and remembered as a lapse. Due again
-        # tomorrow rather than in minutes: this is a vocabulary deck, not a
-        # cramming session, and same-day re-asks mostly test short-term memory.
+        # Back to the start of the ladder, and remembered as a lapse.
         repetitions = 0
         interval = 1
         lapses += 1
@@ -90,7 +88,11 @@ def next_schedule(
         interval_days=interval,
         repetitions=repetitions,
         lapses=lapses,
-        due_at=now + timedelta(days=interval),
+        # A missed card stays due. Only a card you got right leaves the pile, so
+        # coming back to the deck picks up with what is still unlearned rather
+        # than starting over -- and the missed ones are among it. The interval
+        # of 1 is what its next pass earns.
+        due_at=now + timedelta(days=interval) if grade >= PASSING_GRADE else now,
     )
 
 

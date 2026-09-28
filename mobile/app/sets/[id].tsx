@@ -18,13 +18,14 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import {
   AmbiguityBanner,
@@ -34,20 +35,23 @@ import {
   selectedItems,
   toggleItem,
 } from '@/components/ExtractionReview';
+import { showDialog } from '@/components/Dialog';
+import { FilterChips, type ChipOption } from '@/components/FilterChips';
 import { EmptyDeckArt, OfflineArt } from '@/components/icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
   Card,
   ChunkyButton,
   EmptyState,
+  InlineButton,
   Overline,
   ProgressBar,
   SectionHeading,
 } from '@/components/ui';
 import * as api from '@/data/api';
-import type { DetectedItem, VocabItem } from '@/data/types';
+import type { DetectedItem, VocabItem, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
-import { useVocabSetItems, useVocabSets } from '@/hooks/useStudyData';
+import { useVocabFolders, useVocabSetItems, useVocabSets } from '@/hooks/useStudyData';
 import { colors, jp, radius, spacing, type as typeScale } from '@/theme/tokens';
 
 /** The tier a page is imported at, cascading to every row it yields. */
@@ -66,7 +70,7 @@ export default function SetDetailScreen() {
   const setId = Number(id);
   const valid = Number.isFinite(setId);
 
-  const { data: sets } = useVocabSets();
+  const { data: sets, reload: reloadSets } = useVocabSets();
   const { data: items, loading, error, reload } = useVocabSetItems(valid ? setId : null);
 
   const [tier, setTier] = React.useState<number | null>(3);
@@ -77,11 +81,52 @@ export default function SetDetailScreen() {
 
   const set = sets?.find((candidate) => candidate.id === setId) ?? null;
 
+  // New pages default to the tier the set is tagged with, once it is known.
+  const setTierFromSet = React.useRef(false);
+  React.useEffect(() => {
+    if (set && !setTierFromSet.current) {
+      setTierFromSet.current = true;
+      if (set.jlptLevel) setTier(set.jlptLevel);
+    }
+  }, [set]);
+
+  // Progress changes in a study session, so re-read the set when coming back.
   useFocusEffect(
     React.useCallback(() => {
       reload();
-    }, [reload]),
+      reloadSets();
+    }, [reload, reloadSets]),
   );
+
+  const resetProgress = React.useCallback(() => {
+    if (!set) return;
+    showDialog({
+      title: `Reset "${set.name}"?`,
+      message: `All ${set.cardCount} cards go back to unknown, so you can study the set from the top. Nothing is deleted.`,
+      tone: 'confirm',
+      actions: [
+        { label: 'Cancel', kind: 'cancel' },
+        {
+          label: 'Reset set',
+          kind: 'destructive',
+          onPress: async () => {
+            try {
+              await api.resetVocabSet(set.id);
+              feedback.toggle();
+              reloadSets();
+            } catch {
+              feedback.wrong();
+              showDialog({
+                title: "Couldn't reset the set",
+                message: 'Check your connection and try again.',
+                tone: 'error',
+              });
+            }
+          },
+        },
+      ],
+    });
+  }, [reloadSets, set]);
 
   /**
    * Pick several pages at once and read them one after another.
@@ -93,7 +138,7 @@ export default function SetDetailScreen() {
   const addPages = React.useCallback(async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Permission needed', 'Allow photo access to add pages to this set.');
+      showDialog({ title: 'Permission needed', message: 'Allow photo access to add pages to this set.' });
       return;
     }
 
@@ -125,19 +170,28 @@ export default function SetDetailScreen() {
       ]);
 
       if (failed.length > 0) {
-        Alert.alert(
-          `${failed.length} of ${uris.length} pages couldn't be read`,
-          failed[0].detail ?? 'Try a straighter, better-lit photo of those pages.',
-        );
+        feedback.wrong();
+        showDialog({
+          title: `${failed.length} of ${uris.length} pages couldn't be read`,
+          message: failed[0].detail ?? 'Try a straighter, better-lit photo of those pages.',
+          tone: 'error',
+        });
       } else if (read.length === 0) {
-        Alert.alert('Nothing found', 'Those pages had no vocabulary rows on them.');
+        feedback.wrong();
+        showDialog({
+          title: 'Nothing found',
+          message: 'Those pages had no vocabulary rows on them.',
+          tone: 'error',
+        });
       }
       reload();
     } catch {
-      Alert.alert(
-        "Couldn't finish the import",
-        'Pages that were already read are kept below. Try the rest again.',
-      );
+      feedback.wrong();
+      showDialog({
+        title: "Couldn't finish the import",
+        message: 'Pages that were already read are kept below. Try the rest again.',
+        tone: 'error',
+      });
     } finally {
       setImporting(false);
       setProgress(null);
@@ -206,12 +260,16 @@ export default function SetDetailScreen() {
     setConfirming(false);
     reload();
 
-    Alert.alert(
-      stuck.length === 0 ? 'Added to your deck' : 'Partly added',
-      stuck.length === 0
-        ? `${added} word${added === 1 ? '' : 's'} added to ${set?.name ?? 'this set'}.`
-        : `${added} added. ${stuck.length} page${stuck.length === 1 ? '' : 's'} didn't save and are still below.`,
-    );
+    if (stuck.length === 0) feedback.complete();
+    else feedback.wrong();
+    showDialog({
+      title: stuck.length === 0 ? 'Added to your deck' : 'Partly added',
+      message:
+        stuck.length === 0
+          ? `${added} word${added === 1 ? '' : 's'} added to ${set?.name ?? 'this set'}.`
+          : `${added} added. ${stuck.length} page${stuck.length === 1 ? '' : 's'} didn't save and are still below.`,
+      tone: stuck.length === 0 ? 'success' : 'error',
+    });
   }, [confirming, pages, pendingAmbiguous, pendingSelected, reload, set]);
 
   if (!valid) {
@@ -336,22 +394,61 @@ export default function SetDetailScreen() {
 
         {count > 0 ? (
           <>
-            <Overline style={styles.hint}>Tap a card to turn it over</Overline>
-            {items?.map((item) => (
-              <Notecard key={item.id} item={item} />
-            ))}
+            <Overline style={styles.hint}>Tap to turn over · swipe for the next card</Overline>
+            {items ? <NotecardDeck items={items} /> : null}
 
-            <ChunkyButton
-              label="Quiz me on what's due"
-              tone="neutral"
-              size="small"
-              onPress={() => router.push('/quiz')}
-              style={styles.quizButton}
-            />
-            <Text style={styles.quizNote}>
-              The quiz draws every card that is due across your whole deck, not only this set.
-            </Text>
+            {set && set.cardCount > 0 ? (
+              <Card variant="bordered" style={styles.studyCard}>
+                <View style={styles.studyHead}>
+                  <Text style={styles.studyTitle}>Flashcards</Text>
+                  <Text style={styles.studyCount}>
+                    {set.knownCount >= set.cardCount
+                      ? 'Complete ✓'
+                      : `${set.knownCount} of ${set.cardCount} known`}
+                  </Text>
+                </View>
+                <ProgressBar
+                  progress={set.knownCount / set.cardCount}
+                  color={set.knownCount >= set.cardCount ? colors.success : colors.vocabulary}
+                />
+                <View style={styles.studyActions}>
+                  {set.knownCount < set.cardCount ? (
+                    <ChunkyButton
+                      label={`Study · ${set.cardCount - set.knownCount} left`}
+                      tone="vocabulary"
+                      size="small"
+                      onPress={() =>
+                        router.push({ pathname: '/quiz', params: { setId: String(setId) } })
+                      }
+                      style={styles.studyButton}
+                    />
+                  ) : null}
+                  {set.knownCount > 0 ? (
+                    <ChunkyButton
+                      label="Reset progress"
+                      tone="neutral"
+                      size="small"
+                      chevron={false}
+                      onPress={resetProgress}
+                      style={styles.studyButton}
+                    />
+                  ) : null}
+                </View>
+                <Text style={styles.quizNote}>
+                  Cards you get right stay out until you reset the set.
+                </Text>
+              </Card>
+            ) : null}
           </>
+        ) : null}
+
+        {set && sets ? (
+          <OrganiseCard
+            set={set}
+            sets={sets}
+            onChanged={reloadSets}
+            onMerged={(targetId) => router.replace(`/sets/${targetId}`)}
+          />
         ) : null}
 
         {items && count === 0 && !error && !importing && !reviewing ? (
@@ -384,6 +481,314 @@ export default function SetDetailScreen() {
 }
 
 /**
+ * Where this set lives and what it is: its name, its folder, its JLPT tier,
+ * and whether it should be folded into another set.
+ *
+ * Every change is sent as a partial edit, so moving a set between folders
+ * never resends its name, and each lands with a cue -- these are small taps on
+ * a screen that otherwise barely changes, and silence reads as "did nothing".
+ */
+function OrganiseCard({
+  set,
+  sets,
+  onChanged,
+  onMerged,
+}: {
+  set: VocabSet;
+  sets: VocabSet[];
+  onChanged: () => void;
+  onMerged: (targetId: number) => void;
+}) {
+  const { data: folders, reload: reloadFolders } = useVocabFolders();
+  const [editing, setEditing] = React.useState<'rename' | 'folder' | null>(null);
+  const [draft, setDraft] = React.useState('');
+  const [merging, setMerging] = React.useState(false);
+
+  const save = React.useCallback(
+    async (patch: Parameters<typeof api.updateVocabSet>[1]) => {
+      try {
+        await api.updateVocabSet(set.id, patch);
+        feedback.toggle();
+        onChanged();
+      } catch (cause) {
+        const duplicate = cause instanceof api.ApiError && cause.status === 409;
+        feedback.wrong();
+        showDialog({
+          title: duplicate ? 'That name is taken' : "Couldn't save that",
+          message: duplicate
+            ? 'Another set already has that name.'
+            : 'Check your connection and try again.',
+          tone: 'error',
+        });
+        return false;
+      }
+      return true;
+    },
+    [onChanged, set.id],
+  );
+
+  const submitDraft = React.useCallback(async () => {
+    const name = draft.trim();
+    if (!name) return;
+    if (editing === 'rename') {
+      if (!(await save({ name }))) return;
+      feedback.correct();
+    } else if (editing === 'folder') {
+      try {
+        const folder = await api.createVocabFolder(name);
+        reloadFolders();
+        if (!(await save({ folderId: folder.id }))) return;
+        feedback.correct();
+      } catch (cause) {
+        const duplicate = cause instanceof api.ApiError && cause.status === 409;
+        feedback.wrong();
+        showDialog({
+          title: duplicate ? 'That folder exists' : "Couldn't create the folder",
+          message: duplicate
+            ? 'Pick it from the list instead.'
+            : 'Check your connection and try again.',
+          tone: 'error',
+        });
+        return;
+      }
+    }
+    setEditing(null);
+    setDraft('');
+  }, [draft, editing, reloadFolders, save]);
+
+  const mergeInto = React.useCallback(
+    (target: VocabSet) => {
+      showDialog({
+        title: `Merge into "${target.name}"?`,
+        message: `The ${set.itemCount} ${set.itemCount === 1 ? 'word' : 'words'} in "${set.name}" move into "${target.name}", keeping their schedules, and "${set.name}" is removed.`,
+        tone: 'confirm',
+        actions: [
+          { label: 'Cancel', kind: 'cancel' },
+          {
+            label: 'Merge',
+            kind: 'destructive',
+            onPress: async () => {
+              try {
+                await api.mergeVocabSet(set.id, target.id);
+                feedback.complete();
+                setMerging(false);
+                onMerged(target.id);
+              } catch {
+                feedback.wrong();
+                showDialog({
+                  title: "Couldn't merge",
+                  message: 'Check your connection and try again.',
+                  tone: 'error',
+                });
+              }
+            },
+          },
+        ],
+      });
+    },
+    [onMerged, set],
+  );
+
+  const others = sets.filter((other) => other.id !== set.id);
+  const folderOptions: ChipOption<number>[] = [
+    { key: 0, label: 'No folder' },
+    ...(folders ?? []).map((f) => ({ key: f.id, label: f.name })),
+  ];
+  const tierOptions: ChipOption<number>[] = [
+    { key: 0, label: 'None' },
+    ...[5, 4, 3, 2, 1].map((n) => ({ key: n, label: `N${n}` })),
+  ];
+
+  return (
+    <Card variant="bordered" style={styles.organise}>
+      <SectionHeading title="Organise" />
+
+      {editing ? (
+        <View style={styles.organiseEdit}>
+          <Text style={styles.mergeLabel}>
+            {editing === 'rename' ? 'New name for this set' : 'Name the new folder'}
+          </Text>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder={editing === 'rename' ? set.name : 'Quartet I'}
+            placeholderTextColor={colors.inkDisabled}
+            style={styles.organiseInput}
+            maxLength={128}
+            autoFocus
+            returnKeyType="done"
+            onSubmitEditing={submitDraft}
+          />
+          <View style={styles.organiseRow}>
+            <ChunkyButton
+              label="Cancel"
+              tone="neutral"
+              size="small"
+              chevron={false}
+              cue="back"
+              onPress={() => {
+                setEditing(null);
+                setDraft('');
+              }}
+              style={styles.organiseButton}
+            />
+            <ChunkyButton
+              label={editing === 'rename' ? 'Save name' : 'Create folder'}
+              tone="vocabulary"
+              size="small"
+              chevron={false}
+              disabled={!draft.trim()}
+              onPress={submitDraft}
+              style={styles.organiseButton}
+            />
+          </View>
+        </View>
+      ) : merging ? null : (
+        <View style={styles.organiseRow}>
+          <ChunkyButton
+            label="✎  Rename"
+            tone="neutral"
+            size="small"
+            chevron={false}
+            onPress={() => {
+              setDraft(set.name);
+              setEditing('rename');
+            }}
+            style={styles.organiseButton}
+          />
+          {others.length > 0 ? (
+            <ChunkyButton
+              label="⇄  Merge…"
+              tone="neutral"
+              size="small"
+              chevron={false}
+              onPress={() => setMerging(true)}
+              style={styles.organiseButton}
+            />
+          ) : null}
+        </View>
+      )}
+
+      {merging ? (
+        <View style={styles.mergeList}>
+          <Text style={styles.mergeLabel}>
+            Pick the set to merge &quot;{set.name}&quot; into. Its words move there.
+          </Text>
+          {others.map((other) => (
+            <Pressable key={other.id} onPress={() => mergeInto(other)} onPressIn={feedback.select}>
+              {({ pressed }) => (
+                <View style={[styles.mergeRow, pressed && styles.mergeRowPressed]}>
+                  <View style={styles.mergeRowBody}>
+                    <Text style={styles.mergeRowName} numberOfLines={1}>
+                      {other.name}
+                    </Text>
+                    <Text style={styles.mergeRowMeta}>
+                      {other.itemCount} {other.itemCount === 1 ? 'word' : 'words'}
+                    </Text>
+                  </View>
+                  <Text style={styles.mergeRowAction}>Merge here ›</Text>
+                </View>
+              )}
+            </Pressable>
+          ))}
+          <ChunkyButton
+            label="Cancel"
+            tone="neutral"
+            size="small"
+            chevron={false}
+            cue="back"
+            onPress={() => setMerging(false)}
+          />
+        </View>
+      ) : null}
+
+      <FilterChips
+        label="Folder"
+        options={folderOptions}
+        selected={set.folderId ?? 0}
+        onSelect={(key) => save({ folderId: key === 0 ? null : key })}
+        trailing={{
+          label: '+ New folder',
+          onPress: () => {
+            setDraft('');
+            setEditing('folder');
+          },
+        }}
+      />
+
+      <FilterChips
+        label="JLPT level"
+        options={tierOptions}
+        selected={set.jlptLevel ?? 0}
+        onSelect={(key) => save({ jlptLevel: key === 0 ? null : key })}
+      />
+
+    </Card>
+  );
+}
+
+/** How far a swipe has to travel before it changes card. */
+const SWIPE_DISTANCE = 60;
+
+/**
+ * The set as a deck: one card at a time, swiped through.
+ *
+ * It used to be every card stacked in a list, which reads as a table of words
+ * rather than as flashcards, and gave nothing to swipe between. Swipe left for
+ * the next card and right for the previous one; the buttons do the same for
+ * anyone who would rather tap. Each new card starts face up — the Japanese —
+ * because a card that arrives already turned over has given its answer away.
+ */
+function NotecardDeck({ items }: { items: VocabItem[] }) {
+  const [position, setPosition] = React.useState(0);
+  const index = Math.min(position, items.length - 1);
+
+  const go = React.useCallback(
+    (step: 1 | -1) => {
+      const next = index + step;
+      if (next < 0 || next >= items.length) return;
+      if (step > 0) feedback.advance();
+      else feedback.back();
+      setPosition(next);
+    },
+    [index, items.length],
+  );
+
+  const swipe = React.useMemo(
+    () =>
+      Gesture.Pan()
+        .runOnJS(true)
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-14, 14])
+        .onEnd((event) => {
+          if (event.translationX < -SWIPE_DISTANCE) go(1);
+          else if (event.translationX > SWIPE_DISTANCE) go(-1);
+        }),
+    [go],
+  );
+
+  const item = items[index];
+  if (!item) return null;
+
+  return (
+    <View style={styles.deck}>
+      <GestureDetector gesture={swipe}>
+        <View>
+          <Notecard key={item.id} item={item} />
+        </View>
+      </GestureDetector>
+      <View style={styles.deckNav}>
+        <InlineButton label="‹ Previous" emphasis="quiet" onPress={() => go(-1)} />
+        <Text style={styles.deckCount}>
+          {index + 1} / {items.length}
+        </Text>
+        <InlineButton label="Next ›" emphasis="quiet" onPress={() => go(1)} />
+      </View>
+    </View>
+  );
+}
+
+/**
  * One word, front and back.
  *
  * The front is the Japanese and the back is the meaning, matching the
@@ -398,7 +803,10 @@ function Notecard({ item }: { item: VocabItem }) {
   // was the one tap in the app that reported nothing at all.
   return (
     <Pressable
-      onPress={() => setFlipped((previous) => !previous)}
+      onPress={() => {
+        if (!flipped) feedback.reveal();
+        setFlipped((previous) => !previous);
+      }}
       onPressIn={feedback.toggle}
     >
       {({ pressed }) => (
@@ -506,6 +914,103 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 
+  studyCard: {
+    gap: 10,
+  },
+  studyHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+  },
+  studyTitle: {
+    ...typeScale.section,
+    color: colors.ink,
+  },
+  studyCount: {
+    ...typeScale.captionBold,
+    color: colors.inkSoft,
+  },
+  studyActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  studyButton: {
+    flex: 1,
+    borderRadius: radius.tile,
+  },
+  organise: {
+    gap: 12,
+  },
+  organiseEdit: {
+    gap: 8,
+  },
+  organiseInput: {
+    ...typeScale.body,
+    color: colors.ink,
+    borderWidth: 1,
+    borderColor: colors.outline,
+    borderRadius: radius.control,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.surface,
+  },
+  organiseRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  organiseButton: {
+    flex: 1,
+    borderRadius: radius.tile,
+  },
+  mergeList: {
+    gap: 8,
+  },
+  mergeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.control,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    backgroundColor: colors.surface,
+  },
+  mergeRowPressed: {
+    backgroundColor: colors.hairline,
+  },
+  mergeRowBody: {
+    flex: 1,
+    gap: 2,
+  },
+  mergeRowName: {
+    ...typeScale.section,
+    color: colors.ink,
+  },
+  mergeRowMeta: {
+    ...typeScale.metaSmall,
+    color: colors.inkSoft,
+  },
+  mergeRowAction: {
+    ...typeScale.captionBold,
+    color: colors.vocabulary,
+  },
+  mergeLabel: {
+    ...typeScale.metaSmall,
+    color: colors.inkSoft,
+  },
+  deck: {
+    gap: 10,
+  },
+  deckNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  deckCount: {
+    ...typeScale.captionBold,
+    color: colors.inkSoft,
+  },
   notecard: {
     minHeight: 108,
     justifyContent: 'space-between',

@@ -22,6 +22,7 @@ import {
   type ImageStyle,
   StyleSheet,
   type StyleProp,
+  useWindowDimensions,
   View,
   type ViewStyle,
 } from 'react-native';
@@ -288,10 +289,17 @@ export function MascotAvatar({ size = 40, style }: { size?: number; style?: Styl
 export function MascotBanner({
   variant = 'header',
   height = 96,
+  fill = 'contain',
   style,
 }: {
   variant?: 'header' | 'celebrate' | 'wide';
   height?: number;
+  /**
+   * `cover` fills the full width at `height`, trimming a little off the top
+   * and bottom of the art. Right for the wide strip, whose 5:1 art loses only
+   * a few pixels; wrong for the 3:1 scenes, where it crops the crabigator.
+   */
+  fill?: 'contain' | 'cover';
   style?: StyleProp<ImageStyle>;
 }) {
   const source =
@@ -301,7 +309,14 @@ export function MascotBanner({
         ? require('../../assets/mascot/banners/scene-wide-1200x240.png')
         : require('../../assets/mascot/banners/scene-header-1200x400.png');
 
-  return <Image source={source} style={[{ width: '100%', height }, style]} resizeMode="contain" />;
+  // Exactly the screen's width: every caller bleeds the scene past its page
+  // gutter with negative margins so it runs edge to edge. `width: '100%'` is
+  // measured inside that gutter, so the scene shifted left and stopped short
+  // of the right edge; `alignSelf: 'stretch'` let the image fall back to its
+  // own 1200-point width, which `cover` then showed as a zoomed-in slice.
+  const { width } = useWindowDimensions();
+
+  return <Image source={source} style={[{ width, height }, style]} resizeMode={fill} />;
 }
 
 const styles = StyleSheet.create({

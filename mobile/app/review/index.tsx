@@ -12,13 +12,9 @@
 import { useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated from 'react-native-reanimated';
 
-import { CheckMark, CorrectMark, IncorrectMark } from '@/components/icons';
-import { finishKana, LanguageInput } from '@/components/LanguageInput';
 import { Mascot, type Pose } from '@/components/Mascot';
 import { useAnswerRun } from '@/components/MascotCoach';
-import { useShake } from '@/components/motion';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import {
   Card,
@@ -27,17 +23,15 @@ import {
   SessionProgressBar,
   StatTile,
 } from '@/components/ui';
-import { gradeMeaning, gradeReading } from '@/data/grading';
+import { halvesOf, type Half, shuffle, WkQuestion } from '@/components/WkQuestion';
 import { recordSession, type SessionItem } from '@/data/session';
 import { feedback } from '@/feedback';
 import type { StudyItem } from '@/data/types';
 import { useReviewQueue, useStudyActions } from '@/hooks/useStudyData';
 import {
   colors,
-  controlBorder,
   jp,
   radius,
-  shadows,
   spacing,
   srsStages,
   stageBucket,
@@ -45,9 +39,6 @@ import {
   subjectPalette,
   type as typeScale,
 } from '@/theme/tokens';
-
-type Half = 'meaning' | 'reading';
-type Verdict = 'correct' | 'incorrect';
 
 interface QueueEntry {
   item: StudyItem;
@@ -60,14 +51,13 @@ export default function ReviewScreen() {
   const { submitAnswer } = useStudyActions();
 
   const [entries, setEntries] = React.useState<QueueEntry[] | null>(null);
-  const [answer, setAnswer] = React.useState('');
-  const [verdict, setVerdict] = React.useState<Verdict | null>(null);
-  /** The meaning a typo was accepted as, shown so the spelling still gets seen. */
-  const [closeTo, setCloseTo] = React.useState<string | null>(null);
   const [pose, setPose] = React.useState<Pose>('idle');
+  /** Whether the current question has been graded, for the coach's line. */
+  const [graded, setGraded] = React.useState(false);
+  /** Counts questions asked; keys each one so it always starts clean. */
+  const [turn, setTurn] = React.useState(0);
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as StudyItem[] });
   const { line, register } = useAnswerRun();
-  const { style: shakeStyle, shake } = useShake();
 
   // Kept in refs, not state: the summary reads them once on the way out, and
   // re-rendering the card on every strike would be churn for nothing.
@@ -78,81 +68,61 @@ export default function ReviewScreen() {
   React.useEffect(() => {
     if (!queue || entries) return;
     setEntries(
-      queue.flatMap((item) => {
-        const halves: Half[] = item.subject.readings.length > 0 ? ['meaning', 'reading'] : ['meaning'];
-        return halves.map((half) => ({ item, half }));
-      }),
+      // Shuffled, meaning and reading apart, as WaniKani presents a session:
+      // the reading straight after its meaning gives half of it away.
+      shuffle(queue.flatMap((item) => halvesOf(item.subject).map((half) => ({ item, half })))),
     );
   }, [queue, entries]);
 
   const current = entries?.[0];
   const total = (entries?.length ?? 0) + stats.correct;
 
-  /**
-   * Both halves forgive a typo or two (see `gradeMeaning` / `gradeReading` for
-   * how many). A typo that passes is a pass — WaniKani is told the answer was
-   * right — but `closeTo` shows the intended answer so it still gets seen.
-   */
-  const grade = React.useCallback(
-    (entry: QueueEntry, typed: string): { ok: boolean; closeTo: string | null } => {
-      if (!typed.trim()) return { ok: false, closeTo: null };
+  /** The moment a question is graded: the strike, the cue, the mascot. */
+  const onGraded = React.useCallback(
+    (ok: boolean) => {
+      if (!current) return;
+      setGraded(true);
+      setPose(ok ? 'correct' : 'wrong');
 
-      const verdict =
-        entry.half === 'meaning'
-          ? gradeMeaning(
-              typed,
-              entry.item.subject.meanings.filter((m) => m.acceptedAnswer).map((m) => m.meaning),
-            )
-          : gradeReading(
-              typed,
-              entry.item.subject.readings.filter((r) => r.acceptedAnswer).map((r) => r.reading),
-              entry.item.subject.readings.filter((r) => !r.acceptedAnswer).map((r) => r.reading),
-            );
-      return {
-        ok: verdict.result !== 'wrong',
-        closeTo: verdict.result === 'close' ? verdict.intended : null,
-      };
+      if (ok) {
+        feedback.correct();
+        // A milestone chimes on top of the correct cue rather than replacing it,
+        // so a run of five still confirms the answer first.
+        if (register(true)) feedback.streak();
+      } else {
+        const id = current.item.subject.id;
+        const tally = strikes.current.get(id) ?? { meaning: 0, reading: 0 };
+        tally[current.half] += 1;
+        strikes.current.set(id, tally);
+        feedback.wrong();
+        register(false);
+      }
+
+      setStats((prev) =>
+        ok
+          ? { ...prev, correct: prev.correct + 1 }
+          : {
+              ...prev,
+              incorrect: prev.incorrect + 1,
+              missed: prev.missed.some((m) => m.subject.id === current.item.subject.id)
+                ? prev.missed
+                : [...prev.missed, current.item],
+            },
+      );
     },
-    [],
+    [current, register],
   );
 
-  const onSubmit = React.useCallback(async () => {
-    if (!current || !entries || verdict) return;
-
-    const typed = current.half === 'reading' ? finishKana(answer) : answer;
-    // Shown back as graded, so a trailing n reads as the ん it was scored as.
-    if (typed !== answer) setAnswer(typed);
-
-    const { ok, closeTo: intended } = grade(current, typed);
-    setVerdict(ok ? 'correct' : 'incorrect');
-    setCloseTo(intended);
-    setPose(ok ? 'correct' : 'wrong');
-
-    if (!ok) {
-      const id = current.item.subject.id;
-      const tally = strikes.current.get(id) ?? { meaning: 0, reading: 0 };
-      tally[current.half] += 1;
-      strikes.current.set(id, tally);
-    }
-
-    if (ok) {
-      feedback.correct();
-      // A milestone chimes on top of the correct cue rather than replacing it,
-      // so a run of five still confirms the answer first.
-      if (register(true)) feedback.streak();
-    } else {
-      feedback.wrong();
-      shake();
-      register(false);
-    }
-
-    // The feedback mark holds for ~600ms, then the next item comes in —
-    // longer when a typo was let through, so the right spelling can be read.
-    setTimeout(() => {
-      setVerdict(null);
-      setCloseTo(null);
-      setAnswer('');
-      // The only thing that ends the reaction now — under `holdReaction` the
+  /**
+   * On to the next question: after a right answer by itself, after a wrong one
+   * only once the correct answer has been seen and dismissed.
+   */
+  const onNext = React.useCallback(
+    (ok: boolean) => {
+      if (!current) return;
+      setGraded(false);
+      setTurn((n) => n + 1);
+      // The only thing that ends the reaction — under `holdReaction` the
       // mascot cycles until the next card replaces it.
       setPose('idle');
 
@@ -185,20 +155,9 @@ export default function ReviewScreen() {
         // the subject, which is what the submitted review reports.
         return [...remaining, current];
       });
-
-      setStats((prev) =>
-        ok
-          ? { ...prev, correct: prev.correct + 1 }
-          : {
-              ...prev,
-              incorrect: prev.incorrect + 1,
-              missed: prev.missed.some((m) => m.subject.id === current.item.subject.id)
-                ? prev.missed
-                : [...prev.missed, current.item],
-            },
-      );
-    }, intended ? 1800 : 600);
-  }, [answer, current, entries, grade, register, shake, submitAnswer, verdict]);
+    },
+    [current, submitAnswer],
+  );
 
   /**
    * Hands the session to the summary and leaves.
@@ -253,13 +212,6 @@ export default function ReviewScreen() {
   const done = stats.correct + stats.incorrect;
   const accuracy = done > 0 ? Math.round((stats.correct / done) * 100) : 100;
 
-  const promptLabel =
-    current.half === 'meaning'
-      ? "What's the meaning?"
-      : subject.type === 'vocabulary'
-        ? "What's the reading?"
-        : "What's the reading?";
-
   const headerLabel = `${subject.type === 'vocabulary' ? 'Vocabulary' : subject.type === 'kanji' ? 'Kanji' : 'Radical'} ${
     current.half === 'meaning' ? 'Meaning' : 'Reading'
   }`;
@@ -276,74 +228,25 @@ export default function ReviewScreen() {
       </ScreenHeader>
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Card style={styles.promptCard}>
-          <Text style={styles.promptLabel}>{promptLabel}</Text>
-          <Text style={styles.promptGlyph}>{subject.characters}</Text>
-          <View style={styles.promptMeta}>
-            <Pill label={stageName(current.item.assignment.srsStage)} color={stage.ink} background={stage.tint} />
-            <Text style={styles.promptMetaText}>level {subject.level}</Text>
-          </View>
-        </Card>
-
-        <Animated.View style={[styles.answerRow, shakeStyle]}>
-          <View
-            style={[
-              styles.answerField,
-              controlBorder,
-              shadows.hard,
-              verdict === 'correct' && { borderColor: colors.success },
-              verdict === 'incorrect' && { borderColor: colors.danger },
-            ]}
-          >
-            <LanguageInput
-              value={answer}
-              onChangeText={setAnswer}
-              onSubmitEditing={onSubmit}
-              editable={!verdict}
-              style={styles.answerInput}
-              placeholder={current.half === 'reading' ? 'かな' : 'meaning'}
-              placeholderTextColor={colors.inkDisabled}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="done"
-              // Readings are always kana, so romaji typed on any keyboard counts.
-              language={current.half === 'reading' ? 'ja' : 'en'}
-              kana={current.half === 'reading'}
-            />
-          </View>
-
-          <Pressable onPress={onSubmit} disabled={Boolean(verdict)}>
-            <View
-              style={[
-                styles.submitButton,
-                controlBorder,
-                shadows.hard,
-                {
-                  backgroundColor:
-                    verdict === 'incorrect' ? colors.danger : verdict === 'correct' ? colors.success : colors.success,
-                },
-              ]}
-            >
-              {verdict === 'incorrect' ? (
-                <IncorrectMark size={26} />
-              ) : verdict === 'correct' ? (
-                <CorrectMark size={26} />
-              ) : (
-                <CheckMark size={26} />
-              )}
-            </View>
-          </Pressable>
-        </Animated.View>
-
-        <Text style={[styles.inputHint, closeTo ? styles.closeHint : null]}>
-          {closeTo
-            ? current.half === 'reading'
-              ? `Close enough — it's read “${closeTo}”`
-              : `Close enough — it's spelled “${closeTo}”`
-            : current.half === 'reading'
-              ? 'Kana input · romaji converts as you type'
-              : 'Type the English meaning'}
-        </Text>
+        <WkQuestion
+          // Keyed per turn, so a missed item coming straight back round -- the
+          // last one left -- is a fresh question rather than the old one.
+          key={turn}
+          subject={subject}
+          half={current.half}
+          meta={
+            <>
+              <Pill
+                label={stageName(current.item.assignment.srsStage)}
+                color={stage.ink}
+                background={stage.tint}
+              />
+              <Text style={styles.promptMetaText}>level {subject.level}</Text>
+            </>
+          }
+          onGraded={onGraded}
+          onNext={onNext}
+        />
 
         <Card style={styles.sessionCard}>
           <SectionHeading
@@ -374,7 +277,7 @@ export default function ReviewScreen() {
         <Mascot pose={pose} size={64} speed={1} lively holdReaction />
         {/* Only alongside a verdict — an encouragement that outlived the
             answer it was about would be talking to nobody. */}
-        {verdict && line ? (
+        {graded && line ? (
           <Text style={styles.coachLine} numberOfLines={1}>
             {line}
           </Text>
@@ -398,69 +301,11 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
   },
 
-  promptCard: {
-    alignItems: 'center',
-    gap: 18,
-    paddingTop: 34,
-    paddingHorizontal: 18,
-    paddingBottom: 28,
-    borderRadius: radius.cardLarge,
-  },
-  promptLabel: {
-    fontFamily: typeScale.overline.fontFamily,
-    fontSize: 11,
-    letterSpacing: 1.43,
-    textTransform: 'uppercase',
-    color: colors.inkFaint,
-  },
-  promptGlyph: {
-    ...jp.hero,
-    color: colors.ink,
-  },
-  promptMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
   promptMetaText: {
     ...typeScale.metaSmall,
-    color: colors.inkFaint,
+    color: 'rgba(255, 255, 255, 0.85)',
   },
 
-  answerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 20,
-  },
-  answerField: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: radius.button,
-    height: 56,
-    justifyContent: 'center',
-    paddingHorizontal: 15,
-  },
-  answerInput: {
-    ...jp.answer,
-    color: colors.ink,
-    padding: 0,
-  },
-  submitButton: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.button,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  inputHint: {
-    marginTop: 10,
-    ...typeScale.metaSmall,
-    color: colors.inkFaint,
-  },
-  closeHint: {
-    color: colors.successInk,
-  },
 
   sessionCard: {
     marginTop: 18,

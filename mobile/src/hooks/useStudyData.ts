@@ -11,6 +11,7 @@ import * as React from 'react';
 import * as api from '@/data/api';
 import * as db from '@/data/db';
 import * as fixtures from '@/data/fixtures';
+import { matches } from '@/data/grading';
 import { durationMinutes, getLastSession } from '@/data/session';
 import { syncNow, type SyncResult } from '@/data/sync';
 import { stageBucket } from '@/theme/tokens';
@@ -29,9 +30,11 @@ import type {
   LevelItem,
   ReviewAnswer,
   SessionSummary,
+  SetStudy,
   StudyItem,
   Subject,
   VocabItem,
+  VocabFolder,
   VocabSet,
 } from '@/data/types';
 
@@ -72,7 +75,6 @@ function useAsync<T>(load: () => Promise<T>, deps: React.DependencyList): AsyncS
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, nonce]);
 
   const reload = React.useCallback(() => setNonce((n) => n + 1), []);
@@ -154,6 +156,20 @@ export function useSubject(subjectId: number | null) {
       return { subject: local, assignment: await db.getAssignmentForSubject(subjectId) };
     }
 
+    // Not mirrored yet -- a word reached from "Shows up in" usually is not.
+    // Ask the server before settling for the samples.
+    if (api.isBackendConfigured) {
+      try {
+        const [fetched] = await api.fetchSubjects([subjectId]);
+        if (fetched) {
+          await db.upsertSubjects([fetched]).catch(() => undefined);
+          return { subject: fetched, assignment: await db.getAssignmentForSubject(subjectId) };
+        }
+      } catch {
+        // Offline: fall through to the samples.
+      }
+    }
+
     const sample = fixtures.findSubject(subjectId);
     if (!sample) return null;
 
@@ -162,6 +178,43 @@ export function useSubject(subjectId: number | null) {
     );
     return { subject: sample, assignment: queued?.assignment ?? null };
   }, [subjectId]);
+}
+
+/**
+ * Several subjects by id, in the order asked for — an item's parts and the
+ * words it appears in.
+ *
+ * The local mirror first, then the server for whatever it lacks (written back
+ * so the next lookup is local), and the bundled samples only when no server is
+ * configured. The lesson and item screens used to go straight to the samples,
+ * so on a real account "radicals + … =" and "Shows up in" were almost always
+ * empty: the samples hold a single level.
+ */
+export function useSubjects(ids: number[]) {
+  const key = ids.join(',');
+  return useAsync<Subject[]>(async () => {
+    if (ids.length === 0) return [];
+
+    const byId = new Map((await db.getSubjectsByIds(ids)).map((s) => [s.id, s]));
+    const missing = ids.filter((id) => !byId.has(id));
+
+    if (missing.length > 0 && api.isBackendConfigured) {
+      try {
+        const fetched = await api.fetchSubjects(missing);
+        fetched.forEach((s) => byId.set(s.id, s));
+        await db.upsertSubjects(fetched).catch(() => undefined);
+      } catch {
+        // Offline: show what the mirror has rather than nothing.
+      }
+    } else if (!api.isBackendConfigured) {
+      for (const id of missing) {
+        const sample = fixtures.findSubject(id);
+        if (sample) byId.set(id, sample);
+      }
+    }
+
+    return ids.map((id) => byId.get(id)).filter((s): s is Subject => Boolean(s));
+  }, [key]);
 }
 
 /**
@@ -222,6 +275,8 @@ export function useLevelItems(level: number | null) {
  */
 export function useStudyActions() {
   const completeLesson = React.useCallback(async (assignment: Assignment) => {
+    // Out of the lesson queue at once; the sync brings WaniKani's real state.
+    await db.markLessonStarted(assignment.subjectId);
     await db.enqueueWrite('start_assignment', { assignmentId: assignment.id });
     if (api.isBackendConfigured) {
       // Fire and forget; a failure just leaves the row queued.
@@ -230,6 +285,7 @@ export function useStudyActions() {
   }, []);
 
   const submitAnswer = React.useCallback(async (answer: ReviewAnswer) => {
+    await db.markReviewAnswered(answer.subjectId);
     await db.enqueueWrite('submit_review', answer);
     if (api.isBackendConfigured) {
       void syncNow();
@@ -243,12 +299,23 @@ export function useStudyActions() {
    * and its answer is what the deck records. The screen has already shown a
    * result by the time this runs, from the answers the card carries.
    */
-  const answerFlashcard = React.useCallback(async (srsStateId: number, answerGiven: string) => {
-    await db.enqueueWrite('answer_flashcard', { srsStateId, answerGiven });
-    if (api.isBackendConfigured) {
-      void syncNow();
-    }
-  }, []);
+  /**
+   * A typed answer is sent as typed and graded by the server; a flipped card
+   * sends only whether you knew it (`correct`), since nothing was typed.
+   */
+  const answerFlashcard = React.useCallback(
+    async (
+      srsStateId: number,
+      answer: { answerGiven: string } | { correct: boolean },
+      setId?: number,
+    ) => {
+      await db.enqueueWrite('answer_flashcard', { srsStateId, ...answer, setId });
+      if (api.isBackendConfigured) {
+        void syncNow();
+      }
+    },
+    [],
+  );
 
   return { completeLesson, submitAnswer, answerFlashcard };
 }
@@ -258,22 +325,87 @@ export function useStudyActions() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Cards due from the user's own imported deck — never WaniKani items, which
- * are scheduled by WaniKani and come through `useReviewQueue`.
+ * One set's flashcards still to learn, Quizlet-style: every card of the set not
+ * yet known, shuffled. A right answer makes a card known until the set is
+ * reset; a miss leaves it to learn.
  *
- * Unlike the WaniKani queues this has no local mirror and no fixture fallback,
- * and both absences are deliberate. An empty imported deck is the honest state
- * on a fresh install: you have not photographed anything yet, and inventing
- * sample words would put vocabulary in front of you that you never chose to
- * study. The cost is that a session cannot be *started* offline; one already
- * underway finishes fine, because each card carries its own answers and the
- * outbox queues what you type.
+ * No mirror and no fixtures: the deck lives on the server, and a set of words
+ * you never imported is not something to invent. A session already underway
+ * finishes offline, because each card carries its own answers and the outbox
+ * queues what you type.
  */
-export function useDueFlashcards(limit = 100) {
-  return useAsync<Flashcard[]>(async () => {
-    if (!api.isBackendConfigured) return [];
-    return api.fetchDueFlashcards(limit);
-  }, [limit]);
+export function useSetStudy(setId: number | null) {
+  return useAsync<SetStudy | null>(async () => {
+    if (!api.isBackendConfigured || setId === null) return null;
+    const [study, pending] = await Promise.all([
+      api.fetchSetStudy(setId),
+      db.getPendingFlashcardAnswers(),
+    ]);
+    // Got right in this set on this phone, but not yet confirmed by the
+    // server. Counted as known already, so coming back resumes where you
+    // stopped even before the outbox has drained.
+    const knownHere = (card: Flashcard) =>
+      (pending.get(card.srsStateId) ?? []).some(
+        (answer) =>
+          answer.setId === setId &&
+          (answer.correct ?? matches(answer.answerGiven, card.acceptedAnswers)),
+      );
+    const cards = study.cards.filter((card) => !knownHere(card));
+    return {
+      ...study,
+      knownCount: study.knownCount + (study.cards.length - cards.length),
+      cards: spreadSiblings(cards),
+    };
+  }, [setId]);
+}
+
+/**
+ * The server sends a set's cards in random order; this only keeps a word's two
+ * cards apart. Meaning-then-reading of the same word back to back gives the
+ * second one away.
+ */
+function spreadSiblings(cards: Flashcard[]): Flashcard[] {
+  const out = [...cards];
+  for (let i = 1; i < out.length; i += 1) {
+    if (out[i].vocabItemId !== out[i - 1].vocabItemId) continue;
+    const swap = out.findIndex(
+      (card, j) =>
+        j > i &&
+        card.vocabItemId !== out[i - 1].vocabItemId &&
+        (j + 1 >= out.length || out[j + 1].vocabItemId !== out[i].vocabItemId),
+    );
+    if (swap !== -1) [out[i], out[swap]] = [out[swap], out[i]];
+  }
+  return out;
+}
+
+/** The pref holding the set you studied last, for "continue" on the home screen. */
+export const PREF_LAST_FLASHCARD_SET = 'last_flashcard_set';
+
+export interface FlashcardOverview {
+  /** Cards not yet known, across every set. */
+  remaining: number;
+  /** Sets that have any cards at all. */
+  setCount: number;
+  /** The set studied last, if it still exists. */
+  lastSet: VocabSet | null;
+}
+
+/** What the home screen and Study tab say about flashcards: what is left, and where you were. */
+export function useFlashcardOverview() {
+  return useAsync<FlashcardOverview>(async () => {
+    if (!api.isBackendConfigured) return { remaining: 0, setCount: 0, lastSet: null };
+    const [sets, last] = await Promise.all([
+      api.fetchVocabSets(),
+      db.getPref(PREF_LAST_FLASHCARD_SET).catch(() => null),
+    ]);
+    const withCards = sets.filter((set) => set.cardCount > 0);
+    return {
+      remaining: withCards.reduce((n, set) => n + Math.max(0, set.cardCount - set.knownCount), 0),
+      setCount: withCards.length,
+      lastSet: withCards.find((set) => String(set.id) === last) ?? null,
+    };
+  }, []);
 }
 
 /**
@@ -288,6 +420,14 @@ export function useVocabSets() {
   return useAsync<VocabSet[]>(async () => {
     if (!api.isBackendConfigured) return [];
     return api.fetchVocabSets();
+  }, []);
+}
+
+/** Folders, alphabetical, with how many sets each holds. */
+export function useVocabFolders() {
+  return useAsync<VocabFolder[]>(async () => {
+    if (!api.isBackendConfigured) return [];
+    return api.fetchVocabFolders();
   }, []);
 }
 

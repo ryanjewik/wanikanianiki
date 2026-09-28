@@ -130,6 +130,47 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
       UNIQUE (vocab_item_id, skill_type)
     );
   `);
+
+  await upgrade(db);
+}
+
+/**
+ * Numbered steps on top of the base schema, tracked in `PRAGMA user_version`.
+ * The base above only ever creates tables that do not exist, so a column added
+ * to an existing table has to arrive here, where it runs exactly once.
+ */
+async function upgrade(db: SQLite.SQLiteDatabase): Promise<void> {
+  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  const version = row?.user_version ?? 0;
+
+  if (version < 1) {
+    // Everything WaniKani sends beyond the core fields: hints, context
+    // sentences, parts of speech, audio, similar kanji, auxiliary meanings.
+    // One JSON column rather than six, because the screens read them together
+    // and nothing queries inside them.
+    //
+    // Subjects already mirrored have none of it, and the incremental sync only
+    // refetches subjects whose assignments changed -- so the sync cursor is
+    // dropped too, and the next sync pulls every assignment and its subject
+    // once, filling the new column.
+    await db.execAsync(`
+      ALTER TABLE local_subjects ADD COLUMN extras_json TEXT NOT NULL DEFAULT '{}';
+      DELETE FROM sync_meta WHERE key = '${SYNC_KEY_LAST_SYNCED}';
+      PRAGMA user_version = 1;
+    `);
+  }
+
+  if (version < 2) {
+    // A write the server refused outright -- WaniKani saying a lesson was
+    // already started -- used to stay queued forever, retried first on every
+    // sync, with every answer queued after it stuck behind it. It is now set
+    // aside with the reason, and the queue moves on.
+    await db.execAsync(`
+      ALTER TABLE pending_writes ADD COLUMN failed_at TEXT;
+      ALTER TABLE pending_writes ADD COLUMN last_error TEXT;
+      PRAGMA user_version = 2;
+    `);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -148,7 +189,20 @@ interface SubjectRow {
   components_json: string;
   amalgamations_json: string;
   jlpt_level: number | null;
+  extras_json: string;
 }
+
+/** What lives in `extras_json`. */
+type SubjectExtras = Pick<
+  Subject,
+  | 'meaningHint'
+  | 'readingHint'
+  | 'contextSentences'
+  | 'partsOfSpeech'
+  | 'pronunciationAudios'
+  | 'visuallySimilarSubjectIds'
+  | 'auxiliaryMeanings'
+>;
 
 /** Tolerates a malformed blob rather than taking the whole screen down. */
 function parseJson<T>(raw: string, fallback: T): T {
@@ -161,6 +215,7 @@ function parseJson<T>(raw: string, fallback: T): T {
 
 function toSubject(row: SubjectRow): Subject {
   const mnemonics = parseJson<{ meaning?: string; reading?: string }>(row.mnemonics_json, {});
+  const extras = parseJson<SubjectExtras>(row.extras_json ?? '{}', {});
   return {
     id: row.subject_id,
     type: row.type as SubjectType,
@@ -174,6 +229,13 @@ function toSubject(row: SubjectRow): Subject {
     componentSubjectIds: parseJson(row.components_json, []),
     amalgamationSubjectIds: parseJson(row.amalgamations_json, []),
     jlptLevel: row.jlpt_level,
+    meaningHint: extras.meaningHint ?? null,
+    readingHint: extras.readingHint ?? null,
+    contextSentences: extras.contextSentences ?? [],
+    partsOfSpeech: extras.partsOfSpeech ?? [],
+    pronunciationAudios: extras.pronunciationAudios ?? [],
+    visuallySimilarSubjectIds: extras.visuallySimilarSubjectIds ?? [],
+    auxiliaryMeanings: extras.auxiliaryMeanings ?? [],
   };
 }
 
@@ -220,8 +282,8 @@ export async function upsertSubjects(subjects: Subject[]): Promise<void> {
       await db.runAsync(
         `INSERT INTO local_subjects
            (subject_id, type, character, level, slug, meanings_json, readings_json,
-            mnemonics_json, components_json, amalgamations_json, jlpt_level)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            mnemonics_json, components_json, amalgamations_json, jlpt_level, extras_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(subject_id) DO UPDATE SET
            type = excluded.type,
            character = excluded.character,
@@ -232,7 +294,8 @@ export async function upsertSubjects(subjects: Subject[]): Promise<void> {
            mnemonics_json = excluded.mnemonics_json,
            components_json = excluded.components_json,
            amalgamations_json = excluded.amalgamations_json,
-           jlpt_level = excluded.jlpt_level`,
+           jlpt_level = excluded.jlpt_level,
+           extras_json = excluded.extras_json`,
         subject.id,
         subject.type,
         subject.characters,
@@ -247,6 +310,15 @@ export async function upsertSubjects(subjects: Subject[]): Promise<void> {
         JSON.stringify(subject.componentSubjectIds),
         JSON.stringify(subject.amalgamationSubjectIds),
         subject.jlptLevel ?? null,
+        JSON.stringify({
+          meaningHint: subject.meaningHint ?? null,
+          readingHint: subject.readingHint ?? null,
+          contextSentences: subject.contextSentences ?? [],
+          partsOfSpeech: subject.partsOfSpeech ?? [],
+          pronunciationAudios: subject.pronunciationAudios ?? [],
+          visuallySimilarSubjectIds: subject.visuallySimilarSubjectIds ?? [],
+          auxiliaryMeanings: subject.auxiliaryMeanings ?? [],
+        } satisfies SubjectExtras),
       );
     }
   });
@@ -323,16 +395,80 @@ export async function upsertAssignments(assignments: Assignment[]): Promise<void
 }
 
 /**
- * The lesson backlog: unlocked but never started. There is no separate
- * "backlog" concept to maintain — this query *is* the backlog, and the user
- * can work through it offline until it runs dry.
+ * Replaces the whole copy with a full pull. Rows WaniKani no longer sends are
+ * dropped, and every row is rewritten -- the only way a copy kept by diffs
+ * recovers from a change it missed.
+ */
+export async function replaceAssignments(assignments: Assignment[]): Promise<void> {
+  if (assignments.length === 0) return;
+  // Every row this pull writes is stamped at or after `before`; anything older
+  // was not in it. By timestamp rather than an id list, which a level-60
+  // account would push past SQLite's limit on bound parameters.
+  const before = new Date().toISOString();
+  await upsertAssignments(assignments);
+  const db = await getDatabase();
+  await db.runAsync(
+    'DELETE FROM local_assignments WHERE synced_at IS NULL OR synced_at < ?',
+    before,
+  );
+}
+
+/** Subject ids with no content on the phone yet -- what a sync has to fetch. */
+export async function missingSubjectIds(ids: number[]): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<{ subject_id: number }>('SELECT subject_id FROM local_subjects');
+  const have = new Set(rows.map((row) => row.subject_id));
+  return ids.filter((id) => !have.has(id));
+}
+
+/**
+ * A lesson just finished: out of the lesson queue now, rather than after the
+ * next sync. Stage 1's first review is four hours out; the sync replaces this
+ * guess with WaniKani's own answer.
+ */
+export async function markLessonStarted(subjectId: number): Promise<void> {
+  const db = await getDatabase();
+  const now = new Date();
+  await db.runAsync(
+    `UPDATE local_assignments
+        SET started_at = ?, srs_stage = CASE WHEN srs_stage = 0 THEN 1 ELSE srs_stage END,
+            available_at = ?
+      WHERE subject_id = ?`,
+    now.toISOString(),
+    new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
+    subjectId,
+  );
+}
+
+/**
+ * A review just finished: out of the review queue now. When it comes back
+ * depends on WaniKani's verdict, which the sync brings; until then it is simply
+ * not due.
+ */
+export async function markReviewAnswered(subjectId: number): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    'UPDATE local_assignments SET available_at = ? WHERE subject_id = ?',
+    new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+    subjectId,
+  );
+}
+
+/**
+ * The lesson backlog: unlocked but never started, in the order WaniKani
+ * teaches it -- by level, then radicals, kanji, vocabulary -- so a kanji's
+ * parts come before the kanji and the kanji before its words.
  */
 export async function getLessonQueue(limit = 50): Promise<Assignment[]> {
   const db = await getDatabase();
   const rows = await db.getAllAsync<AssignmentRow>(
-    `SELECT * FROM local_assignments
-      WHERE started_at IS NULL AND unlocked_at IS NOT NULL
-      ORDER BY unlocked_at ASC
+    `SELECT a.* FROM local_assignments a
+       LEFT JOIN local_subjects s ON s.subject_id = a.subject_id
+      WHERE a.started_at IS NULL AND a.unlocked_at IS NOT NULL
+      ORDER BY COALESCE(s.level, 999) ASC,
+               CASE a.subject_type WHEN 'radical' THEN 0 WHEN 'kanji' THEN 1 ELSE 2 END ASC,
+               a.subject_id ASC
       LIMIT ?`,
     limit,
   );
@@ -451,7 +587,9 @@ export async function getPendingWrites(): Promise<PendingWrite[]> {
     payload_json: string;
     created_at: string;
     synced_at: string | null;
-  }>('SELECT * FROM pending_writes WHERE synced_at IS NULL ORDER BY created_at ASC, id ASC');
+  }>(
+    'SELECT * FROM pending_writes WHERE synced_at IS NULL AND failed_at IS NULL ORDER BY created_at ASC, id ASC',
+  );
 
   return rows.map((row) => ({
     id: row.id,
@@ -475,12 +613,71 @@ export async function markWriteSynced(id: number): Promise<void> {
   );
 }
 
+/**
+ * Sets aside a write the server refused for good. Kept rather than deleted, so
+ * what was refused and why stays on the phone to look at.
+ */
+export async function markWriteFailed(id: number, reason: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    'UPDATE pending_writes SET failed_at = ?, last_error = ? WHERE id = ?',
+    new Date().toISOString(),
+    reason.slice(0, 500),
+    id,
+  );
+}
+
 export async function countPendingWrites(): Promise<number> {
   const db = await getDatabase();
   const row = await db.getFirstAsync<{ n: number }>(
-    'SELECT COUNT(*) AS n FROM pending_writes WHERE synced_at IS NULL',
+    'SELECT COUNT(*) AS n FROM pending_writes WHERE synced_at IS NULL AND failed_at IS NULL',
   );
   return row?.n ?? 0;
+}
+
+/**
+ * Flashcard answers typed on this phone that have not reached the server yet,
+ * by card. Until they do, the server still counts those cards as due; the quiz
+ * grades these against each card to leave out the ones already got right, so
+ * coming back picks up where you left off even before the outbox has drained.
+ */
+export interface PendingFlashcardAnswer {
+  answerGiven: string;
+  /** Set for a flipped card, which is self-graded rather than typed. */
+  correct: boolean | null;
+  setId: number | null;
+}
+
+export async function getPendingFlashcardAnswers(): Promise<
+  Map<number, PendingFlashcardAnswer[]>
+> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<{ payload_json: string }>(
+    "SELECT payload_json FROM pending_writes WHERE type = 'answer_flashcard' AND synced_at IS NULL AND failed_at IS NULL",
+  );
+  const byCard = new Map<number, PendingFlashcardAnswer[]>();
+  for (const row of rows) {
+    try {
+      const { srsStateId, answerGiven, setId, correct } = JSON.parse(row.payload_json) as {
+        srsStateId?: number;
+        answerGiven?: string;
+        setId?: number;
+        correct?: boolean;
+      };
+      if (typeof srsStateId !== 'number') continue;
+      byCard.set(srsStateId, [
+        ...(byCard.get(srsStateId) ?? []),
+        {
+          answerGiven: answerGiven ?? '',
+          correct: typeof correct === 'boolean' ? correct : null,
+          setId: typeof setId === 'number' ? setId : null,
+        },
+      ]);
+    } catch {
+      // A malformed row is the outbox's problem, not the quiz's.
+    }
+  }
+  return byCard;
 }
 
 /* -------------------------------------------------------------------------- */
