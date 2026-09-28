@@ -312,6 +312,34 @@ drift, so it is not a vacuous check.
 
 Recorded so nobody re-opens them from a stale reading:
 
+- **Generated questions** (2026-09-28) — four problems, all fixed:
+  - *No furigana, ever.* `DraftQuestion.furigana` was `dict[str, str]`, which
+    the SDK's strict schema turns into an object with no allowed keys, so the
+    model could only return `{}`. It is now a list of `{written, reading}`
+    pairs (`tests/test_lessons.py` pins the schema). Questions written before
+    this still have none; they age out as bundles are used.
+  - *Repeats.* A run built three bundles from identical pools with no memory
+    of what it wrote. The generator now gets recent prompts as "already
+    asked", exact repeats are dropped before verification, and `rotate_pools`
+    puts the least-asked words first (`lesson_memory_days`, `lesson_pool_size`).
+  - *A count that never moved.* The Home/Study practice counts loaded once at
+    launch; they now reload on focus. The event-driven refill also holds the
+    waiting count near the low-water mark by design, so a steady number is
+    not by itself a sign of trouble.
+  - *No way to tell whether the worker ran.* `generation_runs` records every
+    run (skipped ones too), committed before any model call; bundles commit as
+    they finish. The phone's Question catalog (`app/generated/`) lists runs
+    and every question each wrote. **Needs `alembic upgrade head`** — the
+    migration backfills existing questions into runs by time gap.
+- **`response_choice`** questions (pick the natural reply) are generated,
+  structurally checked and verified like multiple choice.
+- **Typo leeway** on WaniKani review *meanings* (`gradeMeaning` in
+  `src/data/grading.ts`); readings stay exact on purpose.
+- **Sync after a session** — the summary screen and Home pull-to-refresh call
+  `POST /api/sync`, so a level-up lands without waiting for the schedule.
+  Each review already reaches WaniKani as it is answered, so a session left
+  half-way loses nothing but the item on screen.
+
 - **Vocab sets** — was "the largest finished-but-invisible feature". Now built
   on both sides: `app/sets/index.tsx` names and lists them, `app/sets/[id].tsx`
   browses one and imports pages into it.
