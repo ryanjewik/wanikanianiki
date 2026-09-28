@@ -1,9 +1,9 @@
 /**
  * Generated lesson — not drawn in the artboards.
  *
- * One pregenerated bundle, one question at a time. The four question types
- * differ only in how the answer is collected: tap a choice, order some tiles,
- * or type. Everything after that — grading, advancing, moving on — is shared.
+ * One pregenerated bundle, one question at a time. The question types differ
+ * only in how the answer is collected: tap a choice (a meaning, or a reply to
+ * something said), order some tiles, or type. Everything after that — grading, advancing, moving on — is shared.
  *
  * **The bundle is claimed on mount and never refetched.** Asking the server
  * for the next bundle marks it consumed, so a reload would burn a second one
@@ -40,7 +40,7 @@ import {
   TextButton,
 } from '@/components/ui';
 import { answerQuestion } from '@/data/api';
-import type { Question } from '@/data/types';
+import { CHOICE_TYPES, QUESTION_TYPE_LABELS, type Question } from '@/data/types';
 import { feedback } from '@/feedback';
 import { useLessonBundle } from '@/hooks/useStudyData';
 import { colors, jp, radius, spacing, type as typeScale } from '@/theme/tokens';
@@ -144,7 +144,7 @@ export default function GeneratedLessonScreen() {
 
   const answerText = React.useCallback((): string => {
     if (!current) return '';
-    if (current.type === 'multiple_choice') return picked ?? '';
+    if (CHOICE_TYPES.has(current.type)) return picked ?? '';
     if (current.type === 'sentence_construction') return order.join('');
     return languageOf(current.payload.answer) === 'ja' ? finishKana(typed.trim()) : typed.trim();
   }, [current, picked, order, typed]);
@@ -394,7 +394,7 @@ export default function GeneratedLessonScreen() {
         <Card variant="bordered">
           <View style={styles.promptHead}>
             <Pill
-              label={LABELS[current.type]}
+              label={QUESTION_TYPE_LABELS[current.type]}
               color={colors.inkMuted}
               background={colors.ground}
             />
@@ -441,7 +441,7 @@ export default function GeneratedLessonScreen() {
         {/* Whichever control this question type uses, so a rejected answer
             shakes the thing that was rejected rather than the whole screen. */}
         <Animated.View style={[styles.answerArea, shakeStyle]}>
-          {current.type === 'multiple_choice' ? (
+          {CHOICE_TYPES.has(current.type) ? (
             <View style={styles.choices}>
               {(current.payload.choices ?? []).map((choice) => (
                 <Choice
@@ -651,7 +651,7 @@ function PracticeSummary({
                     >
                       <View style={styles.missHead}>
                         <Pill
-                          label={LABELS[question.type]}
+                          label={QUESTION_TYPE_LABELS[question.type]}
                           color={colors.inkMuted}
                           background={colors.ground}
                         />
@@ -706,13 +706,6 @@ function PracticeSummary({
     </View>
   );
 }
-
-const LABELS: Record<Question['type'], string> = {
-  multiple_choice: 'Choose one',
-  fill_in_blank: 'Fill the blank',
-  sentence_construction: 'Build the sentence',
-  recall: 'Recall',
-};
 
 function Choice({
   label,

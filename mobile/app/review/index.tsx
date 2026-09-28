@@ -27,6 +27,7 @@ import {
   SessionProgressBar,
   StatTile,
 } from '@/components/ui';
+import { gradeMeaning } from '@/data/grading';
 import { recordSession, type SessionItem } from '@/data/session';
 import { feedback } from '@/feedback';
 import type { StudyItem } from '@/data/types';
@@ -61,6 +62,8 @@ export default function ReviewScreen() {
   const [entries, setEntries] = React.useState<QueueEntry[] | null>(null);
   const [answer, setAnswer] = React.useState('');
   const [verdict, setVerdict] = React.useState<Verdict | null>(null);
+  /** The meaning a typo was accepted as, shown so the spelling still gets seen. */
+  const [closeTo, setCloseTo] = React.useState<string | null>(null);
   const [pose, setPose] = React.useState<Pose>('idle');
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as StudyItem[] });
   const { line, register } = useAnswerRun();
@@ -85,19 +88,29 @@ export default function ReviewScreen() {
   const current = entries?.[0];
   const total = (entries?.length ?? 0) + stats.correct;
 
+  /**
+   * Meanings forgive a typo or two (see `gradeMeaning` for how many, and why
+   * readings do not); readings must be exact. A typo that passes is a pass —
+   * WaniKani is told the answer was right — but `closeTo` shows the spelling.
+   */
   const grade = React.useCallback(
-    (entry: QueueEntry, typed: string): boolean => {
-      const normalised = typed.trim().toLowerCase();
-      if (!normalised) return false;
+    (entry: QueueEntry, typed: string): { ok: boolean; closeTo: string | null } => {
+      if (!typed.trim()) return { ok: false, closeTo: null };
 
       if (entry.half === 'meaning') {
-        return entry.item.subject.meanings.some(
-          (m) => m.acceptedAnswer && m.meaning.toLowerCase() === normalised,
-        );
+        const accepted = entry.item.subject.meanings
+          .filter((m) => m.acceptedAnswer)
+          .map((m) => m.meaning);
+        const verdict = gradeMeaning(typed, accepted);
+        return {
+          ok: verdict.result !== 'wrong',
+          closeTo: verdict.result === 'close' ? verdict.intended : null,
+        };
       }
-      return entry.item.subject.readings.some(
+      const ok = entry.item.subject.readings.some(
         (r) => r.acceptedAnswer && r.reading === typed.trim(),
       );
+      return { ok, closeTo: null };
     },
     [],
   );
@@ -109,8 +122,9 @@ export default function ReviewScreen() {
     // Shown back as graded, so a trailing n reads as the ん it was scored as.
     if (typed !== answer) setAnswer(typed);
 
-    const ok = grade(current, typed);
+    const { ok, closeTo: intended } = grade(current, typed);
     setVerdict(ok ? 'correct' : 'incorrect');
+    setCloseTo(intended);
     setPose(ok ? 'correct' : 'wrong');
 
     if (!ok) {
@@ -131,9 +145,11 @@ export default function ReviewScreen() {
       register(false);
     }
 
-    // The feedback mark holds for ~600ms, then the next item comes in.
+    // The feedback mark holds for ~600ms, then the next item comes in —
+    // longer when a typo was let through, so the right spelling can be read.
     setTimeout(() => {
       setVerdict(null);
+      setCloseTo(null);
       setAnswer('');
       // The only thing that ends the reaction now — under `holdReaction` the
       // mascot cycles until the next card replaces it.
@@ -180,7 +196,7 @@ export default function ReviewScreen() {
                 : [...prev.missed, current.item],
             },
       );
-    }, 600);
+    }, intended ? 1800 : 600);
   }, [answer, current, entries, grade, register, shake, submitAnswer, verdict]);
 
   /**
@@ -318,8 +334,12 @@ export default function ReviewScreen() {
           </Pressable>
         </Animated.View>
 
-        <Text style={styles.inputHint}>
-          {current.half === 'reading' ? 'Kana input · romaji converts as you type' : 'Type the English meaning'}
+        <Text style={[styles.inputHint, closeTo ? styles.closeHint : null]}>
+          {closeTo
+            ? `Close enough — it's spelled “${closeTo}”`
+            : current.half === 'reading'
+              ? 'Kana input · romaji converts as you type'
+              : 'Type the English meaning'}
         </Text>
 
         <Card style={styles.sessionCard}>
@@ -434,6 +454,9 @@ const styles = StyleSheet.create({
     marginTop: 10,
     ...typeScale.metaSmall,
     color: colors.inkFaint,
+  },
+  closeHint: {
+    color: colors.successInk,
   },
 
   sessionCard: {

@@ -5,7 +5,7 @@
  * action cards hold the Crabigator: a waving pose for lessons, a walking one
  * for reviews.
  */
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as React from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -14,7 +14,7 @@ import { Mascot, MascotBanner } from '@/components/Mascot';
 import { AnimatedSessionProgress, GrowBar, RiseIn } from '@/components/motion';
 import { ProfileAvatar, ScreenHeader } from '@/components/ScreenHeader';
 import { Card, QueueCard, SectionHeading } from '@/components/ui';
-import { isBackendConfigured } from '@/data/api';
+import { isBackendConfigured, triggerServerSync } from '@/data/api';
 import { useAuthStatus } from '@/data/credentials';
 import { formatSyncedAgo } from '@/data/sync';
 import type {
@@ -47,7 +47,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { data, reload } = useDashboard();
   const { data: calendar } = useActivityCalendar();
-  const { data: practice } = usePracticeQueue();
+  const { data: practice, reload: reloadPractice } = usePracticeQueue();
   const { data: jlpt } = useJlptCoverage();
   const { syncing, refresh } = useSync();
   const auth = useAuthStatus();
@@ -65,10 +65,26 @@ export default function DashboardScreen() {
     }
   }, [auth, reload]);
 
+  // The home tab stays mounted, so the practice count was read once at launch
+  // and never again. Every return to it re-reads the (cheap, read-only) count.
+  useFocusEffect(
+    React.useCallback(() => {
+      reloadPractice();
+    }, [reloadPractice]),
+  );
+
+  // Pull-to-refresh is the manual "sync now": the phone drains its queue and
+  // pulls what changed, and the server runs its own full WaniKani pass rather
+  // than waiting for its schedule — that pass is what moves the level shown
+  // here after a level-up.
   const onRefresh = React.useCallback(async () => {
-    await refresh();
+    await Promise.allSettled([
+      refresh(),
+      isBackendConfigured ? triggerServerSync() : Promise.resolve(),
+    ]);
     reload();
-  }, [refresh, reload]);
+    reloadPractice();
+  }, [refresh, reload, reloadPractice]);
 
   if (!data) return <View style={styles.screen} />;
 

@@ -20,6 +20,8 @@ import type {
   DashboardSummary,
   DayActivitySummary,
   Flashcard,
+  GenerationRunDetail,
+  GenerationRunList,
   GrammarEntry,
   JlptCoverage,
   LessonBundle,
@@ -387,6 +389,12 @@ export function useSessionSummary() {
       } catch {
         /* offline — fall through to whatever the mirror already holds */
       }
+      // Every answer has already reached WaniKani one by one; this asks the
+      // server for its full pass now instead of at the next half-hourly one,
+      // so a level-up, the lessons it unlocks, and the words generated
+      // questions are written from all catch up straight away. Not awaited:
+      // nothing on this screen reads the server's copy.
+      void api.triggerServerSync().catch(() => undefined);
     }
 
     const [assignments, next, pendingSync, dashboard] = await Promise.all([
@@ -570,6 +578,25 @@ export function usePracticeQueue() {
       return { bundles: 0, questions: 0 };
     }
   }, []);
+}
+
+/**
+ * The question catalog: the lesson worker's runs, newest first. Online only —
+ * it is a view of the server's own record, and a cached copy would mislead
+ * exactly when it matters, which is when you are checking the worker is alive.
+ */
+export function useGenerationRuns() {
+  return useAsync<GenerationRunList | null>(async () => {
+    if (!api.isBackendConfigured) return null;
+    return await api.fetchGenerationRuns();
+  }, []);
+}
+
+export function useGenerationRun(runId: number) {
+  return useAsync<GenerationRunDetail | null>(async () => {
+    if (!api.isBackendConfigured || !Number.isFinite(runId)) return null;
+    return await api.fetchGenerationRun(runId);
+  }, [runId]);
 }
 
 export function useLessonBundle() {

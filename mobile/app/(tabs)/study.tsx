@@ -9,7 +9,7 @@
  * Everything here is assembled from the existing primitives, so it stays in
  * the same system as the drawn screens.
  */
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
@@ -45,11 +45,22 @@ import {
 export default function StudyScreen() {
   const router = useRouter();
   const { data: dashboard } = useDashboard();
-  const { data: lessons } = useLessonQueue();
-  const { data: reviews } = useReviewQueue();
-  const { data: dueCards } = useDueFlashcards();
-  const { data: practice } = usePracticeQueue();
+  const { data: lessons, reload: reloadLessons } = useLessonQueue();
+  const { data: reviews, reload: reloadReviews } = useReviewQueue();
+  const { data: dueCards, reload: reloadCards } = useDueFlashcards();
+  const { data: practice, reload: reloadPractice } = usePracticeQueue();
   const { pendingWrites, result } = useSync();
+
+  // Tabs stay mounted, so without this every count here was read once at
+  // launch and never again — finishing a practice set left its old total up.
+  useFocusEffect(
+    React.useCallback(() => {
+      reloadLessons();
+      reloadReviews();
+      reloadCards();
+      reloadPractice();
+    }, [reloadLessons, reloadReviews, reloadCards, reloadPractice]),
+  );
 
   const lessonCount = lessons?.length ?? 0;
   const reviewCount = reviews?.length ?? 0;
@@ -196,7 +207,8 @@ export default function StudyScreen() {
         <Card variant="bordered">
           <Text style={styles.trackBlurb}>
             Not WaniKani lessons. These are questions written ahead of time —
-            multiple choice, fill-in-the-blank, sentence building — drawn from
+            multiple choice, fill-in-the-blank, sentence building, picking the
+            right reply — drawn from
             words across both decks above and any grammar you have confirmed. A
             WaniKani lesson teaches you something new; this asks you about what
             you have already met.
@@ -206,6 +218,12 @@ export default function StudyScreen() {
             WaniKani-owned words — those stay on WaniKani&apos;s own schedule, so
             practising them here counts as practice and nothing more.
           </Text>
+          <ChunkyButton
+            label="Question catalog"
+            tone="neutral"
+            size="small"
+            onPress={() => router.push('/generated')}
+          />
         </Card>
 
         <Overline style={styles.trackLabel}>How it feels</Overline>

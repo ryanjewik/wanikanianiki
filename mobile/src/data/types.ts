@@ -308,7 +308,21 @@ export type QuestionType =
   | 'multiple_choice'
   | 'fill_in_blank'
   | 'sentence_construction'
-  | 'recall';
+  | 'recall'
+  /** Someone says a line; pick the natural reply from four. */
+  | 'response_choice';
+
+/** The question types answered by tapping one of four `choices`. */
+export const CHOICE_TYPES: ReadonlySet<QuestionType> = new Set(['multiple_choice', 'response_choice']);
+
+/** How each type is named on screen — the practice session and the catalog. */
+export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
+  multiple_choice: 'Choose one',
+  fill_in_blank: 'Fill the blank',
+  sentence_construction: 'Build the sentence',
+  recall: 'Recall',
+  response_choice: 'Pick the reply',
+};
 
 /**
  * What a question actually carries. One shape with optional halves rather than
@@ -320,7 +334,7 @@ export interface QuestionPayload {
   /** The answer key. Present because the phone shows a verdict immediately;
    *  the server regrades regardless and its verdict is what the deck records. */
   answer: string;
-  /** multiple_choice only — exactly four. */
+  /** multiple_choice and response_choice only — exactly four. */
   choices?: string[];
   /** sentence_construction only — joined in order they reproduce `answer`. */
   tiles?: string[];
@@ -377,6 +391,59 @@ export interface JlptCoverage {
  * Read from a route that deliberately does *not* consume — asking for the next
  * bundle in order to draw a count would spend one to display it.
  */
+/**
+ * One pass of the lesson worker. `stalled` is a run still marked running long
+ * after it started — the server's worker was killed part-way.
+ */
+export type GenerationRunStatus = 'running' | 'completed' | 'skipped' | 'failed' | 'stalled';
+
+export interface GenerationRun {
+  id: number;
+  /** What woke it: schedule, LessonBundleClaimed, VocabConfirmed, manual, backfilled. */
+  trigger: string;
+  status: GenerationRunStatus;
+  reason: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  /** Unclaimed bundles when it began. */
+  bundlesWaiting: number;
+  drafted: number;
+  /** Thrown out for any reason: malformed, a repeat, over-drilled, or failed by the verifier. */
+  rejected: number;
+  bundlesCreated: number;
+  verified: number;
+  /** Questions that went out in a bundle you opened. */
+  served: number;
+}
+
+export interface GenerationRunList {
+  runs: GenerationRun[];
+  /** Runs this week that found the queue full and stopped — counted, not listed. */
+  skippedLastWeek: number;
+  lastRunAt: string | null;
+  lastRunStatus: GenerationRunStatus | null;
+}
+
+/** served: in a bundle you opened · waiting: in one not yet opened · unbundled: verified, but its bundle came up short. */
+export type QuestionStanding = 'served' | 'waiting' | 'unbundled' | 'rejected';
+
+export interface CatalogQuestion {
+  id: number;
+  type: QuestionType;
+  payload: QuestionPayload;
+  verified: boolean;
+  /** Why the verifier rejected it. */
+  verifierNote: string | null;
+  standing: QuestionStanding;
+  createdAt: string;
+  vocabItemIds: number[];
+}
+
+export interface GenerationRunDetail {
+  run: GenerationRun;
+  questions: CatalogQuestion[];
+}
+
 export interface LessonQueueCount {
   bundles: number;
   /** What the cards show: a learner counts questions, not the generator's batching. */

@@ -119,6 +119,8 @@ function RootStack() {
       <Stack.Screen name="sets/[id]" />
       <Stack.Screen name="grammar/index" />
       <Stack.Screen name="grammar/[id]" />
+      <Stack.Screen name="generated/index" />
+      <Stack.Screen name="generated/[id]" />
       <Stack.Screen name="profile" />
     </Stack>
   );

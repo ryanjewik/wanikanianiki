@@ -17,6 +17,8 @@ import type {
   DetectedItem,
   Flashcard,
   FlashcardOutcome,
+  GenerationRunDetail,
+  GenerationRunList,
   GrammarEnrichment,
   GrammarEntry,
   GrammarExampleInput,
@@ -407,6 +409,27 @@ export function fetchJlptCoverage(signal?: AbortSignal): Promise<JlptCoverage> {
  */
 export function fetchLessonQueueCount(signal?: AbortSignal): Promise<LessonQueueCount> {
   return request<LessonQueueCount>('/api/lesson-bundles/waiting', { signal });
+}
+
+/** The lesson worker's recent runs, for the question catalog. Read-only. */
+export function fetchGenerationRuns(signal?: AbortSignal): Promise<GenerationRunList> {
+  return request<GenerationRunList>('/api/generation-runs', { signal });
+}
+
+/** Every question one run wrote, rejected ones included. Read-only. */
+export function fetchGenerationRun(runId: number, signal?: AbortSignal): Promise<GenerationRunDetail> {
+  return request<GenerationRunDetail>(`/api/generation-runs/${runId}`, { signal });
+}
+
+/**
+ * Asks the server to pull from WaniKani now, rather than at its next scheduled
+ * sync. Each answer already reaches WaniKani as it is given; this is for what
+ * only a full pass picks up — a level-up, the lessons it unlocks, and the
+ * server's own copy that generated questions are written from.
+ */
+export function triggerServerSync(): Promise<unknown> {
+  // A full pass makes several WaniKani calls, so it gets longer than the default.
+  return request<unknown>('/api/sync', { method: 'POST', timeoutMs: 60_000 });
 }
 
 /**
