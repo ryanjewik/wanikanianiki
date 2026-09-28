@@ -53,22 +53,22 @@ export function matches(given: string, accepted: string[]): boolean {
 }
 
 /**
- * Typo tolerance for WaniKani *meaning* answers.
+ * Typo tolerance for WaniKani review answers, meanings and readings both.
  *
  * Not part of the port above: the server never grades a WaniKani review —
  * WaniKani only ever receives the incorrect counts — so this has no Python
  * twin to keep in step with.
  *
- * Meanings only, deliberately. A reading one kana off is usually the exact
- * mistake a review exists to catch — きょう for きょ, a missing っ, が for か —
- * so readings stay exact. English has no such trap: "licnese" is plainly
- * "licence" mistyped, and failing it teaches nothing but frustration.
+ * The allowance grows with the answer, the way WaniKani's own does for
+ * meanings: none for three letters or fewer, where one letter is a different
+ * word (cat, cut), one up to six letters, two beyond that.
  *
- * The allowance grows with the word, the way WaniKani's own does: none for
- * three letters or fewer, where one letter is a different word (cat, cut),
- * one up to six letters, two beyond that.
+ * Readings get their own, tighter scale (`readingTypoAllowance`), because kana
+ * are denser than letters — a two-kana word changed by one kana is simply a
+ * different word (えき, いき). The known cost, accepted by choice: a near miss
+ * such as きょ for きょう now passes, with the right reading shown after.
  */
-export type MeaningVerdict =
+export type TypoVerdict =
   | { result: 'exact' }
   | { result: 'close'; intended: string }
   | { result: 'wrong' };
@@ -79,18 +79,48 @@ export function typoAllowance(length: number): number {
   return 2;
 }
 
-export function gradeMeaning(given: string, accepted: string[]): MeaningVerdict {
-  const needle = normalise(given);
+/** None up to two kana, one up to five, two beyond. */
+export function readingTypoAllowance(length: number): number {
+  if (length <= 2) return 0;
+  if (length <= 5) return 1;
+  return 2;
+}
+
+export function gradeMeaning(given: string, accepted: string[]): TypoVerdict {
+  return gradeWithLeeway(given, accepted, [], normalise, typoAllowance);
+}
+
+/**
+ * `rejected` are readings the subject has but does not accept here — a kanji's
+ * other yomi. Typing one exactly is a knowledge miss, not a typo, so it is
+ * never let through as "close" to an accepted reading one kana away.
+ */
+export function gradeReading(given: string, accepted: string[], rejected: string[] = []): TypoVerdict {
+  return gradeWithLeeway(given, accepted, rejected, normaliseKana, readingTypoAllowance);
+}
+
+function normaliseKana(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/g, '');
+}
+
+function gradeWithLeeway(
+  given: string,
+  accepted: string[],
+  rejected: string[],
+  fold: (value: string) => string,
+  allowance: (length: number) => number,
+): TypoVerdict {
+  const needle = fold(given);
   if (!needle) return { result: 'wrong' };
+  if (accepted.some((value) => fold(value) === needle)) return { result: 'exact' };
+  if (rejected.some((value) => fold(value) === needle)) return { result: 'wrong' };
 
   let best: { value: string; distance: number } | null = null;
   for (const value of accepted) {
-    const target = normalise(value);
+    const target = fold(value);
     if (!target) continue;
-    if (target === needle) return { result: 'exact' };
-
     const distance = editDistance(needle, target);
-    if (distance <= typoAllowance(target.length) && (!best || distance < best.distance)) {
+    if (distance <= allowance(target.length) && (!best || distance < best.distance)) {
       best = { value, distance };
     }
   }

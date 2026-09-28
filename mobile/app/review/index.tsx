@@ -27,7 +27,7 @@ import {
   SessionProgressBar,
   StatTile,
 } from '@/components/ui';
-import { gradeMeaning } from '@/data/grading';
+import { gradeMeaning, gradeReading } from '@/data/grading';
 import { recordSession, type SessionItem } from '@/data/session';
 import { feedback } from '@/feedback';
 import type { StudyItem } from '@/data/types';
@@ -89,28 +89,29 @@ export default function ReviewScreen() {
   const total = (entries?.length ?? 0) + stats.correct;
 
   /**
-   * Meanings forgive a typo or two (see `gradeMeaning` for how many, and why
-   * readings do not); readings must be exact. A typo that passes is a pass —
-   * WaniKani is told the answer was right — but `closeTo` shows the spelling.
+   * Both halves forgive a typo or two (see `gradeMeaning` / `gradeReading` for
+   * how many). A typo that passes is a pass — WaniKani is told the answer was
+   * right — but `closeTo` shows the intended answer so it still gets seen.
    */
   const grade = React.useCallback(
     (entry: QueueEntry, typed: string): { ok: boolean; closeTo: string | null } => {
       if (!typed.trim()) return { ok: false, closeTo: null };
 
-      if (entry.half === 'meaning') {
-        const accepted = entry.item.subject.meanings
-          .filter((m) => m.acceptedAnswer)
-          .map((m) => m.meaning);
-        const verdict = gradeMeaning(typed, accepted);
-        return {
-          ok: verdict.result !== 'wrong',
-          closeTo: verdict.result === 'close' ? verdict.intended : null,
-        };
-      }
-      const ok = entry.item.subject.readings.some(
-        (r) => r.acceptedAnswer && r.reading === typed.trim(),
-      );
-      return { ok, closeTo: null };
+      const verdict =
+        entry.half === 'meaning'
+          ? gradeMeaning(
+              typed,
+              entry.item.subject.meanings.filter((m) => m.acceptedAnswer).map((m) => m.meaning),
+            )
+          : gradeReading(
+              typed,
+              entry.item.subject.readings.filter((r) => r.acceptedAnswer).map((r) => r.reading),
+              entry.item.subject.readings.filter((r) => !r.acceptedAnswer).map((r) => r.reading),
+            );
+      return {
+        ok: verdict.result !== 'wrong',
+        closeTo: verdict.result === 'close' ? verdict.intended : null,
+      };
     },
     [],
   );
@@ -336,7 +337,9 @@ export default function ReviewScreen() {
 
         <Text style={[styles.inputHint, closeTo ? styles.closeHint : null]}>
           {closeTo
-            ? `Close enough — it's spelled “${closeTo}”`
+            ? current.half === 'reading'
+              ? `Close enough — it's read “${closeTo}”`
+              : `Close enough — it's spelled “${closeTo}”`
             : current.half === 'reading'
               ? 'Kana input · romaji converts as you type'
               : 'Type the English meaning'}

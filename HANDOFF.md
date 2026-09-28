@@ -333,8 +333,10 @@ Recorded so nobody re-opens them from a stale reading:
     migration backfills existing questions into runs by time gap.
 - **`response_choice`** questions (pick the natural reply) are generated,
   structurally checked and verified like multiple choice.
-- **Typo leeway** on WaniKani review *meanings* (`gradeMeaning` in
-  `src/data/grading.ts`); readings stay exact on purpose.
+- **Typo leeway** on WaniKani reviews, meanings and readings
+  (`gradeMeaning` / `gradeReading` in `src/data/grading.ts`). Readings use a
+  tighter scale — none up to two kana — and typing one of a kanji's
+  non-accepted readings exactly is still wrong, never "close".
 - **Sync after a session** — the summary screen and Home pull-to-refresh call
   `POST /api/sync`, so a level-up lands without waiting for the schedule.
   Each review already reaches WaniKani as it is answered, so a session left
