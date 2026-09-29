@@ -367,3 +367,70 @@ def test_a_repeat_is_the_same_prompt_and_answer_whatever_the_spacing():
 
     assert question_key("免許 の 意味は？", "licence") == question_key("免許の意味は？", "licence")
     assert question_key("免許の意味は？", "licence") != question_key("免許の意味は？", "permit")
+
+
+# -- readings for questions written without them ------------------------------
+
+
+async def test_backfilled_readings_never_give_the_answer_away():
+    """The model's readings go through the same filter as a new question's."""
+    from types import SimpleNamespace
+
+    from app.services.lessons import QuestionReadings, ReadingsBatch, backfill_readings
+
+    class FakeMessages:
+        async def parse(self, **_kwargs):
+            return SimpleNamespace(
+                parsed_output=ReadingsBatch(
+                    questions=[
+                        QuestionReadings(
+                            question_id=7,
+                            furigana=[
+                                {"written": "講演", "reading": "こうえん"},
+                                # The answer to a reading question: must be dropped.
+                                {"written": "教授", "reading": "きょうじゅ"},
+                                # Not in the text: cannot render, dropped.
+                                {"written": "大学", "reading": "だいがく"},
+                            ],
+                        ),
+                        # An id that was never asked about is ignored.
+                        QuestionReadings(question_id=99, furigana=[]),
+                    ]
+                )
+            )
+
+    client = SimpleNamespace(messages=FakeMessages())
+    question = {
+        "id": 7,
+        "type": "multiple_choice",
+        "payload": {
+            "prompt": "教授の講演を聞いた。教授の読み方は？",
+            "choices": ["きょうじゅ", "きょうし", "こうし", "こうじゅ"],
+            "answer": "きょうじゅ",
+        },
+    }
+
+    readings = await backfill_readings([question], client=client)
+
+    assert readings == {7: {"講演": "こうえん"}}
+
+
+def test_the_answer_choice_is_glossed_like_the_others():
+    """A bare answer among glossed choices marks the answer."""
+    picked = draft(
+        prompt="医者は毎日___のベッドサイドに行きます。",
+        choices=["患者", "子犬", "火山", "笑顔"],
+        answer="患者",
+        furigana={"患者": "かんじゃ", "子犬": "こいぬ", "医者": "いしゃ"},
+    )
+    assert safe_furigana(picked) == {"患者": "かんじゃ", "子犬": "こいぬ", "医者": "いしゃ"}
+
+
+def test_choices_go_unglossed_when_the_prompt_asks_which_reads_so():
+    which_reads = draft(
+        prompt="「かざん」と読むのはどれですか。",
+        choices=["火山", "火事", "花山", "家山"],
+        answer="火山",
+        furigana={"火山": "かざん", "火事": "かじ", "読む": "よむ"},
+    )
+    assert safe_furigana(which_reads) == {"読む": "よむ"}

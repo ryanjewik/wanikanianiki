@@ -567,6 +567,40 @@ async def _verify_with_lookup(
     return verdict
 
 
+def filter_readings(
+    readings: dict[str, str],
+    *,
+    prompt: str,
+    choices: list[str],
+    tiles: list[str],
+    answer: str,
+) -> dict[str, str]:
+    """`safe_furigana`'s rules, for any question: drop a reading that gives the
+    answer away, or whose word does not appear in the text.
+
+    The answer word itself keeps its reading when it is one of the choices.
+    Leaving it bare while every other choice is glossed made it the one option
+    without furigana -- the answer, marked. Where a reading *would* give it
+    away -- "which of these is read かざん?" -- the answer's reading is in the
+    prompt, and then no choice is glossed at all, so none stands out.
+    """
+    haystack = " ".join([prompt, *choices, *tiles])
+    answer = answer.strip()
+    kept = {
+        written: reading
+        for written, reading in readings.items()
+        if written and reading and written in haystack and reading.strip() != answer
+    }
+    answer_reading = kept.get(answer)
+    if answer_reading and answer_reading in prompt:
+        kept = {
+            written: reading
+            for written, reading in kept.items()
+            if not any(written in choice for choice in choices)
+        }
+    return kept
+
+
 def safe_furigana(draft: DraftQuestion) -> dict[str, str]:
     """The readings that can be shown without giving the question away.
 
@@ -584,19 +618,101 @@ def safe_furigana(draft: DraftQuestion) -> dict[str, str]:
     furigana = draft.readings()
     if not furigana:
         return {}
+    return filter_readings(
+        furigana,
+        prompt=draft.prompt,
+        choices=draft.choices,
+        tiles=draft.tiles,
+        answer=draft.answer,
+    )
 
-    haystack = " ".join([draft.prompt, *draft.choices, *draft.tiles])
-    answer = draft.answer.strip()
 
-    return {
-        written: reading
-        for written, reading in furigana.items()
-        if written
-        and reading
-        and written in haystack
-        and reading.strip() != answer
-        and written.strip() != answer
-    }
+# -- readings for questions written without them --------------------------
+
+
+class QuestionReadings(BaseModel):
+    question_id: int = Field(description="The id given for the question.")
+    furigana: list[Reading] = Field(
+        default_factory=list,
+        description=(
+            "One entry for every word written with kanji anywhere in the question, "
+            "written exactly as the text writes it. Words already in kana need no "
+            "entry."
+        ),
+    )
+
+
+class ReadingsBatch(BaseModel):
+    questions: list[QuestionReadings]
+
+
+READINGS_SYSTEM = """You add furigana to Japanese practice questions that were written without it.
+
+For each question, list every word written with kanji -- in the prompt, the
+choices and the tiles -- with its reading in kana, as the word is read in that
+sentence. Copy `written` exactly as it appears; the app finds it by substring.
+
+Never give a reading for the answer itself when the question asks for a
+reading: a question that shows its own answer is spoiled. Change nothing else
+about the questions."""
+
+
+async def backfill_readings(
+    questions: list[dict],
+    *,
+    settings: Settings | None = None,
+    client: anthropic.AsyncAnthropic | None = None,
+) -> dict[int, dict[str, str]]:
+    """Readings for questions generated before the generator could return any.
+
+    `questions` are `{id, type, payload}`. Returns question id -> the readings
+    it may show, already filtered by `filter_readings`, so a reading that would
+    give the answer away never comes back. Questions with none are left out.
+    """
+    if not questions:
+        return {}
+    settings = settings or get_settings()
+    client = client or _client(settings)
+
+    listing = "\n".join(
+        f"id={q['id']} type={q['type']} prompt={q['payload'].get('prompt', '')!r} "
+        f"choices={q['payload'].get('choices', [])!r} tiles={q['payload'].get('tiles', [])!r} "
+        f"answer={q['payload'].get('answer', '')!r}"
+        for q in questions
+    )
+    try:
+        response = await client.messages.parse(
+            model=settings.lesson_model,
+            max_tokens=16000,
+            system=READINGS_SYSTEM,
+            messages=[{"role": "user", "content": f"Questions:\n{listing}"}],
+            output_format=ReadingsBatch,
+        )
+    except anthropic.APIStatusError as exc:
+        raise GenerationFailed(f"Readings rejected ({exc.status_code}).") from exc
+    except (anthropic.APITimeoutError, anthropic.APIConnectionError) as exc:
+        raise GenerationFailed("Could not reach the model for readings.") from exc
+
+    batch = response.parsed_output
+    if batch is None:
+        return {}
+    by_id = {q["id"]: q for q in questions}
+    out: dict[int, dict[str, str]] = {}
+    for entry in batch.questions:
+        question = by_id.get(entry.question_id)
+        if question is None:
+            continue
+        payload = question["payload"]
+        readings = filter_readings(
+            {r.written: r.reading for r in entry.furigana},
+            prompt=payload.get("prompt", ""),
+            choices=payload.get("choices", []),
+            tiles=payload.get("tiles", []),
+            answer=payload.get("answer", ""),
+        )
+        if readings:
+            out[entry.question_id] = readings
+    return out
 
 
 def to_payload(draft: DraftQuestion) -> dict:
