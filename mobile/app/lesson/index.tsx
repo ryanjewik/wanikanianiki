@@ -32,6 +32,7 @@ import {
   TextButton,
 } from '@/components/ui';
 import { halvesOf, type Half, shuffle, WkQuestion } from '@/components/WkQuestion';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -472,7 +473,7 @@ function LessonQuiz({
         <SessionProgressBar correct={done} incorrect={0} total={questions} />
       </ScreenHeader>
 
-      <ScrollView contentContainerStyle={styles.quizContent} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScroll contentContainerStyle={styles.quizContent}>
         <WkQuestion
           key={turn}
           subject={current.item.subject}
@@ -486,7 +487,7 @@ function LessonQuiz({
           An item is learned once its meaning and reading are both right. Anything you leave
           before then stays in your lessons.
         </Text>
-      </ScrollView>
+      </KeyboardAwareScroll>
 
       <View style={styles.quizFooter}>
         <Mascot pose={pose} size={64} speed={1} lively holdReaction />

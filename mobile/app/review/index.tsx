@@ -11,7 +11,7 @@
  */
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Mascot, type Pose } from '@/components/Mascot';
 import { useAnswerRun } from '@/components/MascotCoach';
@@ -24,6 +24,7 @@ import {
   StatTile,
 } from '@/components/ui';
 import { halvesOf, type Half, shuffle, WkQuestion } from '@/components/WkQuestion';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import { recordSession, type SessionItem } from '@/data/session';
 import { feedback } from '@/feedback';
 import type { StudyItem } from '@/data/types';
@@ -227,7 +228,7 @@ export default function ReviewScreen() {
         <SessionProgressBar correct={stats.correct} incorrect={stats.incorrect} total={total} />
       </ScreenHeader>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         <WkQuestion
           // Keyed per turn, so a missed item coming straight back round -- the
           // last one left -- is a fresh question rather than the old one.
@@ -271,7 +272,7 @@ export default function ReviewScreen() {
             </View>
           ) : null}
         </Card>
-      </ScrollView>
+      </KeyboardAwareScroll>
 
       <View style={styles.footer}>
         <Mascot pose={pose} size={64} speed={1} lively holdReaction />

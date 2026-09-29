@@ -19,7 +19,6 @@ import * as React from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -48,6 +47,7 @@ import {
   ProgressBar,
   SectionHeading,
 } from '@/components/ui';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import * as api from '@/data/api';
 import type { DetectedItem, VocabItem, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -296,7 +296,7 @@ export default function SetDetailScreen() {
         trailingText={count > 0 ? `${count} ${count === 1 ? 'word' : 'words'}` : undefined}
       />
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         {importing ? (
           <Card variant="bordered" style={styles.progressCard}>
             <Text style={styles.progressTitle}>
@@ -460,7 +460,7 @@ export default function SetDetailScreen() {
             />
           </Card>
         ) : null}
-      </ScrollView>
+      </KeyboardAwareScroll>
 
       {reviewing ? (
         <View style={styles.footer}>

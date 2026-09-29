@@ -23,7 +23,6 @@ import * as React from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -41,6 +40,7 @@ import {
   Pill,
   TextButton,
 } from '@/components/ui';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import * as api from '@/data/api';
 import type { GrammarEntry } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -295,7 +295,7 @@ export default function GrammarDetailScreen() {
         trailingColor={colors.successInk}
       />
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         <Card variant="bordered" style={styles.headCard}>
           <Text style={styles.pattern}>{entry.pattern}</Text>
           <View style={styles.headMeta}>
@@ -472,7 +472,7 @@ export default function GrammarDetailScreen() {
 
           <TextButton label="Delete this point" color={colors.dangerInk} onPress={remove} />
         </View>
-      </ScrollView>
+      </KeyboardAwareScroll>
     </View>
   );
 }

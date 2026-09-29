@@ -15,13 +15,14 @@
  *   would otherwise look exactly like being offline. It is never shown back.
  */
 import * as React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { FeedbackToggles } from '@/components/FeedbackToggles';
 import { MascotAvatar } from '@/components/Mascot';
 import { showDialog } from '@/components/Dialog';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, InlineButton, Overline, StatTile } from '@/components/ui';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import { API_BASE_URL, checkConnection, isBackendConfigured } from '@/data/api';
 import { clearApiKey, getApiKey, saveApiKey, useAuthStatus } from '@/data/credentials';
 import { formatSyncedAgo, syncNow } from '@/data/sync';
@@ -110,7 +111,7 @@ export default function ProfileScreen() {
     <View style={styles.screen}>
       <ScreenHeader title="My profile" showBack />
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         <Card style={styles.hero}>
           <MascotAvatar size={84} style={styles.heroAvatar} />
           <Text style={styles.name} numberOfLines={1}>
@@ -193,7 +194,7 @@ export default function ProfileScreen() {
             </Text>
           ) : null}
         </Card>
-      </ScrollView>
+      </KeyboardAwareScroll>
     </View>
   );
 }

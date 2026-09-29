@@ -44,6 +44,7 @@ import {
   SessionProgressBar,
   StatTile,
 } from '@/components/ui';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import * as api from '@/data/api';
 import { getPref, setPref } from '@/data/db';
 import { matches } from '@/data/grading';
@@ -374,7 +375,7 @@ function SetSession({ setId }: { setId: number }) {
         <SessionProgressBar correct={known} incorrect={stats.incorrect} total={cardCount} />
       </ScreenHeader>
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         <FilterChips
           options={[
             { key: 'type', label: 'Type answers' },
@@ -557,7 +558,7 @@ function SetSession({ setId }: { setId: number }) {
             </View>
           ) : null}
         </Card>
-      </ScrollView>
+      </KeyboardAwareScroll>
 
       <View style={styles.footer}>
         <Mascot pose={pose} size={64} speed={1} lively holdReaction />

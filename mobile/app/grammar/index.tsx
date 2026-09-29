@@ -15,7 +15,6 @@ import * as React from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -26,6 +25,7 @@ import { LanguageInput } from '@/components/LanguageInput';
 import { showDialog } from '@/components/Dialog';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, ChunkyButton, EmptyState, Pill } from '@/components/ui';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import * as api from '@/data/api';
 import type { GrammarEntry } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -99,7 +99,7 @@ export default function GrammarScreen() {
         trailingText={entries && entries.length > 0 ? `${entries.length} points` : undefined}
       />
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         <Card variant="bordered" style={styles.composer}>
           <Text style={styles.composerLabel}>Log a point</Text>
           <LanguageInput
@@ -177,7 +177,7 @@ export default function GrammarScreen() {
             />
           </Card>
         ) : null}
-      </ScrollView>
+      </KeyboardAwareScroll>
     </View>
   );
 }

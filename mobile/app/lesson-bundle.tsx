@@ -39,6 +39,8 @@ import {
   StatTile,
   TextButton,
 } from '@/components/ui';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
+import { shuffle } from '@/components/WkQuestion';
 import { answerQuestion } from '@/data/api';
 import { CHOICE_TYPES, QUESTION_TYPE_LABELS, type Question } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -123,10 +125,12 @@ export default function GeneratedLessonScreen() {
   // Tiles arrive in answer order, so they are shuffled once per question for
   // display. Shuffling on every render would reorder them under the user's
   // finger mid-tap.
-  const shuffled = React.useMemo(() => {
-    const tiles = current?.payload.tiles ?? [];
-    return [...tiles].sort(() => Math.random() - 0.5);
-  }, [current]);
+  const shuffled = React.useMemo(() => shuffle(current?.payload.tiles ?? []), [current]);
+
+  // Choices too: the generator writes the right answer first, so shown as
+  // stored the answer was always the top option. Once per question, for the
+  // same reason as the tiles.
+  const choices = React.useMemo(() => shuffle(current?.payload.choices ?? []), [current]);
 
   const submitted = verdict !== null;
 
@@ -384,7 +388,7 @@ export default function GeneratedLessonScreen() {
         trailingText={`${index + 1} / ${queue.length}`}
       />
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         <SessionProgressBar
           total={queue.length}
           correct={answeredCorrect}
@@ -443,7 +447,7 @@ export default function GeneratedLessonScreen() {
         <Animated.View style={[styles.answerArea, shakeStyle]}>
           {CHOICE_TYPES.has(current.type) ? (
             <View style={styles.choices}>
-              {(current.payload.choices ?? []).map((choice) => (
+              {choices.map((choice) => (
                 <Choice
                   key={choice}
                   label={choice}
@@ -535,7 +539,7 @@ export default function GeneratedLessonScreen() {
           tone={submitted ? 'neutral' : 'kanji'}
           onPress={submitted ? onNext : onSubmit}
         />
-      </ScrollView>
+      </KeyboardAwareScroll>
     </View>
   );
 }

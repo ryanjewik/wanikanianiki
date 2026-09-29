@@ -14,7 +14,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   AmbiguityBanner,
@@ -35,6 +35,7 @@ import {
   InlineButton,
   SectionHeading,
 } from '@/components/ui';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import * as api from '@/data/api';
 import { DETECTED_ITEMS, DETECTED_TOTAL, IMPORT_PAGE_LABEL } from '@/data/fixtures';
 import type { DetectedItem, StudyMode, VocabFolder, VocabSet } from '@/data/types';
@@ -263,7 +264,7 @@ export default function ImportScreen() {
         trailingColor={colors.vocabulary}
       />
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         {!imageUri ? (
           <>
             <Card variant="bordered">
@@ -386,7 +387,7 @@ export default function ImportScreen() {
             </Card>
           </>
         )}
-      </ScrollView>
+      </KeyboardAwareScroll>
 
       {imageUri ? (
         <View style={styles.footer}>

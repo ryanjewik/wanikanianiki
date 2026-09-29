@@ -17,7 +17,6 @@ import * as React from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -37,6 +36,7 @@ import {
   Pill,
   ProgressBar,
 } from '@/components/ui';
+import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import * as api from '@/data/api';
 import type { VocabFolder, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -246,7 +246,7 @@ export default function SetsScreen() {
         trailingText={sets && sets.length > 0 ? `${sets.length} sets` : undefined}
       />
 
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScroll contentContainerStyle={styles.content}>
         {naming ? (
           <Card variant="bordered" style={styles.namingCard}>
             <Text style={styles.namingLabel}>{namingTitle}</Text>
@@ -364,7 +364,7 @@ export default function SetsScreen() {
             />
           </Card>
         ) : null}
-      </ScrollView>
+      </KeyboardAwareScroll>
     </View>
   );
 }
