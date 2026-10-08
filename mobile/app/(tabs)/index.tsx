@@ -7,7 +7,16 @@
  */
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as React from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { ActivityCalendar } from '@/components/ActivityCalendar';
 import { Mascot, MascotBanner } from '@/components/Mascot';
@@ -18,6 +27,7 @@ import { isBackendConfigured, triggerServerSync } from '@/data/api';
 import { useAuthStatus } from '@/data/credentials';
 import { formatSyncedAgo } from '@/data/sync';
 import { feedback } from '@/feedback';
+import { rescheduleReminders } from '@/notifications/reminders';
 import type { FlashcardOverview } from '@/hooks/useStudyData';
 import type {
   CalendarDay,
@@ -95,7 +105,20 @@ export default function DashboardScreen() {
     feedback.reveal();
   }, [refresh, reload, reloadDue, reloadPractice]);
 
-  if (!data) return <View style={styles.screen} />;
+  // The evening reminder follows the streak: reworded as it grows, and
+  // skipped tonight once today has anything in it.
+  const streakDays = data?.streak.days;
+  const studiedToday = (data?.streak.week.at(-1)?.intensity ?? 0) > 0;
+  React.useEffect(() => {
+    if (streakDays === undefined) return;
+    void rescheduleReminders({ streakDays, studiedToday });
+  }, [streakDays, studiedToday]);
+
+  // Only on a first launch, with nothing saved yet: every later start shows
+  // the last dashboard at once while the new one loads.
+  if (!data) {
+    return <HomeSkeleton onProfile={() => router.push('/profile')} />;
+  }
 
   const { levelProgress: level } = data;
   const syncedLabel = formatSyncedAgo(data.lastSyncedAt);
@@ -105,7 +128,12 @@ export default function DashboardScreen() {
       <ScreenHeader
         branded
         title="WaniKaniAniki"
-        trailing={<ProfileAvatar onPress={() => router.push('/profile')} />}
+        trailing={
+          <View style={styles.headerTrailing}>
+            <StreakChip days={data.streak.days} studiedToday={studiedToday} />
+            <ProfileAvatar onPress={() => router.push('/profile')} />
+          </View>
+        }
       />
 
       <ScrollView
@@ -254,6 +282,66 @@ export default function DashboardScreen() {
 }
 
 /* -------------------------------------------------------------------------- */
+
+/**
+ * The streak, beside the profile icon. Lit once today has something in it;
+ * dimmed while the day is still open, which is also when the 7pm reminder is
+ * waiting to go off.
+ */
+function StreakChip({ days, studiedToday }: { days: number; studiedToday: boolean }) {
+  return (
+    <View
+      style={[styles.streakChip, !studiedToday && styles.streakChipOpen]}
+      accessibilityLabel={`${days}-day streak${studiedToday ? '' : ', not yet studied today'}`}
+    >
+      <Text style={styles.streakChipFlame}>🔥</Text>
+      <Text style={[styles.streakChipCount, !studiedToday && styles.streakChipCountOpen]}>
+        {days}
+      </Text>
+    </View>
+  );
+}
+
+/**
+ * What a first launch shows while the dashboard loads: the shape of the
+ * screen, gently pulsing, instead of an empty page that looks frozen.
+ */
+function HomeSkeleton({ onProfile }: { onProfile: () => void }) {
+  const pulse = React.useRef(new Animated.Value(0.45)).current;
+  React.useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.45, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
+  return (
+    <View style={styles.screen}>
+      <ScreenHeader branded title="WaniKaniAniki" trailing={<ProfileAvatar onPress={onProfile} />} />
+      <ScrollView contentContainerStyle={styles.content} scrollEnabled={false}>
+        <MascotBanner variant="wide" height={76} fill="cover" style={styles.banner} />
+        <View style={styles.skeletonLoading}>
+          <ActivityIndicator color={colors.kanji} />
+          <Text style={styles.skeletonLoadingText}>Loading your dashboard…</Text>
+        </View>
+        {[0, 1, 2].map((key) => (
+          <Animated.View key={key} style={[styles.skeletonCard, { opacity: pulse }]}>
+            <View style={styles.skeletonArt} />
+            <View style={styles.skeletonLines}>
+              <View style={[styles.skeletonLine, { width: '70%' }]} />
+              <View style={[styles.skeletonLine, { width: '90%', height: 10 }]} />
+              <View style={[styles.skeletonButton]} />
+            </View>
+          </Animated.View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
 
 /** Flashcards on the home screen: continue the set you were on, or pick one. */
 function FlashcardCard({
@@ -466,6 +554,79 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
     gap: 4,
   },
+  headerTrailing: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  streakChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: colors.kanjiTint,
+  },
+  streakChipOpen: {
+    backgroundColor: colors.ground,
+  },
+  streakChipFlame: {
+    fontSize: 14,
+  },
+  streakChipCount: {
+    fontFamily: typeScale.stat.fontFamily,
+    fontSize: 15,
+    color: colors.kanji,
+  },
+  streakChipCountOpen: {
+    color: colors.inkSoft,
+  },
+
+  skeletonLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    paddingVertical: 10,
+  },
+  skeletonLoadingText: {
+    ...typeScale.caption,
+    color: colors.inkSoft,
+  },
+  skeletonCard: {
+    flexDirection: 'row',
+    gap: 14,
+    padding: 14,
+    marginBottom: 8,
+    borderRadius: radius.card,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  skeletonArt: {
+    width: 80,
+    height: 80,
+    borderRadius: radius.art,
+    backgroundColor: colors.ground,
+  },
+  skeletonLines: {
+    flex: 1,
+    gap: 10,
+    justifyContent: 'center',
+  },
+  skeletonLine: {
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: colors.ground,
+  },
+  skeletonButton: {
+    width: 140,
+    height: 34,
+    borderRadius: radius.button,
+    backgroundColor: colors.ground,
+  },
+
   authCard: {
     backgroundColor: colors.warningRow,
     borderColor: colors.warningBorder,

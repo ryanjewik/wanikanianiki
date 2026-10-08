@@ -42,6 +42,7 @@ import {
 import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import { shuffle } from '@/components/WkQuestion';
 import { answerQuestion } from '@/data/api';
+import { markStudiedToday } from '@/notifications/reminders';
 import { CHOICE_TYPES, QUESTION_TYPE_LABELS, type Question } from '@/data/types';
 import { feedback } from '@/feedback';
 import { useLessonBundle } from '@/hooks/useStudyData';
@@ -219,6 +220,8 @@ export default function GeneratedLessonScreen() {
     // verdict is what the deck records, and it is what replaces this.
     try {
       const outcome = await answerQuestion(answeredId, given);
+      // Practice answers count toward the streak too: no reminder tonight.
+      void markStudiedToday();
       setResults((all) => ({
         ...all,
         [answeredId]: {

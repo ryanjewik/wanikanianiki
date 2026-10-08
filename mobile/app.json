@@ -50,7 +50,14 @@
         }
       ],
       "expo-audio",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/mascot/icon/adaptive-monochrome-1024.png",
+          "color": "#E8447F"
+        }
+      ]
     ]
   }
 }

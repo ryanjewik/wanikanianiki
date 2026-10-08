@@ -15,10 +15,20 @@ import {
   soundAvailable,
   useFeedbackSettings,
 } from '@/feedback';
+import {
+  remindersAvailable,
+  remindersEnabled,
+  setRemindersEnabled,
+} from '@/notifications/reminders';
 import { colors, type as typeScale } from '@/theme/tokens';
 
 export function FeedbackToggles() {
   const settings = useFeedbackSettings();
+  const [reminders, setReminders] = React.useState(true);
+
+  React.useEffect(() => {
+    void remindersEnabled().then(setReminders);
+  }, []);
 
   return (
     <View style={styles.rows}>
@@ -47,6 +57,22 @@ export function FeedbackToggles() {
           // buzzes once on the way out — the confirmation that it worked.
           feedback.toggle();
           void setFeedbackSetting('haptics', next);
+        }}
+      />
+      <View style={styles.divider} />
+      <ToggleRow
+        title="Streak reminder"
+        blurb={
+          remindersAvailable
+            ? 'A nudge at 7pm on days you have not studied yet. Nothing on days you have.'
+            : 'Unavailable in this build — rebuild the app to enable reminders.'
+        }
+        value={reminders && remindersAvailable}
+        disabled={!remindersAvailable}
+        onChange={(next) => {
+          feedback.toggle();
+          setReminders(next);
+          void setRemindersEnabled(next);
         }}
       />
     </View>
