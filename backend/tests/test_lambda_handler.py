@@ -116,3 +116,17 @@ def test_uvicorn_shutdown_still_closes_the_client():
     # The lifespan cleared the cache on the way out, so the next caller gets a
     # fresh client rather than one whose transport is already closed.
     assert get_client() is not before
+
+
+def test_the_warmer_is_answered_without_touching_the_app(monkeypatch):
+    """The schedule's ping keeps an instance up; it must not run a request."""
+    from app import lambda_handler
+
+    calls = []
+    monkeypatch.setattr(lambda_handler, "_asgi", lambda event, context: calls.append(event))
+
+    assert lambda_handler.handler({"warmer": True}, None) == {"warm": True}
+    assert calls == []
+
+    lambda_handler.handler(_event(), None)
+    assert len(calls) == 1

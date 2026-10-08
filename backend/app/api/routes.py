@@ -10,6 +10,7 @@ is enough to run the whole read side locally.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 
@@ -153,8 +154,15 @@ async def get_dashboard(
     settings screen nobody visits is a setting that stays wrong. An unrecognised
     or absent value leaves whatever the account already had.
     """
-    summary = await client.get_summary()
-    user_summary = parse_user(await client.get_user())
+    # The three WaniKani reads do not depend on each other, so they go out
+    # together: one round trip's wait instead of three, on the request the
+    # home screen is blocked on.
+    summary, raw_user, level_progressions = await asyncio.gather(
+        client.get_summary(),
+        client.get_user(),
+        client.get_level_progressions(),
+    )
+    user_summary = parse_user(raw_user)
 
     lesson_count = count_available_now(summary.get("lessons", []))
     review_count = count_available_now(summary.get("reviews", []))
@@ -193,8 +201,6 @@ async def get_dashboard(
         review_days = set()
         last_synced_at = None
         zone = timezone_name(tz)
-
-    level_progressions = await client.get_level_progressions()
 
     return DashboardSummary(
         user=user_summary,

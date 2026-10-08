@@ -41,7 +41,21 @@ from app.main import app, configure_logging  # noqa: E402
 # Mangum translates API Gateway / Function URL events into ASGI scope.
 # `lifespan="auto"` runs the app's lifespan on cold start, which is what builds
 # the shared WaniKani client.
-handler = Mangum(app, lifespan="auto")
+_asgi = Mangum(app, lifespan="auto")
+
+
+def handler(event: dict[str, Any], context: Any) -> Any:
+    """The API, plus a no-op answer to the warmer.
+
+    A cold start costs about five seconds before the first byte -- loading the
+    parameters, the app, the database driver -- and the home screen waited on
+    every one. A schedule pings this every few minutes so an instance is
+    usually already up; the ping is answered here, before Mangum, since it is
+    not an HTTP event and has nothing to route.
+    """
+    if isinstance(event, dict) and event.get("warmer"):
+        return {"warm": True}
+    return _asgi(event, context)
 
 logger = logging.getLogger(__name__)
 

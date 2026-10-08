@@ -38,3 +38,9 @@ variable "api_public" {
   type        = bool
   default     = false
 }
+
+variable "api_warmer_schedule" {
+  description = "How often to ping the API so an instance stays warm. null turns the warmer off."
+  type        = string
+  default     = "rate(5 minutes)"
+}
