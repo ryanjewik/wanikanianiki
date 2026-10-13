@@ -380,10 +380,16 @@ export type QuestionType =
   | 'sentence_construction'
   | 'recall'
   /** Someone says a line; pick the natural reply from four. */
-  | 'response_choice';
+  | 'response_choice'
+  /** Pick the kanji with this meaning from among its look-alikes. */
+  | 'kanji_lookalike';
 
 /** The question types answered by tapping one of four `choices`. */
-export const CHOICE_TYPES: ReadonlySet<QuestionType> = new Set(['multiple_choice', 'response_choice']);
+export const CHOICE_TYPES: ReadonlySet<QuestionType> = new Set([
+  'multiple_choice',
+  'response_choice',
+  'kanji_lookalike',
+]);
 
 /** How each type is named on screen — the practice session and the catalog. */
 export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
@@ -392,7 +398,15 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   sentence_construction: 'Build the sentence',
   recall: 'Recall',
   response_choice: 'Pick the reply',
+  kanji_lookalike: 'Which kanji?',
 };
+
+/** One option, in English, and why it is right or wrong -- shown after answering. */
+export interface QuestionExplanation {
+  option: string;
+  translation: string;
+  why: string;
+}
 
 /**
  * What a question actually carries. One shape with optional halves rather than
@@ -417,6 +431,13 @@ export interface QuestionPayload {
    * can never answer its own question.
    */
   furigana?: Record<string, string>;
+  /** The prompt in English, shown after answering. */
+  translation?: string;
+  /** Every choice (or the answer, for typed types) explained. */
+  explanations?: QuestionExplanation[];
+  /** kanji_lookalike: the subject asked about, and which subject each option is. */
+  subjectId?: number;
+  choiceSubjectIds?: Record<string, number>;
 }
 
 export interface Question {
@@ -549,7 +570,9 @@ export interface QuestionOutcome {
 export type PendingWriteType =
   | 'start_assignment'
   | 'submit_review'
-  | 'answer_flashcard';
+  | 'answer_flashcard'
+  /** One answer attempt for the analysis log -- see `data/answerLog.ts`. */
+  | 'answer_event';
 
 /** One answered imported-vocabulary card, queued for the server to grade. */
 export interface FlashcardAnswerWrite {

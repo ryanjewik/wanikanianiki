@@ -22,6 +22,7 @@ import { CheckMark, CorrectMark, IncorrectMark } from '@/components/icons';
 import { finishKana, LanguageInput } from '@/components/LanguageInput';
 import { Pop, useShake } from '@/components/motion';
 import { Card, ChunkyButton } from '@/components/ui';
+import { type AnswerSource, logAnswer, useAnswerTimer } from '@/data/answerLog';
 import { gradeMeaning, gradeReading } from '@/data/grading';
 import type { Subject } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -168,10 +169,24 @@ function acceptedAnswers(subject: Subject, half: Half): string[] {
     .map((r) => r.reading);
 }
 
+/** Where a question was asked, for the answer log. */
+export interface WkLogContext {
+  source: AnswerSource;
+  sessionId: string;
+  position: number;
+  /** 1 the first time this question is asked in the session, then 2, 3... */
+  attempt: number;
+  assignmentId?: number;
+  srsStage?: number;
+  /** When the item became due (`available_at`); null for a lesson. */
+  dueAt?: string | null;
+}
+
 export function WkQuestion({
   subject,
   half,
   meta,
+  log,
   onGraded,
   onNext,
 }: {
@@ -179,6 +194,8 @@ export function WkQuestion({
   half: Half;
   /** Under the character: the SRS stage in a review, "lesson quiz" in a lesson. */
   meta?: React.ReactNode;
+  /** Logs the answer for analysis when given. */
+  log?: WkLogContext;
   /** Once per question, the moment it is graded — for strikes and the mascot. */
   onGraded: (ok: boolean) => void;
   /** When the question is finished with and the next should come. */
@@ -191,12 +208,59 @@ export function WkQuestion({
   const [closeTo, setCloseTo] = React.useState<string | null>(null);
   const { style: shakeStyle, shake } = useShake();
   const palette = subjectPalette[subject.type];
+  const timer = useAnswerTimer();
+  /** What was graded, held for the log written on the way out. */
+  const graded = React.useRef<{ ok: boolean; typed: string } | null>(null);
 
-  // A right answer moves on by itself; the timer must not outlive the card.
-  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onText = React.useCallback(
+    (text: string) => {
+      timer.onText(text);
+      setAnswer(text);
+    },
+    [timer],
+  );
+
+  /**
+   * Logged on leaving rather than on grading, so the time spent reading a
+   * correction is in it -- a miss read for ten seconds is a different event
+   * from one dismissed at once.
+   */
+  const leave = React.useCallback(
+    (ok: boolean) => {
+      const done = graded.current;
+      if (log && done) {
+        logAnswer(
+          {
+            source: log.source,
+            sessionId: log.sessionId,
+            position: log.position,
+            attempt: log.attempt,
+            questionKind: half,
+            inputMode: 'typed',
+            subjectId: subject.id,
+            subjectType: subject.type,
+            assignmentId: log.assignmentId ?? null,
+            srsStage: log.srsStage ?? null,
+            dueAt: log.dueAt ?? null,
+            prompt: subject.characters,
+            answerGiven: done.typed,
+            expected: acceptedAnswers(subject, half),
+            correct: done.ok,
+            outcome: done.ok ? 'correct' : 'incorrect',
+          },
+          timer.finish(),
+        );
+      }
+      onNext(ok);
+    },
+    [half, log, onNext, subject, timer],
+  );
+
+  // A right answer moves on by itself; the hold must not outlive the card.
+  const hold = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   React.useEffect(
     () => () => {
-      if (timer.current) clearTimeout(timer.current);
+      if (hold.current) clearTimeout(hold.current);
     },
     [],
   );
@@ -205,7 +269,7 @@ export function WkQuestion({
     // After a miss the same key moves on, so the keyboard never has to close.
     if (verdict === 'incorrect') {
       feedback.advance();
-      onNext(false);
+      leave(false);
       return;
     }
     if (verdict) return;
@@ -224,6 +288,7 @@ export function WkQuestion({
     if (!ok) {
       const redirect = nearMiss(subject, half, typed);
       if (redirect) {
+        timer.nearMiss(typed);
         setNudge(redirect);
         shake();
         feedback.back();
@@ -239,14 +304,16 @@ export function WkQuestion({
     setNudge(null);
     setCloseTo(intended);
     setVerdict(ok ? 'correct' : 'incorrect');
+    timer.answered();
+    graded.current = { ok, typed };
     onGraded(ok);
 
     if (ok) {
-      timer.current = setTimeout(() => onNext(true), intended ? TYPO_HOLD_MS : CORRECT_HOLD_MS);
+      hold.current = setTimeout(() => leave(true), intended ? TYPO_HOLD_MS : CORRECT_HOLD_MS);
     } else {
       shake();
     }
-  }, [answer, half, onGraded, onNext, shake, subject, verdict]);
+  }, [answer, half, leave, onGraded, shake, subject, timer, verdict]);
 
   const accepted = acceptedAnswers(subject, half);
   const mnemonic = half === 'meaning' ? subject.meaningMnemonic : subject.readingMnemonic;
@@ -275,7 +342,7 @@ export function WkQuestion({
         >
           <LanguageInput
             value={answer}
-            onChangeText={setAnswer}
+            onChangeText={onText}
             onSubmitEditing={submit}
             editable={!verdict}
             blurOnSubmit={false}

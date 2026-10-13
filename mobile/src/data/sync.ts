@@ -63,6 +63,8 @@ function writeKey(type: PendingWrite['type'], payload: Record<string, unknown>):
       return `assignment:${String(payload.assignmentId)}`;
     case 'answer_flashcard':
       return `card:${String(payload.srsStateId)}`;
+    case 'answer_event':
+      return 'answer_event';
     default:
       return `unknown:${String(type)}`;
   }
@@ -94,7 +96,12 @@ function isPermanent(error: unknown): error is api.ApiError {
  * stops the run, since every write after it would fail the same way.
  */
 export async function replayPendingWrites(): Promise<{ replayed: number; refusedWaniKani: boolean }> {
-  const pending = await getPendingWrites();
+  const all = await getPendingWrites();
+  // Answer events are a log, not study state: no order to keep, nothing that
+  // depends on them, so they go up in batches on their own, after the writes
+  // that matter, and a failure there holds back nothing else.
+  const pending = all.filter((write) => write.type !== 'answer_event');
+  const events = all.filter((write) => write.type === 'answer_event');
   const blocked = new Set<string>();
   let replayed = 0;
   // A refused lesson or review means the phone's copy disagreed with
@@ -128,6 +135,9 @@ export async function replayPendingWrites(): Promise<{ replayed: number; refused
             (await api.submitReview(payload as unknown as ReviewAnswer)).assignment,
           ]);
           break;
+        case 'answer_event':
+          // Batched below; never reached from this loop.
+          continue;
         case 'answer_flashcard': {
           const answer = payload as unknown as FlashcardAnswerWrite;
           await api.answerFlashcard(answer.srsStateId, {
@@ -160,7 +170,47 @@ export async function replayPendingWrites(): Promise<{ replayed: number; refused
     }
   }
 
+  replayed += await replayAnswerEvents(events);
   return { replayed, refusedWaniKani };
+}
+
+/** Events per request: well under the server's 500, and a quick retry when one fails. */
+const EVENT_BATCH = 100;
+
+/**
+ * Sends queued answer events in batches. A batch the server refuses outright
+ * is set aside like any refused write; one that fails for now waits for the
+ * next sync. Returns how many were confirmed.
+ */
+async function replayAnswerEvents(events: PendingWrite[]): Promise<number> {
+  let sent = 0;
+  for (let start = 0; start < events.length; start += EVENT_BATCH) {
+    const batch = events.slice(start, start + EVENT_BATCH);
+    const parsed: { write: PendingWrite; payload: unknown }[] = [];
+    for (const write of batch) {
+      try {
+        parsed.push({ write, payload: JSON.parse(write.payload) });
+      } catch {
+        await markWriteFailed(write.id, 'Unreadable payload');
+      }
+    }
+    if (parsed.length === 0) continue;
+    try {
+      await api.postAnswerEvents(parsed.map((p) => p.payload));
+      for (const { write } of parsed) await markWriteSynced(write.id);
+      sent += parsed.length;
+    } catch (error) {
+      if (isPermanent(error)) {
+        console.warn(`[sync] server refused answer events (${error.status}); set aside`);
+        for (const { write } of parsed) {
+          await markWriteFailed(write.id, `${error.status}: ${error.message}`);
+        }
+        continue;
+      }
+      break;
+    }
+  }
+  return sent;
 }
 
 let inFlight: Promise<SyncResult> | null = null;

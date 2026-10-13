@@ -420,6 +420,19 @@ export function updateVocabSet(
   return request<VocabSet>(`/api/vocab-sets/${setId}`, { method: 'PATCH', body: patch });
 }
 
+/**
+ * Stores answer events for analysis. Idempotent: events the server already
+ * has are skipped, so the outbox can resend a batch safely.
+ */
+export function postAnswerEvents(
+  events: unknown[],
+): Promise<{ accepted: number; received: number }> {
+  return request<{ accepted: number; received: number }>('/api/answer-events', {
+    method: 'POST',
+    body: { events },
+  });
+}
+
 /** A set's flashcards not yet known, shuffled, with how far through it you are. */
 export function fetchSetStudy(setId: number, signal?: AbortSignal): Promise<SetStudy> {
   return request<SetStudy>(`/api/vocab-sets/${setId}/study`, { signal });

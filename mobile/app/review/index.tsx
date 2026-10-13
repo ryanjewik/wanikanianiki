@@ -25,6 +25,7 @@ import {
 } from '@/components/ui';
 import { halvesOf, type Half, shuffle, WkQuestion } from '@/components/WkQuestion';
 import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
+import { newSessionId } from '@/data/answerLog';
 import { recordSession, type SessionItem } from '@/data/session';
 import { feedback } from '@/feedback';
 import type { StudyItem } from '@/data/types';
@@ -57,6 +58,10 @@ export default function ReviewScreen() {
   const [graded, setGraded] = React.useState(false);
   /** Counts questions asked; keys each one so it always starts clean. */
   const [turn, setTurn] = React.useState(0);
+  // For the answer log: one id per sitting, and how often each question has
+  // been asked in it, so a retry after a miss is told apart from a first try.
+  const sessionId = React.useMemo(newSessionId, []);
+  const askedCount = React.useRef(new Map<string, number>());
   const [stats, setStats] = React.useState({ correct: 0, incorrect: 0, missed: [] as StudyItem[] });
   const { line, register } = useAnswerRun();
 
@@ -123,6 +128,8 @@ export default function ReviewScreen() {
       if (!current) return;
       setGraded(false);
       setTurn((n) => n + 1);
+      const key = `${current.item.subject.id}:${current.half}`;
+      askedCount.current.set(key, (askedCount.current.get(key) ?? 0) + 1);
       // The only thing that ends the reaction — under `holdReaction` the
       // mascot cycles until the next card replaces it.
       setPose('idle');
@@ -235,6 +242,15 @@ export default function ReviewScreen() {
           key={turn}
           subject={subject}
           half={current.half}
+          log={{
+            source: 'wk_review',
+            sessionId,
+            position: turn,
+            attempt: (askedCount.current.get(`${subject.id}:${current.half}`) ?? 0) + 1,
+            assignmentId: current.item.assignment.id,
+            srsStage: current.item.assignment.srsStage,
+            dueAt: current.item.assignment.availableAt,
+          }}
           meta={
             <>
               <Pill

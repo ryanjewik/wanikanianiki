@@ -33,6 +33,7 @@ import {
 } from '@/components/ui';
 import { halvesOf, type Half, shuffle, WkQuestion } from '@/components/WkQuestion';
 import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
+import { newSessionId } from '@/data/answerLog';
 import { recordSession, type SessionItem } from '@/data/session';
 import type { StudyItem, Subject } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -412,6 +413,8 @@ function LessonQuiz({
     shuffle(items.flatMap((item) => halvesOf(item.subject).map((half) => ({ item, half })))),
   );
   const [turn, setTurn] = React.useState(0);
+  const sessionId = React.useMemo(newSessionId, []);
+  const askedCount = React.useRef(new Map<string, number>());
   const [pose, setPose] = React.useState<Pose>('idle');
   const [learned, setLearned] = React.useState(0);
   const [missed, setMissed] = React.useState(0);
@@ -444,6 +447,8 @@ function LessonQuiz({
       if (!current) return;
       setPose('idle');
       setTurn((n) => n + 1);
+      const key = `${current.item.subject.id}:${current.half}`;
+      askedCount.current.set(key, (askedCount.current.get(key) ?? 0) + 1);
       const [, ...remaining] = queue;
       // Both halves right -- no question about this item left -- is learned.
       if (ok && !remaining.some((q) => q.item === current.item)) {
@@ -478,6 +483,16 @@ function LessonQuiz({
           key={turn}
           subject={current.item.subject}
           half={current.half}
+          log={{
+            source: 'wk_lesson_quiz',
+            sessionId,
+            position: turn,
+            attempt:
+              (askedCount.current.get(`${current.item.subject.id}:${current.half}`) ?? 0) + 1,
+            assignmentId: current.item.assignment.id,
+            srsStage: current.item.assignment.srsStage,
+            dueAt: null,
+          }}
           meta={<Pill label="lesson quiz" color={palette.ink} background={palette.tint} />}
           onGraded={onGraded}
           onNext={onNext}

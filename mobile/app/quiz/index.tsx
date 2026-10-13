@@ -47,6 +47,7 @@ import {
 import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import * as api from '@/data/api';
 import { getPref, setPref } from '@/data/db';
+import { logAnswer, newSessionId, useAnswerTimer } from '@/data/answerLog';
 import { matches } from '@/data/grading';
 import type { Flashcard, VocabSet } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -122,6 +123,12 @@ function SetSession({ setId }: { setId: number }) {
   }, [setId]);
 
   const [entries, setEntries] = React.useState<QueueEntry[] | null>(null);
+  // For the answer log: one id per sitting, a running position, and how often
+  // each card has come up in it (a retry after a miss is attempt 2).
+  const sessionId = React.useMemo(newSessionId, []);
+  const timer = useAnswerTimer();
+  const position = React.useRef(0);
+  const askedCount = React.useRef(new Map<number, number>());
   const [answer, setAnswer] = React.useState('');
   const [verdict, setVerdict] = React.useState<Verdict | null>(null);
   const [pose, setPose] = React.useState<Pose>('idle');
@@ -147,6 +154,7 @@ function SetSession({ setId }: { setId: number }) {
   }, []);
 
   const flip = React.useCallback(() => {
+    timer.responded();
     if (flipped) return;
     feedback.reveal();
     setFlipped(true);
@@ -221,6 +229,7 @@ function SetSession({ setId }: { setId: number }) {
         ? outcome === 'gotIt'
         : !gaveUp && matches(typed, current.card.acceptedAnswers);
       const sent = selfGraded ? { correct: ok } : { answerGiven: typed };
+      timer.answered();
 
       setVerdict(ok ? 'correct' : 'incorrect');
       setPose(ok ? 'correct' : 'wrong');
@@ -261,6 +270,46 @@ function SetSession({ setId }: { setId: number }) {
       // is the only teaching moment the card gets.
       setTimeout(
         () => {
+          const { card } = current;
+          const attempt = (askedCount.current.get(card.srsStateId) ?? 0) + 1;
+          askedCount.current.set(card.srsStateId, attempt);
+          logAnswer(
+            {
+              source: 'flashcard',
+              sessionId,
+              position: position.current++,
+              attempt,
+              questionKind: card.skillType,
+              inputMode: selfGraded ? 'flip' : 'typed',
+              vocabItemId: card.vocabItemId,
+              srsStateId: card.srsStateId,
+              setId,
+              prompt: card.prompt,
+              answerGiven: selfGraded ? null : typed,
+              expected: card.acceptedAnswers,
+              correct: ok,
+              outcome: gaveUp
+                ? 'gave_up'
+                : selfGraded
+                  ? ok
+                    ? 'self_correct'
+                    : 'self_incorrect'
+                  : ok
+                    ? 'correct'
+                    : 'incorrect',
+              furiganaShown:
+                card.skillType === 'recognition' &&
+                card.repetitions < FURIGANA_UNTIL_REPETITIONS &&
+                Boolean(card.furiganaOnly) &&
+                card.furiganaOnly !== card.prompt,
+              srsEase: card.easeFactor,
+              srsIntervalDays: card.intervalDays,
+              srsRepetitions: card.repetitions,
+              srsLapses: card.lapses,
+              dueAt: card.dueAt,
+            },
+            timer.finish(),
+          );
           setVerdict(null);
           setAnswer('');
           setFlipped(false);
@@ -277,8 +326,13 @@ function SetSession({ setId }: { setId: number }) {
         selfGraded ? 350 : ok ? 600 : gaveUp ? 2200 : 1600,
       );
     },
-    [answer, answerFlashcard, current, register, setId, shake, verdict],
+    [answer, answerFlashcard, current, register, sessionId, setId, shake, timer, verdict],
   );
+
+  // Each new card starts the clock.
+  React.useEffect(() => {
+    if (current) timer.start();
+  }, [current, timer]);
 
   const onSubmit = React.useCallback(() => grade('typed'), [grade]);
   const onGiveUp = React.useCallback(() => grade('gaveUp'), [grade]);
@@ -492,7 +546,10 @@ function SetSession({ setId }: { setId: number }) {
               >
                 <LanguageInput
                   value={answer}
-                  onChangeText={setAnswer}
+                  onChangeText={(text) => {
+                    timer.onText(text);
+                    setAnswer(text);
+                  }}
                   onSubmitEditing={onSubmit}
                   editable={!verdict}
                   style={[styles.answerInput, production && jp.answer]}

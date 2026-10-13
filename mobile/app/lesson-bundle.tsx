@@ -42,6 +42,7 @@ import {
 import { KeyboardAwareScroll } from '@/components/KeyboardAwareScroll';
 import { shuffle } from '@/components/WkQuestion';
 import { answerQuestion } from '@/data/api';
+import { logAnswer, newSessionId, useAnswerTimer } from '@/data/answerLog';
 import { markStudiedToday } from '@/notifications/reminders';
 import { CHOICE_TYPES, QUESTION_TYPE_LABELS, type Question } from '@/data/types';
 import { feedback } from '@/feedback';
@@ -98,6 +99,13 @@ export default function GeneratedLessonScreen() {
    */
   const { line, register } = useAnswerRun();
   const { style: shakeStyle, shake } = useShake();
+  // For the answer log: one id per sitting, a running position, how often each
+  // question has come up (a correction is attempt 2), and the answer as given.
+  const sessionId = React.useMemo(newSessionId, []);
+  const timer = useAnswerTimer();
+  const position = React.useRef(0);
+  const askedCount = React.useRef(new Map<number, number>());
+  const givenRef = React.useRef<string | null>(null);
 
   const questions = React.useMemo(() => bundle?.questions ?? [], [bundle]);
 
@@ -127,6 +135,14 @@ export default function GeneratedLessonScreen() {
   // display. Shuffling on every render would reorder them under the user's
   // finger mid-tap.
   const shuffled = React.useMemo(() => shuffle(current?.payload.tiles ?? []), [current]);
+
+  // Each new question starts the clock.
+  React.useEffect(() => {
+    if (current) {
+      timer.start();
+      givenRef.current = null;
+    }
+  }, [current, timer]);
 
   // Choices too: the generator writes the right answer first, so shown as
   // stored the answer was always the top option. Once per question, for the
@@ -191,6 +207,8 @@ export default function GeneratedLessonScreen() {
     const expected = current.payload.answer;
     const answeredId = current.id;
     const locallyRight = given === expected;
+    timer.answered();
+    givenRef.current = given;
 
     setVerdict({ correct: locallyRight, expected });
     setPose(locallyRight ? 'correct' : 'wrong');
@@ -288,6 +306,45 @@ export default function GeneratedLessonScreen() {
   }, [current, furigana]);
 
   /**
+   * Logs the answer on screen, once, on the way to the next one -- after the
+   * explanation has been read, so that time is in it. The verdict is the
+   * server's when it has arrived.
+   */
+  const logCurrent = React.useCallback(() => {
+    if (!current || !verdict || givenRef.current === null) return;
+    const answer = givenRef.current;
+    givenRef.current = null;
+    const attempt = (askedCount.current.get(current.id) ?? 0) + 1;
+    askedCount.current.set(current.id, attempt);
+    const isChoice = CHOICE_TYPES.has(current.type);
+    logAnswer(
+      {
+        source: 'practice',
+        sessionId,
+        position: position.current++,
+        attempt,
+        questionKind: current.type,
+        inputMode: isChoice
+          ? 'choice'
+          : current.type === 'sentence_construction'
+            ? 'tiles'
+            : 'typed',
+        questionId: current.id,
+        subjectId: current.payload.subjectId ?? null,
+        prompt: current.payload.prompt,
+        answerGiven: answer,
+        expected: [current.payload.answer],
+        correct: verdict.correct,
+        outcome: verdict.correct ? 'correct' : 'incorrect',
+        furiganaShown: showFurigana && hasReadings,
+        choicesShown: isChoice ? choices : current.type === 'sentence_construction' ? shuffled : null,
+        pickedIndex: isChoice && picked !== null ? choices.indexOf(picked) : null,
+      },
+      timer.finish(),
+    );
+  }, [choices, current, hasReadings, picked, sessionId, showFurigana, shuffled, timer, verdict]);
+
+  /**
    * Leave mid-lesson.
    *
    * The bundle is already spent — claiming it is what consumed it — so there
@@ -295,6 +352,8 @@ export default function GeneratedLessonScreen() {
    * Going back is therefore just navigation, not an abandon that loses work.
    */
   const leave = React.useCallback(() => {
+    // An answer still on screen is logged, not lost.
+    logCurrent();
     // Backing out of the corrections pass returns to the summary rather than
     // out of the lesson: the summary is the only place the misses are listed,
     // and it cannot be navigated back to once left — the bundle it describes
@@ -308,9 +367,10 @@ export default function GeneratedLessonScreen() {
     }
     if (router.canGoBack()) router.back();
     else router.replace('/(tabs)/study');
-  }, [phase, resetInputs, router]);
+  }, [logCurrent, phase, resetInputs, router]);
 
   const onNext = React.useCallback(() => {
+    logCurrent();
     if (index + 1 >= queue.length) {
       // Both passes end in the same place. The summary is the only exit: it is
       // where the corrections offer lives, and dropping straight back to the
@@ -323,7 +383,7 @@ export default function GeneratedLessonScreen() {
     feedback.advance();
     setIndex((i) => i + 1);
     resetInputs();
-  }, [index, queue.length, resetInputs]);
+  }, [index, logCurrent, queue.length, resetInputs]);
 
   /** Starts the corrections pass over the questions missed first time round. */
   const startCorrections = React.useCallback(() => {
@@ -459,7 +519,12 @@ export default function GeneratedLessonScreen() {
                   selected={picked === choice}
                   revealed={submitted}
                   isAnswer={choice === verdict?.expected}
-                  onPress={() => !submitted && setPicked(choice)}
+                  big={current.type === 'kanji_lookalike'}
+                  onPress={() => {
+                    if (submitted) return;
+                    timer.responded();
+                    setPicked(choice);
+                  }}
                 />
               ))}
             </View>
@@ -477,6 +542,7 @@ export default function GeneratedLessonScreen() {
                       disabled={submitted || used}
                       onPress={() => {
                         feedback.select();
+                        timer.responded();
                         setOrder((rest) => [...rest, tile]);
                       }}
                       style={[styles.tile, used && styles.tileUsed]}
@@ -508,7 +574,10 @@ export default function GeneratedLessonScreen() {
           {current.type === 'fill_in_blank' || current.type === 'recall' ? (
             <LanguageInput
               value={typed}
-              onChangeText={setTyped}
+              onChangeText={(text) => {
+                timer.onText(text);
+                setTyped(text);
+              }}
               editable={!submitted}
               placeholder="Your answer"
               placeholderTextColor={colors.inkFaint}
@@ -534,6 +603,7 @@ export default function GeneratedLessonScreen() {
                 <Text style={styles.verdictBody}>Answer: {verdict.expected}</Text>
               ) : null}
             </Card>
+            <ExplanationCard question={current} picked={picked} expected={verdict.expected} />
           </Pop>
         ) : null}
 
@@ -714,6 +784,60 @@ function PracticeSummary({
   );
 }
 
+/**
+ * After answering: the question in English, and each option with its meaning
+ * and why it is right or wrong. The answer and a wrong pick are marked, so the
+ * mistake and its correction read side by side.
+ */
+function ExplanationCard({
+  question,
+  picked,
+  expected,
+}: {
+  question: Question;
+  picked: string | null;
+  expected: string;
+}) {
+  const { translation, explanations } = question.payload;
+  if (!translation && !explanations?.length) return null;
+
+  return (
+    <Card variant="bordered" style={styles.explainCard}>
+      {translation ? (
+        <View style={styles.explainBlock}>
+          <Text style={styles.explainLabel}>In English</Text>
+          <Text style={styles.explainTranslation}>{translation}</Text>
+        </View>
+      ) : null}
+      {(explanations ?? []).map((note) => {
+        const right = note.option === expected;
+        const wrongPick = !right && note.option === picked;
+        return (
+          <View
+            key={note.option}
+            style={[
+              styles.explainRow,
+              right && styles.explainRowRight,
+              wrongPick && styles.explainRowWrong,
+            ]}
+          >
+            <View style={styles.explainHead}>
+              <Text style={styles.explainOption}>{note.option}</Text>
+              {note.translation ? (
+                <Text style={styles.explainGloss}>{note.translation}</Text>
+              ) : null}
+              <Text style={[styles.explainMark, right ? styles.markRight : styles.markWrong]}>
+                {right ? '✓' : wrongPick ? 'your pick' : ''}
+              </Text>
+            </View>
+            {note.why ? <Text style={styles.explainWhy}>{note.why}</Text> : null}
+          </View>
+        );
+      })}
+    </Card>
+  );
+}
+
 function Choice({
   label,
   furigana,
@@ -721,6 +845,7 @@ function Choice({
   selected,
   revealed,
   isAnswer,
+  big = false,
   onPress,
 }: {
   label: string;
@@ -729,6 +854,8 @@ function Choice({
   selected: boolean;
   revealed: boolean;
   isAnswer: boolean;
+  /** One kanji per option: drawn large, since telling them apart is the point. */
+  big?: boolean;
   onPress: () => void;
 }) {
   // After submitting, the right answer is always marked — including when the
@@ -746,7 +873,7 @@ function Choice({
         text={label}
         furigana={furigana}
         show={showFurigana}
-        style={styles.choiceText}
+        style={big ? styles.choiceKanji : styles.choiceText}
       />
     </PressBounce>
   );
@@ -803,6 +930,28 @@ const styles = StyleSheet.create({
   choicePicked: { borderColor: colors.kanji, backgroundColor: colors.kanjiTint },
   choiceRight: { borderColor: colors.success, backgroundColor: colors.successTint },
   choiceText: { ...typeScale.body, color: colors.ink },
+  choiceKanji: { ...jp.detail, fontSize: 44, lineHeight: 52, color: colors.ink },
+
+  explainCard: { gap: 10, marginTop: 10 },
+  explainBlock: { gap: 3 },
+  explainLabel: { ...typeScale.overline, color: colors.inkSoft },
+  explainTranslation: { ...typeScale.body, color: colors.ink, lineHeight: 20 },
+  explainRow: {
+    gap: 3,
+    padding: 10,
+    borderRadius: radius.control,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  explainRowRight: { backgroundColor: colors.successTint, borderColor: colors.success },
+  explainRowWrong: { backgroundColor: colors.dangerTint, borderColor: colors.danger },
+  explainHead: { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' },
+  explainOption: { ...jp.row, fontSize: 17, color: colors.ink },
+  explainGloss: { ...typeScale.captionBold, color: colors.inkMuted, flexShrink: 1 },
+  explainMark: { ...typeScale.metaSmall, marginLeft: 'auto' },
+  markRight: { color: colors.successInk },
+  markWrong: { color: colors.dangerInk },
+  explainWhy: { ...typeScale.caption, color: colors.inkSoft, lineHeight: 18 },
 
   builtLine: { ...jp.answer, color: colors.ink, minHeight: 32, marginBottom: 10 },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
