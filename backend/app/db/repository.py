@@ -2194,22 +2194,79 @@ async def _item_features(session: AsyncSession, event: AnswerEventIn) -> dict[st
     return features
 
 
-def _history_filter(event: AnswerEventIn):
-    """Which earlier answers count as "this item" for history and elapsed time.
+async def answer_history(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    srs_state_id: int | None,
+    subject_id: int | None,
+    question_kind: str,
+    question_id: int | None,
+    answered_at: datetime,
+) -> tuple[datetime | None, int | None, int | None]:
+    """(last answered, prior right, prior wrong) for this question, before `answered_at`.
 
-    The same question, not just the same word: a WaniKani item's meaning and
-    reading are remembered separately, as are a flashcard's two directions,
-    which is the split hypothesis 2 is about.
+    From the scheduler logs, which go back to the start of the app, rather than
+    from answer_events, which only began on 2026-10-13: time since the last
+    review and the right/wrong history are the core inputs of the forgetting-
+    curve models, and starting them from zero would throw that history away.
+
+    The same *question*, not just the same word: a flashcard's two directions
+    and a WaniKani item's meaning and reading are remembered separately, which
+    is the split hypothesis 2 is about. reviews_log records each half's misses
+    apart, so a half is right in a review when its miss count is zero.
+    Practice questions, which no other log records per question, fall back to
+    answer_events.
     """
-    if event.srs_state_id is not None:
-        return AnswerEvent.srs_state_id == event.srs_state_id
-    if event.subject_id is not None:
-        return (AnswerEvent.subject_id == event.subject_id) & (
-            AnswerEvent.question_kind == event.question_kind
+    if srs_state_id is not None:
+        row = await session.execute(
+            select(
+                func.max(VocabReviewLog.created_at),
+                func.count().filter(VocabReviewLog.correct.is_(True)),
+                func.count().filter(VocabReviewLog.correct.is_(False)),
+            ).where(
+                VocabReviewLog.srs_state_id == srs_state_id,
+                VocabReviewLog.created_at < answered_at,
+            )
         )
-    if event.question_id is not None:
-        return AnswerEvent.question_id == event.question_id
-    return None
+        return tuple(row.one())
+
+    if subject_id is not None and question_kind in ("meaning", "reading"):
+        misses = (
+            ReviewLog.incorrect_meaning
+            if question_kind == "meaning"
+            else ReviewLog.incorrect_reading
+        )
+        row = await session.execute(
+            select(
+                func.max(ReviewLog.created_at),
+                func.count().filter(misses == 0),
+                func.count().filter(misses > 0),
+            )
+            .join(StudyProgress, StudyProgress.id == ReviewLog.study_progress_id)
+            .where(
+                StudyProgress.user_id == user_id,
+                StudyProgress.subject_id == subject_id,
+                ReviewLog.created_at < answered_at,
+            )
+        )
+        return tuple(row.one())
+
+    if question_id is not None:
+        row = await session.execute(
+            select(
+                func.max(AnswerEvent.answered_at),
+                func.count().filter(AnswerEvent.correct.is_(True)),
+                func.count().filter(AnswerEvent.correct.is_(False)),
+            ).where(
+                AnswerEvent.user_id == user_id,
+                AnswerEvent.question_id == question_id,
+                AnswerEvent.answered_at < answered_at,
+            )
+        )
+        return tuple(row.one())
+
+    return None, None, None
 
 
 async def insert_answer_events(
@@ -2240,24 +2297,15 @@ async def insert_answer_events(
             continue
         seen.add(event.client_event_id)
 
-        prev_at = None
-        prior_correct = prior_incorrect = None
-        history = _history_filter(event)
-        if history is not None:
-            row = (
-                await session.execute(
-                    select(
-                        func.max(AnswerEvent.answered_at),
-                        func.count().filter(AnswerEvent.correct.is_(True)),
-                        func.count().filter(AnswerEvent.correct.is_(False)),
-                    ).where(
-                        AnswerEvent.user_id == user_id,
-                        history,
-                        AnswerEvent.answered_at < event.answered_at,
-                    )
-                )
-            ).one()
-            prev_at, prior_correct, prior_incorrect = row
+        prev_at, prior_correct, prior_incorrect = await answer_history(
+            session,
+            user_id,
+            srs_state_id=event.srs_state_id,
+            subject_id=event.subject_id,
+            question_kind=event.question_kind,
+            question_id=event.question_id,
+            answered_at=event.answered_at,
+        )
 
         local = event.answered_at
         session.add(
