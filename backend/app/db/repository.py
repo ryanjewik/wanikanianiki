@@ -20,7 +20,9 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     SYNC_KEY_LAST_SYNCED,
+    AnswerEvent,
     GenerationRun,
+    KanjiFeature,
     LessonBundle,
     LessonBundleQuestion,
     Question,
@@ -49,6 +51,7 @@ from app.db.models import (
     Subject as SubjectRow,
 )
 from app.schemas import (
+    AnswerEventIn,
     Assignment,
     DetectedItem,
     Flashcard,
@@ -2098,3 +2101,258 @@ async def get_generation_run(
         return "served" if consumed_by_question[question.id] else "waiting"
 
     return run, [(q, standing(q)) for q in questions]
+
+
+# -- answer events -----------------------------------------------------------
+
+
+def _kanji_in(text: str | None) -> list[str]:
+    """The kanji in a string, in order, repeats kept (a word's strokes count each)."""
+    return [ch for ch in (text or "") if "\u4e00" <= ch <= "\u9fff" or ch in "々〆"]
+
+
+async def _stroke_profile(session: AsyncSession, text: str | None) -> dict[str, Any]:
+    """Stroke and dictionary facts for the kanji in `text`, from kanji_features."""
+    chars = _kanji_in(text)
+    if not chars:
+        return {"kanji_count": 0}
+    rows = (
+        await session.execute(select(KanjiFeature).where(KanjiFeature.character.in_(set(chars))))
+    ).scalars().all()
+    by_char = {row.character: row for row in rows}
+    known = [by_char[c] for c in chars if c in by_char]
+    strokes = [k.stroke_count for k in known if k.stroke_count]
+    grades = [k.grade for k in known if k.grade]
+    freqs = [k.frequency for k in known if k.frequency]
+    return {
+        "kanji_count": len(chars),
+        "stroke_count": sum(strokes) if len(strokes) == len(chars) else None,
+        "max_strokes": max(strokes) if strokes else None,
+        "max_grade": max(grades) if grades else None,
+        # Higher number is rarer; the rarest kanji is what makes a word hard.
+        "rarest_frequency": max(freqs) if freqs else None,
+        "kanjidic_coverage": len(known) / len(chars),
+    }
+
+
+async def _item_features(session: AsyncSession, event: AnswerEventIn) -> dict[str, Any]:
+    """Everything the database knows about what was asked, as of now."""
+    features: dict[str, Any] = {}
+
+    if event.subject_id is not None:
+        subject = await session.get(SubjectRow, event.subject_id)
+        if subject is not None:
+            features.update(
+                characters=subject.characters,
+                subject_type=subject.type,
+                wk_level=subject.level,
+                jlpt_level=subject.jlpt_level,
+                component_count=len(subject.component_subject_ids or []),
+                amalgamation_count=len(subject.amalgamation_subject_ids or []),
+                visually_similar_count=len(subject.visually_similar_subject_ids or []),
+                meaning_count=len(subject.meanings or []),
+                reading_count=len(subject.readings or []),
+                accepted_reading_types=sorted(
+                    {r.get("type") for r in subject.readings or [] if r.get("accepted_answer")}
+                    - {None}
+                ),
+            )
+            features.update(await _stroke_profile(session, subject.characters))
+
+    if event.vocab_item_id is not None:
+        item = await session.get(VocabItem, event.vocab_item_id)
+        if item is not None:
+            features.update(
+                characters=item.kanji_furigana,
+                reading=item.furigana_only,
+                vocab_source=item.source,
+                jlpt_level=item.jlpt_level,
+                wanikani_subject_id=item.wanikani_subject_id,
+                mora_count=len(item.furigana_only or ""),
+            )
+            features.update(await _stroke_profile(session, item.kanji_furigana))
+
+    if event.question_id is not None:
+        question = await session.get(Question, event.question_id)
+        if question is not None:
+            tested = (
+                await session.execute(
+                    select(QuestionVocabItem.vocab_item_id).where(
+                        QuestionVocabItem.question_id == question.id
+                    )
+                )
+            ).scalars().all()
+            features.update(
+                question_type=question.type,
+                grammar_entry_id=question.grammar_entry_id,
+                tested_vocab_item_ids=list(tested),
+                run_id=question.run_id,
+                has_translation=bool((question.payload or {}).get("translation")),
+            )
+            features.update(await _stroke_profile(session, (question.payload or {}).get("prompt")))
+
+    return features
+
+
+def _history_filter(event: AnswerEventIn):
+    """Which earlier answers count as "this item" for history and elapsed time.
+
+    The same question, not just the same word: a WaniKani item's meaning and
+    reading are remembered separately, as are a flashcard's two directions,
+    which is the split hypothesis 2 is about.
+    """
+    if event.srs_state_id is not None:
+        return AnswerEvent.srs_state_id == event.srs_state_id
+    if event.subject_id is not None:
+        return (AnswerEvent.subject_id == event.subject_id) & (
+            AnswerEvent.question_kind == event.question_kind
+        )
+    if event.question_id is not None:
+        return AnswerEvent.question_id == event.question_id
+    return None
+
+
+async def insert_answer_events(
+    session: AsyncSession, user_id: int, events: Sequence[AnswerEventIn]
+) -> int:
+    """Store answer events, enriched; returns how many were new.
+
+    Idempotent on `client_event_id`, because they arrive through the phone's
+    outbox and a replay after a dropped connection resends what already
+    landed. In answer order, so each one's history includes the ones before
+    it in the same batch.
+    """
+    if not events:
+        return 0
+
+    ids = [e.client_event_id for e in events]
+    seen = set(
+        (
+            await session.execute(
+                select(AnswerEvent.client_event_id).where(AnswerEvent.client_event_id.in_(ids))
+            )
+        ).scalars()
+    )
+
+    accepted = 0
+    for event in sorted(events, key=lambda e: e.answered_at):
+        if event.client_event_id in seen:
+            continue
+        seen.add(event.client_event_id)
+
+        prev_at = None
+        prior_correct = prior_incorrect = None
+        history = _history_filter(event)
+        if history is not None:
+            row = (
+                await session.execute(
+                    select(
+                        func.max(AnswerEvent.answered_at),
+                        func.count().filter(AnswerEvent.correct.is_(True)),
+                        func.count().filter(AnswerEvent.correct.is_(False)),
+                    ).where(
+                        AnswerEvent.user_id == user_id,
+                        history,
+                        AnswerEvent.answered_at < event.answered_at,
+                    )
+                )
+            ).one()
+            prev_at, prior_correct, prior_incorrect = row
+
+        local = event.answered_at
+        session.add(
+            AnswerEvent(
+                user_id=user_id,
+                **event.model_dump(exclude={"timezone"}),
+                timezone=event.timezone,
+                response_ms=_ms(event.shown_at, event.answered_at) or 0,
+                think_ms=_ms(event.shown_at, event.first_input_at),
+                review_ms=_ms(event.answered_at, event.next_at),
+                local_hour=_local(local, event.timezone).hour,
+                weekday=_local(local, event.timezone).weekday(),
+                due_delta_s=(
+                    int((event.answered_at - event.due_at).total_seconds())
+                    if event.due_at is not None
+                    else None
+                ),
+                prev_answered_at=prev_at,
+                elapsed_s=int((event.answered_at - prev_at).total_seconds()) if prev_at else None,
+                prior_correct=prior_correct,
+                prior_incorrect=prior_incorrect,
+                item_features=await _item_features(session, event),
+            )
+        )
+        # Flushed one at a time so the next event's history query sees it.
+        await session.flush()
+        accepted += 1
+    return accepted
+
+
+def _ms(start: datetime | None, end: datetime | None) -> int | None:
+    if start is None or end is None:
+        return None
+    return max(0, int((end - start).total_seconds() * 1000))
+
+
+def _local(moment: datetime, zone: str | None) -> datetime:
+    """`moment` on the learner's own clock, for hour-of-day and weekday."""
+    if zone and is_valid_timezone(zone):
+        from zoneinfo import ZoneInfo
+
+        return moment.astimezone(ZoneInfo(zone))
+    return moment
+
+
+# -- look-alike kanji ----------------------------------------------------------
+
+
+async def lookalike_candidates(
+    session: AsyncSession, user_id: int
+) -> list[tuple[SubjectRow, list[SubjectRow]]]:
+    """Kanji the learner has started that WaniKani lists look-alikes for.
+
+    Each comes with the look-alikes the database has content for -- studied or
+    not, since a kanji not yet learned is exactly as confusable.
+    """
+    started = (
+        await session.execute(
+            select(SubjectRow)
+            .join(StudyProgress, StudyProgress.subject_id == SubjectRow.subject_id)
+            .where(
+                StudyProgress.user_id == user_id,
+                StudyProgress.started_at.is_not(None),
+                SubjectRow.type == "kanji",
+                func.jsonb_array_length(SubjectRow.visually_similar_subject_ids) > 0,
+            )
+        )
+    ).scalars().all()
+    if not started:
+        return []
+
+    wanted = {sid for s in started for sid in s.visually_similar_subject_ids}
+    similar = {
+        s.subject_id: s
+        for s in (
+            await session.execute(select(SubjectRow).where(SubjectRow.subject_id.in_(wanted)))
+        ).scalars()
+    }
+    out = []
+    for subject in started:
+        found = [similar[i] for i in subject.visually_similar_subject_ids if i in similar]
+        if found:
+            out.append((subject, found))
+    return out
+
+
+async def recent_lookalike_targets(
+    session: AsyncSession, user_id: int, *, since: datetime
+) -> set[int]:
+    """Kanji a look-alike question has asked about lately, to rotate through others."""
+    rows = await session.execute(
+        select(Question.payload["subject_id"].as_integer()).where(
+            Question.user_id == user_id,
+            Question.type == "kanji_lookalike",
+            Question.created_at >= since,
+        )
+    )
+    return {value for value in rows.scalars() if value is not None}

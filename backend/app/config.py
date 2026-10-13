@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     # Bundles made per top-up run, and questions in each. Small on purpose: an
     # abandoned bundle is wasted generation, and the queue refills twice a day.
     lesson_bundles_per_run: int = 3
+    # Look-alike kanji questions added to each bundle -- built from WaniKani's
+    # visually-similar data with no model call. They record which kanji are
+    # confused for which, for the confusion analysis (proposal hypothesis 3).
+    lesson_lookalikes_per_bundle: int = 2
     lesson_questions_per_bundle: int = 8
 
     # Words per pool in one generation prompt. The pools are fetched twice this

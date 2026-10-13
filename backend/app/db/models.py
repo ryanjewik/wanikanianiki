@@ -998,6 +998,142 @@ class LessonBundleQuestion(Base):
     question: Mapped[Question] = relationship()
 
 
+class AnswerEvent(Base):
+    """One answer attempt, anywhere in the app, with everything known about it.
+
+    The study logs (`reviews_log`, `vocab_review_log`) record what a scheduler
+    needs -- one row per item per review, right or wrong. This records what a
+    *model of memory* needs: every attempt including retries and near misses,
+    how long it took, what was typed, and the item's state the moment before
+    it was answered. It feeds the ISyE 6740 project (personalised forgetting
+    curves), so it errs towards keeping too much.
+
+    Item ids are plain integers rather than foreign keys on purpose: deleting a
+    set or a question later must not delete the answers an analysis rests on.
+
+    Columns marked "client" arrive from the phone; "server" ones are filled in
+    on insert from the database, so every row is enriched the same way.
+    """
+
+    __tablename__ = "answer_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", name="fk_answer_events_user_id"), nullable=False
+    )
+    # client: makes the outbox's retries idempotent.
+    client_event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    # -- where it was asked (client) ------------------------------------------
+    # wk_review | wk_lesson_quiz | flashcard | practice
+    source: Mapped[str] = mapped_column(String(24), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Order within the session, and how many times this question had been
+    # asked in it before (1 = first try; >1 = a retry after a miss).
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    # meaning | reading | recognition | production | multiple_choice | ...
+    question_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    # typed | flip | choice | tiles
+    input_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # -- what was asked about (client) ---------------------------------------
+    subject_id: Mapped[int | None] = mapped_column(Integer)
+    subject_type: Mapped[str | None] = mapped_column(String(16))
+    assignment_id: Mapped[int | None] = mapped_column(BigInteger)
+    vocab_item_id: Mapped[int | None] = mapped_column(Integer)
+    srs_state_id: Mapped[int | None] = mapped_column(Integer)
+    set_id: Mapped[int | None] = mapped_column(Integer)
+    question_id: Mapped[int | None] = mapped_column(Integer)
+
+    # -- the answer (client) ---------------------------------------------------
+    prompt: Mapped[str | None] = mapped_column(Text)
+    answer_given: Mapped[str | None] = mapped_column(Text)
+    expected: Mapped[list | None] = mapped_column(JSONB)
+    correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    # correct | incorrect | gave_up | self_correct | self_incorrect
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Real answers to the other question, shaken back for another try --
+    # a kanji's other reading, the reading typed as the meaning.
+    near_misses: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    near_miss_answers: Mapped[list | None] = mapped_column(JSONB)
+    furigana_shown: Mapped[bool | None] = mapped_column(Boolean)
+    choices_shown: Mapped[list | None] = mapped_column(JSONB)
+    picked_index: Mapped[int | None] = mapped_column(Integer)
+
+    # -- timing (client clock) ------------------------------------------------
+    shown_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    first_input_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    answered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # When the next question came -- after reading the correction on a miss.
+    next_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    response_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    think_ms: Mapped[int | None] = mapped_column(Integer)
+    review_ms: Mapped[int | None] = mapped_column(Integer)
+    keystrokes: Mapped[int | None] = mapped_column(Integer)
+    deletions: Mapped[int | None] = mapped_column(Integer)
+    local_hour: Mapped[int | None] = mapped_column(Integer)
+    weekday: Mapped[int | None] = mapped_column(Integer)
+    timezone: Mapped[str | None] = mapped_column(String(64))
+    app_version: Mapped[str | None] = mapped_column(String(32))
+    platform: Mapped[str | None] = mapped_column(String(16))
+
+    # -- the item's state just before the answer (client snapshot) -----------
+    # What the phone was holding when it asked, so "before" is really before:
+    # the server's own copy may already reflect this very answer.
+    srs_stage: Mapped[int | None] = mapped_column(Integer)
+    srs_ease: Mapped[float | None] = mapped_column(Float)
+    srs_interval_days: Mapped[int | None] = mapped_column(Integer)
+    srs_repetitions: Mapped[int | None] = mapped_column(Integer)
+    srs_lapses: Mapped[int | None] = mapped_column(Integer)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # -- derived on insert (server) ---------------------------------------------
+    # answered_at - due_at: negative is answered early. The proposal's data-
+    # cleaning question (intervals longer than the log) is exactly this.
+    due_delta_s: Mapped[int | None] = mapped_column(Integer)
+    prev_answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    elapsed_s: Mapped[int | None] = mapped_column(Integer)
+    prior_correct: Mapped[int | None] = mapped_column(Integer)
+    prior_incorrect: Mapped[int | None] = mapped_column(Integer)
+    # Level, JLPT tier, stroke counts, components, look-alikes -- whatever the
+    # database knows about the item, snapshotted so later edits do not move it.
+    item_features: Mapped[dict | None] = mapped_column(JSONB)
+
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("client_event_id", name="uq_answer_events_client_event_id"),
+        Index("ix_answer_events_user_answered", "user_id", "answered_at"),
+        Index("ix_answer_events_subject", "subject_id", "question_kind"),
+        Index("ix_answer_events_srs_state", "srs_state_id"),
+        Index("ix_answer_events_question", "question_id"),
+    )
+
+
+class KanjiFeature(Base):
+    """Per-kanji facts from KANJIDIC2 -- the item features the models use.
+
+    Loaded by `scripts/import_kanjidic.py`. Stroke count, school grade and
+    newspaper frequency are the established predictors of how hard a kanji is
+    to learn; the old four-level JLPT tier is kept beside WaniKani's own.
+    """
+
+    __tablename__ = "kanji_features"
+
+    character: Mapped[str] = mapped_column(String(4), primary_key=True)
+    stroke_count: Mapped[int | None] = mapped_column(Integer)
+    grade: Mapped[int | None] = mapped_column(Integer)
+    frequency: Mapped[int | None] = mapped_column(Integer)
+    jlpt_old: Mapped[int | None] = mapped_column(Integer)
+    radical: Mapped[int | None] = mapped_column(Integer)
+    on_readings: Mapped[list | None] = mapped_column(JSONB)
+    kun_readings: Mapped[list | None] = mapped_column(JSONB)
+    meanings: Mapped[list | None] = mapped_column(JSONB)
+
+
 SYNC_KEY_ASSIGNMENTS = "assignments_updated_after"
 SYNC_KEY_SUBJECTS = "subjects_updated_after"
 SYNC_KEY_LAST_SYNCED = "last_synced_at"

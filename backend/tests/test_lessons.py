@@ -434,3 +434,96 @@ def test_choices_go_unglossed_when_the_prompt_asks_which_reads_so():
         furigana={"火山": "かざん", "火事": "かじ", "読む": "よむ"},
     )
     assert safe_furigana(which_reads) == {"読む": "よむ"}
+
+
+# -- English after answering ---------------------------------------------------
+
+
+def test_translation_and_explanations_are_stored_with_the_question():
+    from app.services.lessons import Explanation
+
+    stored = to_payload(
+        draft(
+            translation="You need a licence to drive a car.",
+            explanations=[
+                Explanation(option="licence", translation="licence", why="The right word."),
+                Explanation(option="permission", translation="permission", why="Too general."),
+                # Nothing to say: left out rather than stored empty.
+                Explanation(option="ticket", translation="", why=""),
+            ],
+        )
+    )
+    assert stored["translation"] == "You need a licence to drive a car."
+    assert [e["option"] for e in stored["explanations"]] == ["licence", "permission"]
+
+
+async def test_backfilled_explanations_keep_only_the_questions_options():
+    from types import SimpleNamespace
+
+    from app.services.lessons import (
+        ExplanationBatch,
+        QuestionExplanation,
+        backfill_explanations,
+    )
+
+    class FakeMessages:
+        async def parse(self, **_kwargs):
+            return SimpleNamespace(
+                parsed_output=ExplanationBatch(
+                    questions=[
+                        QuestionExplanation(
+                            question_id=3,
+                            translation="Yesterday's lecture by the professor was fun.",
+                            explanations=[
+                                {"option": "教授", "translation": "professor", "why": "Fits."},
+                                {"option": "学生", "translation": "student", "why": "Not offered."},
+                            ],
+                        )
+                    ]
+                )
+            )
+
+    question = {
+        "id": 3,
+        "type": "multiple_choice",
+        "payload": {"prompt": "昨日の___の講演", "choices": ["教授", "部分"], "answer": "教授"},
+    }
+    out = await backfill_explanations([question], client=SimpleNamespace(messages=FakeMessages()))
+
+    assert out[3]["translation"].startswith("Yesterday")
+    # An explanation for an option the question never offered is dropped.
+    assert [e["option"] for e in out[3]["explanations"]] == ["教授"]
+
+
+# -- look-alike kanji ------------------------------------------------------------
+
+
+def _kanji(subject_id, characters, meaning, reading):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        subject_id=subject_id,
+        characters=characters,
+        meanings=[{"meaning": meaning, "primary": True}],
+        readings=[{"reading": reading, "primary": True}],
+    )
+
+
+def test_a_lookalike_question_offers_the_kanji_among_its_lookalikes():
+    from app.services.lessons import lookalike_payload
+
+    target = _kanji(1, "入", "Enter", "にゅう")
+    payload = lookalike_payload(target, [_kanji(2, "人", "Person", "にん")])
+
+    assert payload["answer"] == "入"
+    assert sorted(payload["choices"]) == ["人", "入"]
+    assert payload["choice_subject_ids"] == {"入": 1, "人": 2}
+    assert {e["option"] for e in payload["explanations"]} == {"入", "人"}
+
+
+def test_a_lookalike_with_the_same_meaning_is_not_a_second_right_answer():
+    from app.services.lessons import lookalike_payload
+
+    target = _kanji(1, "体", "Body", "たい")
+    # Same meaning: offering it would make the question unanswerable.
+    assert lookalike_payload(target, [_kanji(2, "躰", "body", "たい")]) is None

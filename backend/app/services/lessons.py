@@ -32,6 +32,7 @@ rule photo import follows.
 from __future__ import annotations
 
 import logging
+import random
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Literal
@@ -65,7 +66,10 @@ QuestionType = Literal[
 ]
 
 # The types that show four options and are graded by which one was picked.
-CHOICE_TYPES = frozenset({"multiple_choice", "response_choice"})
+# `kanji_lookalike` is built here rather than by the model, so it is not a
+# QuestionType the generator may draft.
+LOOKALIKE = "kanji_lookalike"
+CHOICE_TYPES = frozenset({"multiple_choice", "response_choice", LOOKALIKE})
 
 
 # -- what we ask the generator for ----------------------------------------
@@ -81,6 +85,25 @@ class Reading(BaseModel):
         )
     )
     reading: str = Field(description="Its reading in kana, e.g. いりぐち.")
+
+
+class Explanation(BaseModel):
+    """One option, in English, and why it is right or wrong."""
+
+    option: str = Field(
+        description=(
+            "The option exactly as written in `choices`; for a question with no "
+            "choices, the answer."
+        )
+    )
+    translation: str = Field(description="What the option means in English.")
+    why: str = Field(
+        description=(
+            "One or two plain sentences on why this option is right, or why it "
+            "does not fit here -- the grammar, the meaning, the nuance. Written "
+            "for the learner, who reads it after answering."
+        )
+    )
 
 
 class DraftQuestion(BaseModel):
@@ -143,6 +166,23 @@ class DraftQuestion(BaseModel):
             "need no entry. "
             "NEVER include the word whose reading the question is asking for: "
             "a reading question that ships its own furigana answers itself."
+        ),
+    )
+    translation: str = Field(
+        default="",
+        description=(
+            "The prompt in natural English, shown after answering. For a "
+            "fill_in_blank, translate the completed sentence -- with the answer "
+            "in the gap. Empty only when the prompt is already English."
+        ),
+    )
+    explanations: list[Explanation] = Field(
+        default_factory=list,
+        description=(
+            "Shown after answering. For multiple_choice and response_choice, one "
+            "entry for EVERY choice -- the right one saying why it is right, each "
+            "wrong one saying why it does not fit. For the other types, one entry "
+            "for the answer."
         ),
     )
     vocab_item_ids: list[int] = Field(
@@ -237,6 +277,11 @@ attempt. The one exception is the word being asked about in a reading question
 — never give that one away. Put readings in the `furigana` map rather than in
 parentheses in the sentence: a sentence carrying its own glosses cannot have
 them turned off.
+
+After the learner answers they see an English translation of the prompt and,
+for every choice, its meaning and why it is right or wrong. Fill in
+`translation` and `explanations` for every question: these are how a wrong
+answer becomes something learned rather than just a red mark.
 
 Where a confirmed grammar point fits the words naturally, build a question
 around it and set grammar_entry_id. Where none fits, do not force it — a
@@ -727,7 +772,102 @@ def to_payload(draft: DraftQuestion) -> dict:
     furigana = safe_furigana(draft)
     if furigana:
         payload["furigana"] = furigana
+    payload.update(explanation_payload(draft.translation, draft.explanations))
     return payload
+
+
+def explanation_payload(translation: str, explanations: list[Explanation]) -> dict:
+    """The stored shape of a question's after-answer English, empty parts left out."""
+    out: dict = {}
+    if translation.strip():
+        out["translation"] = translation.strip()
+    notes = [
+        {"option": e.option, "translation": e.translation.strip(), "why": e.why.strip()}
+        for e in explanations
+        if e.option.strip() and (e.translation.strip() or e.why.strip())
+    ]
+    if notes:
+        out["explanations"] = notes
+    return out
+
+
+# -- English for questions written without it -------------------------------
+
+
+class QuestionExplanation(BaseModel):
+    question_id: int = Field(description="The id given for the question.")
+    translation: str = Field(description="The prompt in natural English; see the generator.")
+    explanations: list[Explanation] = Field(default_factory=list)
+
+
+class ExplanationBatch(BaseModel):
+    questions: list[QuestionExplanation]
+
+
+EXPLANATIONS_SYSTEM = """You add English to Japanese practice questions written without it.
+
+For each question give:
+- `translation`: the prompt in natural English. For a fill-in-the-blank, the
+  completed sentence, with the answer in the gap.
+- `explanations`: for a question with choices, one entry for EVERY choice --
+  its English, and in one or two plain sentences why it is right or why it does
+  not fit. For a question without choices, one entry for the answer.
+
+The learner reads this after answering, to understand their mistake. Do not
+change the questions, and do not second-guess the stated answer."""
+
+
+async def backfill_explanations(
+    questions: list[dict],
+    *,
+    settings: Settings | None = None,
+    client: anthropic.AsyncAnthropic | None = None,
+) -> dict[int, dict]:
+    """Translation and explanations for questions generated before they existed.
+
+    `questions` are `{id, type, payload}`; returns question id -> the payload
+    keys to add (`translation`, `explanations`). Explanations for options the
+    question does not have are dropped.
+    """
+    if not questions:
+        return {}
+    settings = settings or get_settings()
+    client = client or _client(settings)
+
+    listing = "\n".join(
+        f"id={q['id']} type={q['type']} prompt={q['payload'].get('prompt', '')!r} "
+        f"choices={q['payload'].get('choices', [])!r} answer={q['payload'].get('answer', '')!r}"
+        for q in questions
+    )
+    try:
+        response = await client.messages.parse(
+            model=settings.lesson_model,
+            max_tokens=32000,
+            system=EXPLANATIONS_SYSTEM,
+            messages=[{"role": "user", "content": f"Questions:\n{listing}"}],
+            output_format=ExplanationBatch,
+        )
+    except anthropic.APIStatusError as exc:
+        raise GenerationFailed(f"Explanations rejected ({exc.status_code}).") from exc
+    except (anthropic.APITimeoutError, anthropic.APIConnectionError) as exc:
+        raise GenerationFailed("Could not reach the model for explanations.") from exc
+
+    batch = response.parsed_output
+    if batch is None:
+        return {}
+    by_id = {q["id"]: q for q in questions}
+    out: dict[int, dict] = {}
+    for entry in batch.questions:
+        question = by_id.get(entry.question_id)
+        if question is None:
+            continue
+        payload = question["payload"]
+        options = set(payload.get("choices") or [payload.get("answer", "")])
+        kept = [e for e in entry.explanations if e.option in options]
+        added = explanation_payload(entry.translation, kept)
+        if added:
+            out[entry.question_id] = added
+    return out
 
 
 def prune_for_variety(
@@ -1019,6 +1159,8 @@ async def top_up_bundles(
 
         client = client or _client(settings)
 
+        used_lookalikes = await repo.recent_lookalike_targets(session, user_id, since=since)
+
         for _ in range(settings.lesson_bundles_per_run):
             pools = rotate_pools(wide, asked, size=settings.lesson_pool_size)
             question_ids, n_drafted, n_rejected = await _build_one_bundle(
@@ -1041,6 +1183,15 @@ async def top_up_bundles(
             # table either way — the catalog shows them as unbundled — rather
             # than shipping a stub.
             if len(question_ids) >= 2:
+                lookalikes = await build_lookalike_questions(
+                    session,
+                    user_id,
+                    count=settings.lesson_lookalikes_per_bundle,
+                    exclude=used_lookalikes,
+                    run_id=run_id,
+                )
+                for question_id in lookalikes:
+                    question_ids.insert(random.randrange(len(question_ids) + 1), question_id)
                 await repo.create_bundle(session, user_id, question_ids)
                 created += 1
             await session.commit()
@@ -1071,3 +1222,104 @@ async def top_up_bundles(
         rejected=rejected,
         bundles_created=created,
     )
+
+
+# -- look-alike kanji -------------------------------------------------------
+
+
+def _primary(entries: list[dict], key: str) -> str:
+    for entry in entries or []:
+        if entry.get("primary") and entry.get(key):
+            return entry[key]
+    return next((e[key] for e in entries or [] if e.get(key)), "")
+
+
+def lookalike_payload(target, similar: list) -> dict | None:
+    """A "which kanji is this?" question: the target among its look-alikes.
+
+    Built from WaniKani's own visually-similar list, so the distractors are the
+    kanji a learner actually mixes up -- and every wrong pick is a recorded
+    confusion pair. Look-alikes sharing the target's meaning are dropped, or
+    the question would have two right answers.
+    """
+    meaning = _primary(target.meanings, "meaning")
+    if not meaning or not target.characters:
+        return None
+    options = [
+        s
+        for s in similar
+        if s.characters
+        and s.characters != target.characters
+        and _primary(s.meanings, "meaning").lower() != meaning.lower()
+    ][:3]
+    if not options:
+        return None
+
+    everyone = [target, *options]
+    choices = [s.characters for s in everyone]
+    random.shuffle(choices)
+
+    def note(subject) -> dict:
+        gloss = _primary(subject.meanings, "meaning")
+        reading = _primary(subject.readings, "reading")
+        right = subject is target
+        why = (
+            f"{subject.characters} means “{gloss}”"
+            + (f", read {reading}" if reading else "")
+            + (". That is the one asked for." if right else f", not “{meaning}”.")
+        )
+        return {"option": subject.characters, "translation": gloss, "why": why}
+
+    return {
+        "prompt": f"Which kanji means “{meaning}”?",
+        "answer": target.characters,
+        "choices": choices,
+        "translation": f"Which kanji means “{meaning}”?",
+        "explanations": [note(s) for s in everyone],
+        # For the confusion analysis: which subject each option was.
+        "subject_id": target.subject_id,
+        "choice_subject_ids": {s.characters: s.subject_id for s in everyone},
+    }
+
+
+async def build_lookalike_questions(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    count: int,
+    exclude: set[int],
+    run_id: int | None = None,
+) -> list[int]:
+    """Up to `count` look-alike questions, stored verified, ids returned.
+
+    No model call and nothing to verify: the answer is the target by
+    construction, and look-alikes with the same meaning are already dropped.
+    Targets asked about lately (`exclude`) are skipped, and are added to it.
+    """
+    if count <= 0:
+        return []
+    candidates = await repo.lookalike_candidates(session, user_id)
+    random.shuffle(candidates)
+
+    made: list[int] = []
+    for target, similar in candidates:
+        if len(made) >= count:
+            break
+        if target.subject_id in exclude:
+            continue
+        payload = lookalike_payload(target, similar)
+        if payload is None:
+            continue
+        question = await repo.create_question(
+            session,
+            user_id,
+            question_type=LOOKALIKE,
+            payload=payload,
+            vocab_item_ids=[],
+            run_id=run_id,
+        )
+        question.verified = True
+        exclude.add(target.subject_id)
+        made.append(question.id)
+    await session.flush()
+    return made

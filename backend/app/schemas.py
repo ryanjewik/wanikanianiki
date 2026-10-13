@@ -375,6 +375,68 @@ class FlashcardAnswer(CamelModel):
     set_id: int | None = None
 
 
+AnswerSource = Literal["wk_review", "wk_lesson_quiz", "flashcard", "practice"]
+
+
+class AnswerEventIn(CamelModel):
+    """One answer attempt as the phone saw it. See `models.AnswerEvent`."""
+
+    client_event_id: str = Field(min_length=8, max_length=64)
+    source: AnswerSource
+    session_id: str = Field(max_length=64)
+    position: int = Field(ge=0)
+    attempt: int = Field(default=1, ge=1)
+    question_kind: str = Field(max_length=32)
+    input_mode: Literal["typed", "flip", "choice", "tiles"]
+
+    subject_id: int | None = None
+    subject_type: str | None = Field(default=None, max_length=16)
+    assignment_id: int | None = None
+    vocab_item_id: int | None = None
+    srs_state_id: int | None = None
+    set_id: int | None = None
+    question_id: int | None = None
+
+    prompt: str | None = None
+    answer_given: str | None = None
+    expected: list[str] | None = None
+    correct: bool
+    outcome: Literal["correct", "incorrect", "gave_up", "self_correct", "self_incorrect"]
+    near_misses: int = Field(default=0, ge=0)
+    near_miss_answers: list[str] | None = None
+    furigana_shown: bool | None = None
+    choices_shown: list[str] | None = None
+    picked_index: int | None = None
+
+    shown_at: datetime
+    first_input_at: datetime | None = None
+    answered_at: datetime
+    next_at: datetime | None = None
+    keystrokes: int | None = Field(default=None, ge=0)
+    deletions: int | None = Field(default=None, ge=0)
+    timezone: str | None = Field(default=None, max_length=64)
+    app_version: str | None = Field(default=None, max_length=32)
+    platform: str | None = Field(default=None, max_length=16)
+
+    srs_stage: int | None = None
+    srs_ease: float | None = None
+    srs_interval_days: int | None = None
+    srs_repetitions: int | None = None
+    srs_lapses: int | None = None
+    due_at: datetime | None = None
+
+
+class AnswerEventBatch(CamelModel):
+    events: list[AnswerEventIn] = Field(max_length=500)
+
+
+class AnswerEventsAccepted(CamelModel):
+    """How many were new. Replays of events already stored are not counted."""
+
+    accepted: int
+    received: int
+
+
 class SetStudy(CamelModel):
     """A set's flashcards still to learn, shuffled, with its progress."""
 

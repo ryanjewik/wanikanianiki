@@ -35,6 +35,8 @@ from app.db.models import VocabFolder as VocabFolderRow
 from app.db.models import VocabSet as VocabSetRow
 from app.schemas import (
     AgentContext,
+    AnswerEventBatch,
+    AnswerEventsAccepted,
     Assignment,
     CatalogQuestion,
     ConfirmImportRequest,
@@ -732,6 +734,23 @@ async def merge_vocab_set(
     _, target = await _owned_set(session, payload.into_set_id)
     await repo.merge_vocab_sets(session, source, target)
     return await _set_out(session, user, target.id)
+
+
+@router.post("/api/answer-events", response_model=AnswerEventsAccepted, tags=["study"])
+async def record_answer_events(
+    payload: AnswerEventBatch,
+    session: AsyncSession = Depends(db_session),
+) -> AnswerEventsAccepted:
+    """Store answer events from the phone, enriched with what the server knows.
+
+    Recording only: grading and scheduling still happen in the study routes.
+    Safe to resend -- events already stored are skipped.
+    """
+    user = await repo.get_default_user(session)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No user synced yet")
+    accepted = await repo.insert_answer_events(session, user.id, payload.events)
+    return AnswerEventsAccepted(accepted=accepted, received=len(payload.events))
 
 
 @router.get("/api/vocab-sets/{set_id}/study", response_model=SetStudy, tags=["study"])
