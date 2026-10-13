@@ -36,6 +36,18 @@ type MotionStyle = AnimatedStyle<ViewStyle>;
 const SPRING = { damping: 14, stiffness: 220, mass: 0.6 } as const;
 const QUICK = { duration: 160, easing: Easing.out(Easing.quad) } as const;
 
+/**
+ * How long past an entrance's own length before it is forced to its end.
+ *
+ * An entrance starts invisible and animates in. If the animation never runs
+ * -- the UI thread's frame loop stalled while the app was still starting, or
+ * a system dialog came up at that moment -- the content stays invisible for
+ * good, laid out and tappable but unseen: a home screen with gaps where its
+ * cards should be. Snapping to the end after a grace period makes an
+ * entrance a nicety that can be skipped rather than a gate content waits on.
+ */
+const ENTRANCE_GRACE_MS = 500;
+
 /* -------------------------------------------------------------------------- */
 /* Entrances                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -65,6 +77,10 @@ export function RiseIn({
       delay,
       withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) }),
     );
+    const failsafe = setTimeout(() => {
+      progress.value = 1;
+    }, delay + 260 + ENTRANCE_GRACE_MS);
+    return () => clearTimeout(failsafe);
   }, [delay, progress]);
 
   const animated = useAnimatedStyle(() => ({
@@ -94,6 +110,11 @@ export function Pop({
   React.useEffect(() => {
     scale.value = withSpring(1, SPRING);
     opacity.value = withTiming(1, QUICK);
+    const failsafe = setTimeout(() => {
+      scale.value = 1;
+      opacity.value = 1;
+    }, 400 + ENTRANCE_GRACE_MS);
+    return () => clearTimeout(failsafe);
   }, [opacity, scale]);
 
   const animated = useAnimatedStyle(() => ({

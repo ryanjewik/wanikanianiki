@@ -60,8 +60,12 @@ export default function DashboardScreen() {
   const router = useRouter();
   const { data, reload } = useDashboard();
   const { data: calendar } = useActivityCalendar();
-  const { data: practice, reload: reloadPractice } = usePracticeQueue();
-  const { data: flashcards, reload: reloadDue } = useFlashcardOverview();
+  const { data: practice, loading: practiceLoading, reload: reloadPractice } = usePracticeQueue();
+  const {
+    data: flashcards,
+    loading: flashcardsLoading,
+    reload: reloadDue,
+  } = useFlashcardOverview();
   const { data: jlpt } = useJlptCoverage();
   const { syncing, refresh } = useSync();
   const auth = useAuthStatus();
@@ -114,8 +118,8 @@ export default function DashboardScreen() {
     void rescheduleReminders({ streakDays, studiedToday });
   }, [streakDays, studiedToday]);
 
-  // Only on a first launch, with nothing saved yet: every later start shows
-  // the last dashboard at once while the new one loads.
+  // While the dashboard loads -- a few seconds when the server is cold -- the
+  // outline of the screen and a spinner, rather than an empty page.
   if (!data) {
     return <HomeSkeleton onProfile={() => router.push('/profile')} />;
   }
@@ -206,6 +210,7 @@ export default function DashboardScreen() {
         <RiseIn delay={110}>
           <FlashcardCard
             overview={flashcards}
+            loading={flashcardsLoading && !flashcards}
             onContinue={(setId) =>
               router.push({ pathname: '/quiz', params: { setId: String(setId) } })
             }
@@ -229,6 +234,7 @@ export default function DashboardScreen() {
             cta="Start Practice"
             art={<Mascot pose="idle" size={80} speed={0.6} lively />}
             disabled={!practice || practice.questions === 0}
+            loading={practiceLoading && !practice}
             onPress={() => router.push('/lesson-bundle')}
           />
           {/* The catalog of everything the question writer produced, run by
@@ -303,8 +309,8 @@ function StreakChip({ days, studiedToday }: { days: number; studiedToday: boolea
 }
 
 /**
- * What a first launch shows while the dashboard loads: the shape of the
- * screen, gently pulsing, instead of an empty page that looks frozen.
+ * What shows while the dashboard loads: the shape of the screen, gently
+ * pulsing, instead of an empty page that looks frozen.
  */
 function HomeSkeleton({ onProfile }: { onProfile: () => void }) {
   const pulse = React.useRef(new Animated.Value(0.45)).current;
@@ -346,10 +352,12 @@ function HomeSkeleton({ onProfile }: { onProfile: () => void }) {
 /** Flashcards on the home screen: continue the set you were on, or pick one. */
 function FlashcardCard({
   overview,
+  loading,
   onContinue,
   onChoose,
 }: {
   overview: FlashcardOverview | null;
+  loading: boolean;
   onContinue: (setId: number) => void;
   onChoose: () => void;
 }) {
@@ -373,6 +381,7 @@ function FlashcardCard({
       cta={unfinished ? 'Continue Set' : 'Choose a Set'}
       art={<Mascot pose="blink" size={80} speed={0.6} />}
       disabled={!overview || overview.setCount === 0}
+      loading={loading}
       onPress={() => (unfinished ? onContinue(last.id) : onChoose())}
     />
   );

@@ -45,24 +45,9 @@ interface AsyncState<T> {
   error: string | null;
 }
 
-/**
- * Loads `load` and keeps the result.
- *
- * With a `cacheKey` the last good result is also kept on the phone and shown
- * at once on the next launch, while the fresh one loads. The home screen was
- * blank for seconds at every start -- a cold server, a sync going on at the
- * same time -- when yesterday's numbers would have done perfectly well for the
- * moment it takes to get today's. A failed load keeps what is showing rather
- * than blanking it.
- */
-function useAsync<T>(
-  load: () => Promise<T>,
-  deps: React.DependencyList,
-  options: { cacheKey?: string } = {},
-): AsyncState<T> & {
+function useAsync<T>(load: () => Promise<T>, deps: React.DependencyList): AsyncState<T> & {
   reload: () => void;
 } {
-  const { cacheKey } = options;
   const [state, setState] = React.useState<AsyncState<T>>({
     data: null,
     loading: true,
@@ -70,41 +55,21 @@ function useAsync<T>(
   });
   const [nonce, setNonce] = React.useState(0);
 
-  // The cached copy, if the fresh one has not already arrived.
-  React.useEffect(() => {
-    if (!cacheKey) return;
-    let cancelled = false;
-    db.getPref(cacheKey)
-      .then((raw) => {
-        if (cancelled || !raw) return;
-        const cached = JSON.parse(raw) as T;
-        setState((prev) => (prev.data !== null ? prev : { ...prev, data: cached }));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [cacheKey]);
-
   React.useEffect(() => {
     let cancelled = false;
     setState((prev) => ({ ...prev, loading: true }));
 
     load()
       .then((data) => {
-        if (cancelled) return;
-        setState({ data, loading: false, error: null });
-        if (cacheKey) void db.setPref(cacheKey, JSON.stringify(data)).catch(() => undefined);
+        if (!cancelled) setState({ data, loading: false, error: null });
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          setState((prev) => ({
-            // Cached data stays up through a failure; without a cache there
-            // is nothing to keep.
-            data: cacheKey ? prev.data : null,
+          setState({
+            data: null,
             loading: false,
             error: error instanceof Error ? error.message : 'Something went wrong',
-          }));
+          });
         }
       });
 
@@ -126,11 +91,9 @@ export function useDashboard() {
     if (api.isBackendConfigured) {
       try {
         return await api.fetchDashboard();
-      } catch (error) {
-        // With a saved copy on screen already, keep it: it is the real
-        // dashboard, only older. Without one, fall through to whatever the
-        // local mirror can reconstruct — offline must never blank the screen.
-        if (await db.getPref('cache:dashboard').catch(() => null)) throw error;
+      } catch {
+        // Fall through to whatever the local mirror can reconstruct — being
+        // offline should never blank the home screen.
       }
     }
 
@@ -151,7 +114,7 @@ export function useDashboard() {
       stageSpread: spread,
       lastSyncedAt,
     };
-  }, [], { cacheKey: 'cache:dashboard' });
+  }, []);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -446,7 +409,7 @@ export function useFlashcardOverview() {
       setCount: withCards.length,
       lastSet: withCards.find((set) => String(set.id) === last) ?? null,
     };
-  }, [], { cacheKey: 'cache:flashcards' });
+  }, []);
 }
 
 /**
@@ -706,7 +669,7 @@ export function useActivityCalendar() {
     }
 
     return days;
-  }, [], { cacheKey: 'cache:calendar' });
+  }, []);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -739,7 +702,7 @@ export function useJlptCoverage() {
     } catch {
       return { tiers: [], tracked: false };
     }
-  }, [], { cacheKey: 'cache:jlpt' });
+  }, []);
 }
 
 /**
@@ -758,7 +721,7 @@ export function usePracticeQueue() {
       // its empty state rather than a stale count.
       return { bundles: 0, questions: 0 };
     }
-  }, [], { cacheKey: 'cache:practice' });
+  }, []);
 }
 
 /**

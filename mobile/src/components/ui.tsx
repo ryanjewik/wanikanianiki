@@ -9,6 +9,7 @@
  */
 import * as React from 'react';
 import {
+  ActivityIndicator,
   type GestureResponderEvent,
   Pressable,
   type PressableProps,
@@ -140,6 +141,7 @@ export function QueueCard({
   art,
   onPress,
   disabled = false,
+  loading = false,
 }: {
   title: string;
   /** Hidden when zero — a badge reading 0 is worse than no badge. */
@@ -151,6 +153,12 @@ export function QueueCard({
   art: React.ReactNode;
   onPress: () => void;
   disabled?: boolean;
+  /**
+   * Still fetching. Says so, with a spinner, instead of the empty-state blurb
+   * -- "nothing written yet" while the count is merely loading reads as a
+   * fact, and an app that states wrong facts at startup looks broken.
+   */
+  loading?: boolean;
 }) {
   const palette = subjectPalette[tone];
 
@@ -169,12 +177,19 @@ export function QueueCard({
           <Text style={styles.queueTitle}>{title}</Text>
           {count > 0 ? <CountBadge count={count} color={palette.solid} /> : null}
         </View>
-        <Text style={styles.queueBlurb}>{blurb}</Text>
+        {loading ? (
+          <View style={styles.queueLoading}>
+            <ActivityIndicator size="small" color={palette.solid} />
+            <Text style={styles.queueBlurb}>Loading…</Text>
+          </View>
+        ) : (
+          <Text style={styles.queueBlurb}>{blurb}</Text>
+        )}
         <ChunkyButton
           label={cta}
-          tone={disabled ? 'neutral' : tone}
+          tone={disabled || loading ? 'neutral' : tone}
           size="small"
-          disabled={disabled}
+          disabled={disabled || loading}
           onPress={onPress}
           style={styles.queueCta}
         />
@@ -707,6 +722,11 @@ const styles = StyleSheet.create({
     ...typeScale.cardTitle,
     color: colors.ink,
     flexShrink: 1,
+  },
+  queueLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   queueBlurb: {
     ...typeScale.caption,

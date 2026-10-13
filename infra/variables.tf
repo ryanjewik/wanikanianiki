@@ -40,7 +40,7 @@ variable "api_public" {
 }
 
 variable "api_warmer_schedule" {
-  description = "How often to ping the API so an instance stays warm. null turns the warmer off."
+  description = "How often to ping the API so an instance stays warm, e.g. \"rate(5 minutes)\". null (the default) leaves it off: a cold start is a few seconds, and the app shows its loading states through it."
   type        = string
-  default     = "rate(5 minutes)"
+  default     = null
 }
