@@ -21,6 +21,8 @@ from app.api.routes import router
 from app.config import get_settings
 from app.wanikani.client import WaniKaniAuthError, WaniKaniError, get_client
 
+logger = logging.getLogger(__name__)
+
 
 def configure_logging(level: str) -> None:
     logging.basicConfig(
@@ -106,10 +108,27 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(WaniKaniError)
-    async def _upstream_error(_: Request, exc: WaniKaniError) -> JSONResponse:
+    async def _upstream_error(request: Request, exc: WaniKaniError) -> JSONResponse:
+        # Logged with WaniKani's own status and body: before this, a refusal
+        # (a 403, a 404) reached the phone as a bare 502 that it retried
+        # forever, and nothing anywhere said what WaniKani had answered.
+        logger.warning(
+            "WaniKani failed for %s %s: %s (status %s) %s",
+            request.method, request.url.path, exc, exc.status_code, exc.body,
+        )
+        # A 4xx from WaniKani is a refusal that retrying will not change, so the
+        # phone is told so (409) and sets the write aside with this reason. A
+        # 5xx, a rate limit or a timeout may pass, so those stay a 502 to retry.
+        code = exc.status_code
+        refused = code is not None and 400 <= code < 500 and code != 429
+        what = "refused the request" if refused else "request failed"
         return JSONResponse(
-            status_code=502,
-            content={"detail": "Upstream WaniKani request failed", "error": str(exc)},
+            status_code=409 if refused else 502,
+            content={
+                "detail": f"WaniKani {what}: {exc}",
+                "wanikaniStatus": exc.status_code,
+                "wanikani": exc.body,
+            },
         )
 
     app.include_router(router, dependencies=[Depends(require_api_key)])
