@@ -171,6 +171,18 @@ async function upgrade(db: SQLite.SQLiteDatabase): Promise<void> {
       PRAGMA user_version = 2;
     `);
   }
+
+  if (version < 3) {
+    // A write that keeps failing in a way that looks temporary was retried
+    // every sync with nothing kept about why -- "15 pending sync" for hours,
+    // and no way to tell what the server or WaniKani was saying. Every failed
+    // attempt now records its error, so the sync screen can show it.
+    await db.execAsync(`
+      ALTER TABLE pending_writes ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE pending_writes ADD COLUMN last_attempt_at TEXT;
+      PRAGMA user_version = 3;
+    `);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -625,6 +637,71 @@ export async function markWriteFailed(id: number, reason: string): Promise<void>
     reason.slice(0, 500),
     id,
   );
+}
+
+/**
+ * A failed attempt that will be tried again. Keeps the write queued and
+ * records why, so a write stuck for hours can say what is stopping it.
+ */
+export async function noteWriteAttemptFailed(id: number, reason: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    'UPDATE pending_writes SET attempts = attempts + 1, last_error = ?, last_attempt_at = ? WHERE id = ?',
+    reason.slice(0, 500),
+    new Date().toISOString(),
+    id,
+  );
+}
+
+/** One unsent write as the sync screen shows it: queued, or set aside. */
+export interface OutboxEntry {
+  id: number;
+  type: PendingWriteType;
+  payload: string;
+  createdAt: string;
+  attempts: number;
+  lastError: string | null;
+  lastAttemptAt: string | null;
+  /** Set when the server refused it for good and it was put aside. */
+  failedAt: string | null;
+}
+
+/** Every write not yet confirmed, oldest first -- queued and set aside alike. */
+export async function listOutbox(limit = 200): Promise<OutboxEntry[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<{
+    id: number;
+    type: string;
+    payload_json: string;
+    created_at: string;
+    attempts: number | null;
+    last_error: string | null;
+    last_attempt_at: string | null;
+    failed_at: string | null;
+  }>(
+    `SELECT id, type, payload_json, created_at, attempts, last_error, last_attempt_at, failed_at
+       FROM pending_writes
+      WHERE synced_at IS NULL
+      ORDER BY created_at ASC, id ASC
+      LIMIT ?`,
+    limit,
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    type: row.type as PendingWriteType,
+    payload: row.payload_json,
+    createdAt: row.created_at,
+    attempts: row.attempts ?? 0,
+    lastError: row.last_error,
+    lastAttemptAt: row.last_attempt_at,
+    failedAt: row.failed_at,
+  }));
+}
+
+/** Puts a set-aside write back in the queue, for another try. */
+export async function requeueWrite(id: number): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync('UPDATE pending_writes SET failed_at = NULL WHERE id = ?', id);
 }
 
 export async function countPendingWrites(): Promise<number> {

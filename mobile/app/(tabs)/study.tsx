@@ -52,8 +52,14 @@ export default function StudyScreen() {
     <View style={styles.screen}>
       <ScreenHeader
         title="Study"
-        trailingText={pendingWrites > 0 ? `${pendingWrites} pending sync` : undefined}
-        trailingColor={colors.warning}
+        // Tappable: it opens the queue, with the error behind each stuck write.
+        trailing={
+          pendingWrites > 0 ? (
+            <Pressable onPress={() => router.push('/sync-status')} hitSlop={8}>
+              <Text style={styles.pendingSync}>{pendingWrites} pending sync ›</Text>
+            </Pressable>
+          ) : undefined
+        }
       />
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -189,6 +195,7 @@ function shortDate(isoDate: string): string {
 }
 
 const styles = StyleSheet.create({
+  pendingSync: { ...typeScale.captionBold, color: colors.warning },
   screen: {
     flex: 1,
     backgroundColor: colors.ground,
