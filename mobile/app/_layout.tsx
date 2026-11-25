@@ -143,6 +143,7 @@ function RootStack() {
       <Stack.Screen name="generated/index" />
       <Stack.Screen name="generated/[id]" />
       <Stack.Screen name="profile" />
+      <Stack.Screen name="sync-status" />
     </Stack>
   );
 }

@@ -22,6 +22,7 @@ import {
   getPendingWrites,
   getSyncMeta,
   markWriteFailed,
+  noteWriteAttemptFailed,
   markWriteSynced,
   missingSubjectIds,
   replaceAssignments,
@@ -83,6 +84,33 @@ function isPermanent(error: unknown): error is api.ApiError {
     error.status < 500 &&
     ![401, 408, 429].includes(error.status)
   );
+}
+
+/**
+ * What went wrong with one attempt, in words worth showing: the status and
+ * whatever the server said, or that no answer came back at all.
+ */
+export function describeFailure(error: unknown): string {
+  if (error instanceof api.ApiError) {
+    const body = error.body as Record<string, unknown> | null | undefined;
+    const text = (value: unknown) =>
+      value == null || value === '' ? '' : typeof value === 'string' ? value : JSON.stringify(value);
+    const parts =
+      body && typeof body === 'object'
+        ? // `error` carries WaniKani's own status on servers that wrap it in a
+          // generic `detail`, and `wanikani` its full answer on newer ones.
+          [text(body.detail), text(body.error), text(body.wanikani)].filter(Boolean)
+        : [text(body)].filter(Boolean);
+    return `${error.status || 'no status'}${parts.length > 0 ? `: ${parts.join(' — ')}` : ''}`;
+  }
+  if (isTimeout(error)) return 'No answer from the server in time (request timed out)';
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
+}
+
+/** A request this phone gave up waiting for -- the server may still be working. */
+function isTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 /**
@@ -158,13 +186,19 @@ export async function replayPendingWrites(): Promise<{ replayed: number; refused
       await markWriteSynced(write.id);
       replayed += 1;
     } catch (error) {
+      // Every failure is recorded on the write, whatever happens next, so the
+      // sync screen can say why something has been pending for hours.
+      await noteWriteAttemptFailed(write.id, describeFailure(error));
       if (isPermanent(error)) {
         console.warn(`[sync] server refused ${write.type} (${error.status}); set aside`);
         await markWriteFailed(write.id, `${error.status}: ${error.message}`);
         if (write.type !== 'answer_flashcard') refusedWaniKani = true;
         continue;
       }
-      if (!(error instanceof api.ApiError) || error.status === 401) break;
+      // A timeout is about this request, not the connection: the server was
+      // reached and was slow -- WaniKani rate-limiting it, say. Stopping the
+      // whole run there let one slow write hold every later one back forever.
+      if (!isTimeout(error) && (!(error instanceof api.ApiError) || error.status === 401)) break;
       // Worth another try later; keep this item's later writes behind it.
       blocked.add(key);
     }
